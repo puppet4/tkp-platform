@@ -1,0 +1,13 @@
+[project]
+name = "tkp-platform"
+version = "0.1.0"
+description = "Monorepo for multi-tenant knowledge platform services"
+requires-python = ">=3.12"
+dependencies = []
+
+[tool.uv.workspace]
+members = [
+  "services/api",
+  "services/worker",
+  "services/rag",
+]
