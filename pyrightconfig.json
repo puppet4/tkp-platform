@@ -1,0 +1,29 @@
+{
+  "$schema": "https://raw.githubusercontent.com/microsoft/pyright/main/packages/pyright/schema/pyrightconfig.schema.json",
+  "venvPath": ".",
+  "venv": ".venv",
+  "pythonVersion": "3.12",
+  "include": [
+    "services"
+  ],
+  "executionEnvironments": [
+    {
+      "root": "services/api",
+      "extraPaths": [
+        "services/api/src"
+      ]
+    },
+    {
+      "root": "services/worker",
+      "extraPaths": [
+        "services/worker/src"
+      ]
+    },
+    {
+      "root": "services/rag",
+      "extraPaths": [
+        "services/rag/src"
+      ]
+    }
+  ]
+}

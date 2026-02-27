@@ -1,0 +1,68 @@
+# TKP Platform Monorepo
+
+Multi-service repository for a multi-tenant knowledge platform.
+
+Code reading entry:
+- `docs/code-guide.md`
+
+## Layout
+
+```text
+services/
+  api/
+    src/tkp_api/
+    pyproject.toml
+  worker/
+    src/tkp_worker/
+    pyproject.toml
+  rag/
+    src/tkp_rag/
+    pyproject.toml
+knowledge/
+docs/
+```
+
+## Workspace setup
+
+```bash
+uv sync
+```
+
+## API service
+
+Start API:
+
+```bash
+PYTHONPATH=services/api/src uv run --project services/api uvicorn tkp_api.main:app --reload --port 8000
+```
+
+## Worker service
+
+```bash
+PYTHONPATH=services/worker/src uv run --project services/worker python -m tkp_worker.main
+```
+
+## RAG service
+
+```bash
+PYTHONPATH=services/rag/src uv run --project services/rag uvicorn tkp_rag.app:app --reload --port 8010
+```
+
+## Environment
+
+Copy `.env.example` to `.env` in repo root and update values.
+
+Required vars for API currently:
+
+- `KD_DATABASE_URL`
+- `KD_API_PREFIX`
+- `KD_AUTH_MODE`
+- `KD_AUTH_JWT_ALGORITHMS`
+- `KD_AUTH_JWT_SECRET` (or `KD_AUTH_JWKS_URL`)
+- `KD_STORAGE_ROOT`
+
+Auth and tenancy headers:
+
+- `Authorization: Bearer <jwt>`
+- `X-Tenant-Id: <tenant_uuid>`
+- `Idempotency-Key: <client_key>` (optional, for upload/reindex write idempotency)
