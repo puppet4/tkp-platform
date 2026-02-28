@@ -390,7 +390,7 @@ def list_tenant_members(
 @router.post(
     "/{tenant_id}/invitations",
     summary="邀请租户成员",
-    description="按邮箱发送租户邀请，创建或更新 invited 成员关系。",
+    description="按邮箱发送租户邀请，创建或更新 invited 成员关系。适用于“被邀请用户确认加入”的标准流程。",
     status_code=status.HTTP_200_OK,
     response_model=SuccessResponse[TenantMemberData],
     responses={
@@ -483,7 +483,7 @@ def invite_tenant_member(
 @router.post(
     "/{tenant_id}/members",
     summary="新增或更新租户成员",
-    description="按邮箱新增成员或更新已有成员角色。",
+    description="按邮箱直接新增/激活成员并同步角色，适用于管理员后台直接维护成员，不需要用户确认加入。",
     status_code=status.HTTP_200_OK,
     response_model=SuccessResponse[TenantMemberData],
     responses={
@@ -668,7 +668,7 @@ def join_tenant(
 @router.put(
     "/{tenant_id}/members/{user_id}/role",
     summary="更新租户成员角色",
-    description="按用户 ID 更新租户成员角色（用户-角色关系）。",
+    description="按用户 ID 更新租户成员角色（用户-角色关系）。这是租户成员角色变更的推荐接口。",
     status_code=status.HTTP_200_OK,
     response_model=SuccessResponse[TenantMemberData],
     responses={

@@ -19,13 +19,14 @@ def create_app() -> FastAPI:
         description=(
             "多租户知识平台接口。\n\n"
             "所有业务接口统一返回：`{request_id, data, meta}`。\n"
-            "认证头：`Authorization: Bearer <访问令牌>`。\n"
-            "租户头：`X-Tenant-Id: <tenant_uuid>`。"
+            "通过访问令牌进行认证。\n"
+            "租户上下文：使用访问令牌中的 `tenant_id`。"
         ),
         openapi_tags=[
             {"name": "health", "description": "服务存活与就绪探针。"},
             {"name": "auth", "description": "认证身份辅助接口。"},
-            {"name": "permissions", "description": "租户角色权限点配置与查询。"},
+            {"name": "permissions-runtime", "description": "运行时权限查询（给前端鉴权使用，无副作用）。"},
+            {"name": "permissions-config", "description": "权限配置管理（目录、模板、发布、角色权限维护）。"},
             {"name": "users", "description": "租户内用户查询与管理。"},
             {"name": "tenants", "description": "租户生命周期与租户成员管理。"},
             {"name": "workspaces", "description": "工作空间生命周期与成员管理。"},

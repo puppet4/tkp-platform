@@ -28,7 +28,7 @@ class AuthUserProfile(BaseSchema):
     email: str = Field(description="用户邮箱。")
     display_name: str = Field(description="用户展示名。")
     status: str = Field(description="用户状态，例如 active。")
-    auth_provider: str = Field(description="认证来源，例如 dev 或 JWT 签发方。")
+    auth_provider: str = Field(description="认证来源，例如 JWT 签发方。")
     external_subject: str = Field(description="外部身份系统中的主体标识。")
     last_login_at: datetime | None = Field(default=None, description="最近一次登录时间。")
 

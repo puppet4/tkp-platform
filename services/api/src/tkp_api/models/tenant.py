@@ -36,7 +36,7 @@ class User(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     display_name: Mapped[str] = mapped_column(String(128), nullable=False)
     # 本地用户状态。
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="active")
-    # 外部认证提供方标识（如 dev、issuer）。
+    # 外部认证提供方标识（如 issuer）。
     auth_provider: Mapped[str] = mapped_column(String(64), nullable=False, default="jwt")
     # 外部身份系统中的主体 ID（sub）。
     external_subject: Mapped[str] = mapped_column(String(256), nullable=False)

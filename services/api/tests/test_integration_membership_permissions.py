@@ -1,3 +1,4 @@
+import jwt
 from uuid import uuid4
 
 import pytest
@@ -10,7 +11,9 @@ from tkp_api.api import auth as auth_api
 from tkp_api.api import permissions as permissions_api
 from tkp_api.api import tenants as tenants_api
 from tkp_api.api import users as users_api
+from tkp_api.core.config import get_settings
 from tkp_api.core.security import AuthenticatedPrincipal
+from tkp_api.core.security import parse_authorization_header
 from tkp_api.dependencies import RequestContext
 from tkp_api.models.auth import UserCredential
 from tkp_api.models.enums import MembershipStatus, TenantRole, WorkspaceRole
@@ -18,7 +21,7 @@ from tkp_api.models.knowledge import KBMembership
 from tkp_api.models.permission import TenantRolePermission
 from tkp_api.models.tenant import Tenant, TenantMembership, User
 from tkp_api.models.workspace import Workspace, WorkspaceMembership
-from tkp_api.schemas.auth import AuthRegisterRequest
+from tkp_api.schemas.auth import AuthLoginRequest, AuthRegisterRequest, AuthSwitchTenantRequest
 from tkp_api.schemas.permission import PermissionTemplatePublishRequest, RolePermissionUpdateRequest
 from tkp_api.schemas.tenant import TenantMemberInviteRequest
 from tkp_api.services.tenant_bootstrap import create_tenant_with_owner
@@ -33,7 +36,7 @@ def _make_request(path: str = "/test") -> Request:
 def _make_ctx(*, user: User, tenant_id, tenant_role: str) -> RequestContext:
     principal = AuthenticatedPrincipal(
         subject=str(user.id),
-        provider="dev",
+        provider="local",
         email=user.email,
         display_name=user.display_name,
         claims={"sub": str(user.id)},
@@ -118,6 +121,206 @@ def test_register_creates_personal_tenant_and_default_workspace(db_session: Sess
     assert workspace.slug == "default"
     assert workspace_membership.role == WorkspaceRole.OWNER
     assert workspace_membership.status == MembershipStatus.ACTIVE
+
+
+def test_register_existing_credential_returns_clear_error(db_session: Session):
+    _create_user(db_session, email="dup@example.com", display_name="Dup")
+    db_session.commit()
+    auth_api.register(
+        payload=AuthRegisterRequest(
+            email="dup@example.com",
+            password="StrongPassw0rd!",
+            display_name="Dup",
+        ),
+        request=_make_request("/auth/register"),
+        db=db_session,
+    )
+
+    with pytest.raises(HTTPException) as exc:
+        auth_api.register(
+            payload=AuthRegisterRequest(
+                email="dup@example.com",
+                password="StrongPassw0rd!",
+                display_name="Dup",
+            ),
+            request=_make_request("/auth/register"),
+            db=db_session,
+        )
+
+    assert exc.value.status_code == 409
+    assert isinstance(exc.value.detail, dict)
+    assert exc.value.detail["code"] == "REGISTER_CREDENTIAL_EXISTS"
+    assert "请直接登录" in exc.value.detail["message"]
+
+
+def test_register_blank_display_name_returns_clear_error(db_session: Session):
+    with pytest.raises(HTTPException) as exc:
+        auth_api.register(
+            payload=AuthRegisterRequest(
+                email="blank-display@example.com",
+                password="StrongPassw0rd!",
+                display_name="   ",
+            ),
+            request=_make_request("/auth/register"),
+            db=db_session,
+        )
+
+    assert exc.value.status_code == 422
+    assert isinstance(exc.value.detail, dict)
+    assert exc.value.detail["code"] == "REGISTER_INVALID_DISPLAY_NAME"
+    assert "展示名" in exc.value.detail["message"]
+
+
+def test_login_wrong_password_returns_clear_error(db_session: Session):
+    auth_api.register(
+        payload=AuthRegisterRequest(
+            email="login-wrong@example.com",
+            password="StrongPassw0rd!",
+            display_name="Login Wrong",
+        ),
+        request=_make_request("/auth/register"),
+        db=db_session,
+    )
+    with pytest.raises(HTTPException) as exc:
+        auth_api.login(
+            payload=AuthLoginRequest(
+                email="login-wrong@example.com",
+                password="WrongPassw0rd!",
+            ),
+            request=_make_request("/auth/login"),
+            db=db_session,
+        )
+    assert exc.value.status_code == 401
+    assert isinstance(exc.value.detail, dict)
+    assert exc.value.detail["code"] == "LOGIN_INVALID_CREDENTIALS"
+    assert "账号或密码错误" in exc.value.detail["message"]
+
+
+def test_login_disabled_user_returns_clear_error(db_session: Session):
+    user = _create_user(db_session, email="disabled@example.com", display_name="Disabled")
+    user.status = "disabled"
+    db_session.commit()
+
+    with pytest.raises(HTTPException) as exc:
+        auth_api.login(
+            payload=AuthLoginRequest(
+                email="disabled@example.com",
+                password="StrongPassw0rd!",
+            ),
+            request=_make_request("/auth/login"),
+            db=db_session,
+        )
+    assert exc.value.status_code == 403
+    assert isinstance(exc.value.detail, dict)
+    assert exc.value.detail["code"] == "LOGIN_USER_DISABLED"
+    assert "账号已被禁用" in exc.value.detail["message"]
+
+
+def test_login_response_contains_tenant_id(db_session: Session, monkeypatch):
+    monkeypatch.setenv("KD_AUTH_JWT_SECRET", "unit-test-secret")
+    monkeypatch.setenv("KD_AUTH_JWT_ALGORITHMS", "HS256")
+
+    auth_api.register(
+        payload=AuthRegisterRequest(
+            email="tenant-login@example.com",
+            password="StrongPassw0rd!",
+            display_name="Tenant Login",
+        ),
+        request=_make_request("/auth/register"),
+        db=db_session,
+    )
+
+    login_response = auth_api.login(
+        payload=AuthLoginRequest(
+            email="tenant-login@example.com",
+            password="StrongPassw0rd!",
+        ),
+        request=_make_request("/auth/login"),
+        db=db_session,
+    )
+    tenant_id = login_response["data"]["tenant_id"]
+    token = login_response["data"]["access_token"]
+    claims = jwt.decode(token, options={"verify_signature": False})
+
+    assert tenant_id is not None
+    assert claims["tenant_id"] == str(tenant_id)
+
+
+def test_login_single_session_keeps_latest_token(db_session: Session, monkeypatch):
+    monkeypatch.setenv("KD_AUTH_JWT_SECRET", "unit-test-secret")
+    monkeypatch.setenv("KD_AUTH_JWT_ALGORITHMS", "HS256")
+    monkeypatch.delenv("KD_AUTH_JWT_ISSUER", raising=False)
+    monkeypatch.delenv("KD_AUTH_JWT_AUDIENCE", raising=False)
+    monkeypatch.delenv("KD_AUTH_JWKS_URL", raising=False)
+    monkeypatch.delenv("KD_REDIS_URL", raising=False)
+    get_settings.cache_clear()
+
+    auth_api.register(
+        payload=AuthRegisterRequest(
+            email="sso-login@example.com",
+            password="StrongPassw0rd!",
+            display_name="SSO Login",
+        ),
+        request=_make_request("/auth/register"),
+        db=db_session,
+    )
+    login1 = auth_api.login(
+        payload=AuthLoginRequest(
+            email="sso-login@example.com",
+            password="StrongPassw0rd!",
+        ),
+        request=_make_request("/auth/login"),
+        db=db_session,
+    )
+    login2 = auth_api.login(
+        payload=AuthLoginRequest(
+            email="sso-login@example.com",
+            password="StrongPassw0rd!",
+        ),
+        request=_make_request("/auth/login"),
+        db=db_session,
+    )
+    with pytest.raises(HTTPException) as exc:
+        parse_authorization_header(f"Bearer {login1['data']['access_token']}")
+    assert exc.value.status_code == 401
+    principal = parse_authorization_header(f"Bearer {login2['data']['access_token']}")
+    assert principal.claims.get("tkp_uid")
+    get_settings.cache_clear()
+
+
+def test_switch_tenant_issues_token_with_target_tenant(db_session: Session, monkeypatch):
+    monkeypatch.setenv("KD_AUTH_JWT_SECRET", "unit-test-secret")
+    monkeypatch.setenv("KD_AUTH_JWT_ALGORITHMS", "HS256")
+
+    register_response = auth_api.register(
+        payload=AuthRegisterRequest(
+            email="switch-tenant@example.com",
+            password="StrongPassw0rd!",
+            display_name="Switch Tenant",
+        ),
+        request=_make_request("/auth/register"),
+        db=db_session,
+    )
+    user = db_session.get(User, register_response["data"]["user_id"])
+    _, target_workspace = create_tenant_with_owner(
+        db_session,
+        owner_user_id=user.id,
+        tenant_name="Second Tenant",
+        tenant_slug="second-tenant",
+    )
+    db_session.commit()
+
+    switch_response = auth_api.switch_tenant(
+        payload=AuthSwitchTenantRequest(tenant_id=target_workspace.tenant_id),
+        request=_make_request("/auth/switch-tenant"),
+        user=user,
+        db=db_session,
+    )
+    token = switch_response["data"]["access_token"]
+    claims = jwt.decode(token, options={"verify_signature": False})
+
+    assert switch_response["data"]["tenant_id"] == target_workspace.tenant_id
+    assert claims["tenant_id"] == str(target_workspace.tenant_id)
 
 
 def test_invite_and_join_tenant_flow(db_session: Session, monkeypatch):
@@ -210,8 +413,8 @@ def test_role_permission_update_and_template_publish_affect_snapshot(db_session:
         db=db_session,
     )
 
-    snapshot_after_override = auth_api.my_permissions(
-        request=_make_request("/auth/permissions"),
+    snapshot_after_override = permissions_api.my_permission_snapshot(
+        request=_make_request("/permissions/me"),
         ctx=member_ctx,
         db=db_session,
     )
@@ -223,8 +426,8 @@ def test_role_permission_update_and_template_publish_affect_snapshot(db_session:
         ctx=owner_ctx,
         db=db_session,
     )
-    snapshot_after_publish = auth_api.my_permissions(
-        request=_make_request("/auth/permissions"),
+    snapshot_after_publish = permissions_api.my_permission_snapshot(
+        request=_make_request("/permissions/me"),
         ctx=member_ctx,
         db=db_session,
     )

@@ -35,6 +35,12 @@ class AuthLoginRequest(BaseModel):
     password: str = Field(min_length=8, max_length=128, description="登录密码。", examples=["StrongPassw0rd!"])
 
 
+class AuthSwitchTenantRequest(BaseModel):
+    """切换租户请求。"""
+
+    tenant_id: UUID = Field(description="目标租户 ID。")
+
+
 class AuthRegisterData(BaseSchema):
     """注册结果结构。"""
 
@@ -55,6 +61,7 @@ class AuthLoginData(BaseSchema):
     token_type: str = Field(default="bearer", description="令牌类型。")
     expires_at: datetime = Field(description="令牌过期时间（UTC）。")
     expires_in: int = Field(description="距过期剩余秒数。")
+    tenant_id: UUID | None = Field(default=None, description="当前访问令牌绑定的租户 ID。")
 
 
 class AuthLogoutData(BaseSchema):

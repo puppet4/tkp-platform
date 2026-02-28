@@ -80,7 +80,6 @@ Required vars for API currently:
 
 - `KD_DATABASE_URL`
 - `KD_API_PREFIX`
-- `KD_AUTH_MODE`
 - `KD_AUTH_JWT_ALGORITHMS`
 - `KD_AUTH_JWT_SECRET` (or `KD_AUTH_JWKS_URL`)
 - `KD_STORAGE_ROOT`
@@ -88,5 +87,4 @@ Required vars for API currently:
 Auth and tenancy headers:
 
 - `Authorization: Bearer <jwt>`
-- `X-Tenant-Id: <tenant_uuid>`
 - `Idempotency-Key: <client_key>` (optional, for upload/reindex write idempotency)
