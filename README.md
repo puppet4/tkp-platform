@@ -40,6 +40,17 @@ psql "$KD_DATABASE_URL" -v ON_ERROR_STOP=1 -f infra/sql/030_comments.sql
 psql "$KD_DATABASE_URL" -v ON_ERROR_STOP=1 -f infra/sql/040_seed_permissions.sql
 ```
 
+治理检查（本地/CI 通用）：
+
+```bash
+bash scripts/check_sql_governance.sh
+```
+
+规则摘要：
+- 禁止 `create_all` / `metadata.create_all` 之类代码建表。
+- 禁止代码式 schema 同步脚本（如 `create_all.py`、`sync_comments.py`）。
+- 禁止 SQL 中出现外键定义（`FOREIGN KEY` / `REFERENCES`）。
+
 ## API service
 
 Start API:

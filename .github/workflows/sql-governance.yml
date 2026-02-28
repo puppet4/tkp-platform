@@ -1,0 +1,16 @@
+name: SQL Governance
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+jobs:
+  check-sql-governance:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Run SQL governance checks
+        run: bash scripts/check_sql_governance.sh
