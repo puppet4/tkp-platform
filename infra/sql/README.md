@@ -31,3 +31,4 @@ psql "$KD_DATABASE_URL" -v ON_ERROR_STOP=1 -f infra/sql/040_seed_permissions.sql
 
 - 团队规范要求不使用数据库外键，本目录 SQL 不包含任何 `FOREIGN KEY`。
 - 实体关联由应用层维护，查询采用“先查主数据，再按 ID 逻辑关联”的方式。
+- 数据库结构变更只允许通过本目录 SQL 文件维护，禁止通过代码自动建表/同步。
