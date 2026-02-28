@@ -28,6 +28,18 @@ docs/
 uv sync
 ```
 
+## Database initialization (SQL only)
+
+数据库结构通过 `infra/sql` 维护，不使用代码自动建表。
+
+```bash
+psql "$KD_DATABASE_URL" -v ON_ERROR_STOP=1 -f infra/sql/000_extensions.sql
+psql "$KD_DATABASE_URL" -v ON_ERROR_STOP=1 -f infra/sql/010_tables.sql
+psql "$KD_DATABASE_URL" -v ON_ERROR_STOP=1 -f infra/sql/020_indexes.sql
+psql "$KD_DATABASE_URL" -v ON_ERROR_STOP=1 -f infra/sql/030_comments.sql
+psql "$KD_DATABASE_URL" -v ON_ERROR_STOP=1 -f infra/sql/040_seed_permissions.sql
+```
+
 ## API service
 
 Start API:
