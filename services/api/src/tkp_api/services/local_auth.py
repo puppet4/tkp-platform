@@ -8,6 +8,7 @@ import hashlib
 import hmac
 import secrets
 from datetime import datetime, timedelta, timezone
+from uuid import UUID
 from uuid import uuid4
 
 import jwt
@@ -52,7 +53,7 @@ def verify_password(password: str, password_hash: str) -> bool:
     return hmac.compare_digest(actual_digest, expected_digest)
 
 
-def issue_access_token(user: User) -> tuple[str, int, datetime]:
+def issue_access_token(user: User, *, tenant_id: UUID | None = None) -> tuple[str, int, datetime, str]:
     """签发访问令牌。"""
     settings = get_settings()
     now = datetime.now(timezone.utc)
@@ -62,6 +63,7 @@ def issue_access_token(user: User) -> tuple[str, int, datetime]:
 
     claims: dict[str, object] = {
         "sub": user.external_subject,
+        "tkp_uid": str(user.id),
         "email": user.email,
         "name": user.display_name,
         "provider": user.auth_provider,
@@ -72,6 +74,8 @@ def issue_access_token(user: User) -> tuple[str, int, datetime]:
     }
     if settings.auth_jwt_audience:
         claims["aud"] = settings.auth_jwt_audience
+    if tenant_id is not None:
+        claims["tenant_id"] = str(tenant_id)
 
     token = jwt.encode(claims, settings.auth_jwt_secret, algorithm=settings.auth_algorithms[0])
-    return token, int(expires_at.timestamp()), expires_at
+    return token, int(expires_at.timestamp()), expires_at, jti

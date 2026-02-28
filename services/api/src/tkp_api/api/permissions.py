@@ -1,38 +1,36 @@
 """权限管理接口。"""
 
-from uuid import UUID
-
 from fastapi import APIRouter, Depends, HTTPException, Path, Request, status
-from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from tkp_api.dependencies import get_request_context
 from tkp_api.db.session import get_db
-from tkp_api.models.enums import MembershipStatus, TenantRole
-from tkp_api.models.tenant import TenantMembership, User
+from tkp_api.models.enums import TenantRole
 from tkp_api.utils.response import success
 from tkp_api.schemas.common import ErrorResponse, SuccessResponse
 from tkp_api.schemas.permission import PermissionTemplatePublishRequest, RolePermissionUpdateRequest
 from tkp_api.schemas.responses import (
     PermissionCatalogData,
+    PermissionSnapshotData,
     PermissionTemplateData,
     PermissionTemplatePublishData,
-    RoleUserBindingData,
     TenantRolePermissionData,
 )
-from tkp_api.services.membership_sync import sync_workspace_memberships_for_tenant_member
 from tkp_api.services import (
     DEFAULT_PERMISSION_TEMPLATE_KEY,
     audit_log,
     default_permission_template,
     list_tenant_role_permission_matrix,
+    list_tenant_actions,
     permission_catalog,
     publish_default_permission_template,
     reset_tenant_role_actions,
     set_tenant_role_actions,
 )
 
-router = APIRouter(prefix="/permissions", tags=["permissions"])
+router = APIRouter(prefix="/permissions")
+_PERMISSION_RUNTIME_TAG = ["permissions-runtime"]
+_PERMISSION_CONFIG_TAG = ["permissions-config"]
 
 _PERMISSION_ADMIN_ROLES = {TenantRole.OWNER, TenantRole.ADMIN}
 _TENANT_ROLES = {TenantRole.OWNER, TenantRole.ADMIN, TenantRole.MEMBER, TenantRole.VIEWER}
@@ -53,9 +51,34 @@ def _normalize_role(role: str) -> str:
 
 
 @router.get(
+    "/me",
+    tags=_PERMISSION_RUNTIME_TAG,
+    summary="运行时权限快照（前端鉴权入口）",
+    description="返回“当前用户 + 当前租户”的最终生效权限集合。该接口只读、无副作用，推荐前端只依赖本接口控制菜单、按钮和功能开关。",
+    status_code=status.HTTP_200_OK,
+    response_model=SuccessResponse[PermissionSnapshotData],
+    responses={401: {"model": ErrorResponse}, 403: {"model": ErrorResponse}, 422: {"model": ErrorResponse}},
+)
+def my_permission_snapshot(
+    request: Request,
+    ctx=Depends(get_request_context),
+    db: Session = Depends(get_db),
+):
+    """返回当前租户上下文下的权限快照。"""
+    return success(
+        request,
+        {
+            "tenant_role": ctx.tenant_role,
+            "allowed_actions": list_tenant_actions(db, tenant_id=ctx.tenant_id, tenant_role=ctx.tenant_role),
+        },
+    )
+
+
+@router.get(
     "/catalog",
-    summary="查询权限点目录",
-    description="返回系统内可用权限点编码列表，供前端菜单/按钮/功能/API 绑定。",
+    tags=_PERMISSION_CONFIG_TAG,
+    summary="配置基线：权限点目录",
+    description="返回系统可配置的权限码白名单全集。用于后台权限配置页面，不用于运行时鉴权。",
     status_code=status.HTTP_200_OK,
     response_model=SuccessResponse[PermissionCatalogData],
     responses={401: {"model": ErrorResponse}, 403: {"model": ErrorResponse}, 422: {"model": ErrorResponse}},
@@ -71,8 +94,9 @@ def get_permission_catalog(
 
 @router.get(
     "/templates/default",
-    summary="查询默认权限模板",
-    description="返回系统内置的角色权限模板（可用于菜单/按钮/功能/API 一体化发布）。",
+    tags=_PERMISSION_CONFIG_TAG,
+    summary="配置基线：默认权限模板（只读）",
+    description="返回系统内置的角色权限预设（role -> permission_codes）。该接口只查看模板，不会改动租户配置。",
     status_code=status.HTTP_200_OK,
     response_model=SuccessResponse[PermissionTemplateData],
     responses={401: {"model": ErrorResponse}, 403: {"model": ErrorResponse}, 422: {"model": ErrorResponse}},
@@ -101,8 +125,9 @@ def get_default_template(
 
 @router.post(
     "/templates/default/publish",
-    summary="发布默认权限模板",
-    description="将默认模板发布到当前租户（可覆盖已有配置或仅填充未配置角色）。",
+    tags=_PERMISSION_CONFIG_TAG,
+    summary="配置动作：发布默认权限模板（写入）",
+    description="将默认模板真正写入当前租户角色权限。`overwrite_existing=true` 会覆盖现有配置；`false` 仅填充未配置角色。",
     status_code=status.HTTP_200_OK,
     response_model=SuccessResponse[PermissionTemplatePublishData],
     responses={401: {"model": ErrorResponse}, 403: {"model": ErrorResponse}, 422: {"model": ErrorResponse}},
@@ -148,6 +173,7 @@ def publish_default_template(
 
 @router.get(
     "/roles",
+    tags=_PERMISSION_CONFIG_TAG,
     summary="查询租户角色权限矩阵",
     description="返回当前租户的角色权限映射，用于权限配置页面展示。",
     status_code=status.HTTP_200_OK,
@@ -168,6 +194,7 @@ def list_role_permissions(
 
 @router.put(
     "/roles/{role}",
+    tags=_PERMISSION_CONFIG_TAG,
     summary="更新租户角色权限",
     description="覆盖更新当前租户某角色的权限点编码集合。",
     status_code=status.HTTP_200_OK,
@@ -209,6 +236,7 @@ def update_role_permissions(
 
 @router.delete(
     "/roles/{role}",
+    tags=_PERMISSION_CONFIG_TAG,
     summary="重置角色权限为默认值",
     description="清空当前租户自定义配置，恢复指定角色的系统默认权限集合。",
     status_code=status.HTTP_200_OK,
@@ -240,135 +268,3 @@ def reset_role_permissions(
     )
     db.commit()
     return success(request, {"role": role_value, "permission_codes": current})
-
-
-@router.get(
-    "/roles/{role}/users",
-    summary="查询角色绑定用户",
-    description="返回当前租户内指定角色绑定的用户列表（用户-角色关系）。",
-    status_code=status.HTTP_200_OK,
-    response_model=SuccessResponse[list[RoleUserBindingData]],
-    responses={401: {"model": ErrorResponse}, 403: {"model": ErrorResponse}, 422: {"model": ErrorResponse}},
-)
-def list_role_users(
-    request: Request,
-    role: str = Path(..., description="角色标识（owner/admin/member/viewer）。"),
-    ctx=Depends(get_request_context),
-    db: Session = Depends(get_db),
-):
-    """查询角色绑定用户。"""
-    _ensure_permission_admin(ctx.tenant_role)
-    role_value = _normalize_role(role)
-
-    memberships = (
-        db.execute(
-            select(TenantMembership)
-            .where(TenantMembership.tenant_id == ctx.tenant_id)
-            .where(TenantMembership.role == role_value)
-        )
-        .scalars()
-        .all()
-    )
-    user_ids = list({membership.user_id for membership in memberships})
-    user_map: dict[UUID, User] = {}
-    if user_ids:
-        users = db.execute(select(User).where(User.id.in_(user_ids))).scalars().all()
-        user_map = {user.id: user for user in users}
-
-    data = [
-        {
-            "role": role_value,
-            "tenant_id": ctx.tenant_id,
-            "user_id": membership.user_id,
-            "email": user.email,
-            "display_name": user.display_name,
-            "membership_status": membership.status,
-        }
-        for membership in memberships
-        if (user := user_map.get(membership.user_id)) is not None
-    ]
-    return success(request, data)
-
-
-@router.put(
-    "/roles/{role}/users/{user_id}",
-    summary="绑定用户到角色",
-    description="将当前租户内指定用户绑定到目标角色。",
-    status_code=status.HTTP_200_OK,
-    response_model=SuccessResponse[RoleUserBindingData],
-    responses={401: {"model": ErrorResponse}, 403: {"model": ErrorResponse}, 404: {"model": ErrorResponse}, 422: {"model": ErrorResponse}},
-)
-def bind_role_user(
-    request: Request,
-    role: str = Path(..., description="角色标识（owner/admin/member/viewer）。"),
-    user_id: UUID = Path(..., description="目标用户 ID。"),
-    ctx=Depends(get_request_context),
-    db: Session = Depends(get_db),
-):
-    """绑定用户到角色。"""
-    _ensure_permission_admin(ctx.tenant_role)
-    role_value = _normalize_role(role)
-
-    membership = (
-        db.execute(
-            select(TenantMembership)
-            .where(TenantMembership.tenant_id == ctx.tenant_id)
-            .where(TenantMembership.user_id == user_id)
-        )
-        .scalar_one_or_none()
-    )
-    if not membership:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="membership not found")
-
-    if membership.role == TenantRole.OWNER and role_value != TenantRole.OWNER:
-        owners = (
-            db.execute(
-                select(TenantMembership)
-                .where(TenantMembership.tenant_id == ctx.tenant_id)
-                .where(TenantMembership.role == TenantRole.OWNER)
-                .where(TenantMembership.status == MembershipStatus.ACTIVE)
-            )
-            .scalars()
-            .all()
-        )
-        if len(owners) <= 1:
-            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="cannot downgrade last owner")
-
-    user = db.get(User, user_id)
-    if not user:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="user not found")
-
-    before = {"role": membership.role, "status": membership.status}
-    membership.role = role_value
-    membership.status = MembershipStatus.ACTIVE
-    sync_workspace_memberships_for_tenant_member(
-        db,
-        tenant_id=ctx.tenant_id,
-        user_id=user_id,
-        tenant_role=membership.role,
-    )
-
-    audit_log(
-        db=db,
-        request=request,
-        tenant_id=ctx.tenant_id,
-        actor_user_id=ctx.user_id,
-        action="permission.role.user.bind",
-        resource_type="tenant_membership",
-        resource_id=str(membership.id),
-        before_json=before,
-        after_json={"role": membership.role, "status": membership.status},
-    )
-    db.commit()
-
-    return success(
-        request,
-        {
-            "role": role_value,
-            "tenant_id": ctx.tenant_id,
-            "user_id": user.id,
-            "email": user.email,
-            "display_name": user.display_name,
-            "membership_status": membership.status,
-        },
-    )

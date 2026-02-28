@@ -1,7 +1,6 @@
 """应用运行配置。"""
 
 from functools import lru_cache
-from typing import Literal
 
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -21,7 +20,6 @@ class Settings(BaseSettings):
         description="数据库连接地址。",
     )
 
-    auth_mode: Literal["jwt", "dev"] = Field(default="jwt", description="认证模式。")
     auth_jwt_algorithms: str = Field(default="HS256", description="令牌签名算法列表，逗号分隔。")
     auth_jwt_issuer: str | None = Field(default=None, description="期望的签发方。")
     auth_jwt_audience: str | None = Field(default=None, description="期望的受众。")
@@ -33,6 +31,7 @@ class Settings(BaseSettings):
     auth_password_hash_iterations: int = Field(default=390000, description="PBKDF2 密码哈希迭代次数。")
     redis_url: str | None = Field(default=None, description="Redis 连接地址，用于令牌黑名单。")
     auth_token_blacklist_prefix: str = Field(default="auth:blacklist:", description="令牌黑名单键前缀。")
+    auth_token_session_prefix: str = Field(default="auth:session:", description="登录会话键前缀。")
 
     storage_root: str = Field(default="./.storage", description="上传文件落盘根目录。")
     ingestion_default_max_attempts: int = Field(default=5, description="入库任务默认最大重试次数。")
