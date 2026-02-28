@@ -27,3 +27,12 @@ class RolePermissionUpdateRequest(BaseModel):
             seen.add(code)
             normalized.append(code)
         return normalized
+
+
+class PermissionTemplatePublishRequest(BaseModel):
+    """权限模板发布请求。"""
+
+    overwrite_existing: bool = Field(
+        default=True,
+        description="是否覆盖当前租户角色已有权限配置；false 表示仅填充未配置角色。",
+    )

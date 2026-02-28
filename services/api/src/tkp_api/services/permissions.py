@@ -148,6 +148,9 @@ DEFAULT_TENANT_ROLE_ACTIONS: dict[str, set[str]] = {
     TenantRole.MEMBER: _MEMBER_ACTIONS | _MEMBER_UI_CODES,
     TenantRole.VIEWER: _VIEWER_ACTIONS | _VIEWER_UI_CODES,
 }
+DEFAULT_PERMISSION_TEMPLATE_KEY = "default"
+DEFAULT_PERMISSION_TEMPLATE_VERSION = "2026-02-28"
+_TEMPLATE_ROLES = (TenantRole.OWNER, TenantRole.ADMIN, TenantRole.MEMBER, TenantRole.VIEWER)
 
 
 def _forbidden() -> HTTPException:
@@ -188,6 +191,24 @@ def _load_role_permissions(db: Session, *, tenant_id: UUID, role: str) -> list[s
     return rows
 
 
+def _normalize_permission_codes(permission_codes: list[str]) -> list[str]:
+    """规范化、去重权限编码。"""
+    return sorted({_normalize_permission_code(code) for code in permission_codes if code.strip()})
+
+
+def _validate_catalog_permission_codes(permission_codes: list[str]) -> list[str]:
+    """校验权限编码是否在白名单目录中。"""
+    normalized = _normalize_permission_codes(permission_codes)
+    catalog_set = set(permission_catalog())
+    invalid_codes = [code for code in normalized if code not in catalog_set]
+    if invalid_codes:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail={"message": "invalid permission codes", "invalid_codes": invalid_codes},
+        )
+    return normalized
+
+
 def list_tenant_actions(db: Session, *, tenant_id: UUID, tenant_role: str) -> list[str]:
     """返回当前租户角色可执行权限点。
 
@@ -197,14 +218,22 @@ def list_tenant_actions(db: Session, *, tenant_id: UUID, tenant_role: str) -> li
     """
     configured = _load_role_permissions(db, tenant_id=tenant_id, role=tenant_role)
     if configured:
-        return sorted({_normalize_permission_code(code) for code in configured if code.strip()})
+        catalog_set = set(permission_catalog())
+        return sorted(
+            {
+                normalized
+                for code in configured
+                if code.strip()
+                if (normalized := _normalize_permission_code(code)) in catalog_set
+            }
+        )
     return sorted(DEFAULT_TENANT_ROLE_ACTIONS.get(tenant_role, set()))
 
 
 def list_tenant_role_permission_matrix(db: Session, *, tenant_id: UUID) -> dict[str, list[str]]:
     """返回当前租户所有角色权限映射。"""
     matrix: dict[str, list[str]] = {}
-    for role in (TenantRole.OWNER, TenantRole.ADMIN, TenantRole.MEMBER, TenantRole.VIEWER):
+    for role in _TEMPLATE_ROLES:
         matrix[role] = list_tenant_actions(db, tenant_id=tenant_id, tenant_role=role)
     return matrix
 
@@ -217,7 +246,7 @@ def set_tenant_role_actions(
     permission_codes: list[str],
 ) -> list[str]:
     """覆盖设置租户角色权限点。"""
-    normalized = sorted({_normalize_permission_code(code) for code in permission_codes if code.strip()})
+    normalized = _validate_catalog_permission_codes(permission_codes)
     db.execute(
         delete(TenantRolePermission)
         .where(TenantRolePermission.tenant_id == tenant_id)
@@ -238,6 +267,44 @@ def reset_tenant_role_actions(db: Session, *, tenant_id: UUID, role: str) -> lis
     )
     db.flush()
     return sorted(DEFAULT_TENANT_ROLE_ACTIONS.get(role, set()))
+
+
+def default_permission_template() -> dict[str, object]:
+    """返回系统默认权限模板。"""
+    role_permissions = {
+        role: sorted(DEFAULT_TENANT_ROLE_ACTIONS.get(role, set()))
+        for role in _TEMPLATE_ROLES
+    }
+    return {
+        "template_key": DEFAULT_PERMISSION_TEMPLATE_KEY,
+        "version": DEFAULT_PERMISSION_TEMPLATE_VERSION,
+        "role_permissions": role_permissions,
+        "catalog": permission_catalog(),
+    }
+
+
+def publish_default_permission_template(
+    db: Session,
+    *,
+    tenant_id: UUID,
+    overwrite_existing: bool = True,
+) -> dict[str, list[str]]:
+    """将默认权限模板发布到指定租户。"""
+    template = default_permission_template()
+    role_permissions: dict[str, list[str]] = template["role_permissions"]  # type: ignore[assignment]
+    result: dict[str, list[str]] = {}
+    for role in _TEMPLATE_ROLES:
+        existing = _load_role_permissions(db, tenant_id=tenant_id, role=role)
+        if existing and not overwrite_existing:
+            result[role] = list_tenant_actions(db, tenant_id=tenant_id, tenant_role=role)
+            continue
+        result[role] = set_tenant_role_actions(
+            db,
+            tenant_id=tenant_id,
+            role=role,
+            permission_codes=role_permissions.get(role, []),
+        )
+    return result
 
 
 def require_tenant_action(

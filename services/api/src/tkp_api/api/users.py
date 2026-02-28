@@ -262,6 +262,8 @@ def remove_user(
     for kb_membership in kb_memberships:
         kb_membership.status = MembershipStatus.DISABLED
 
+    # 当前会话默认 autoflush=False，先手动 flush 再查询，避免读到旧状态。
+    db.flush()
     active_memberships = (
         db.execute(
             select(TenantMembership)

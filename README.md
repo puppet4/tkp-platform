@@ -50,6 +50,7 @@ bash scripts/check_sql_governance.sh
 - 禁止 `create_all` / `metadata.create_all` 之类代码建表。
 - 禁止代码式 schema 同步脚本（如 `create_all.py`、`sync_comments.py`）。
 - 禁止 SQL 中出现外键定义（`FOREIGN KEY` / `REFERENCES`）。
+- 禁止直接修改基线 SQL（`infra/sql/000~040`），结构变更走 `infra/sql/migrations/*.sql`。
 
 ## API service
 
