@@ -1,0 +1,3 @@
+-- 基础扩展：UUID 生成 + 向量类型。
+CREATE EXTENSION IF NOT EXISTS pgcrypto;
+CREATE EXTENSION IF NOT EXISTS vector;
