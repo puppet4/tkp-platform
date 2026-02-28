@@ -1,0 +1,9 @@
+# Baseline SQL checksum lock file.
+# If any baseline file hash changes, CI will fail.
+# Schema evolution must be added via infra/sql/migrations/*.sql.
+
+c925c0ad5399932d389b3f3c5fa967ff1ed86bfb0a622cfe86890a4ef907f0f3 infra/sql/000_extensions.sql
+c1df8f6094d938aaa0af5f185e30debae3dfbbccc083348691f00641b2977602 infra/sql/010_tables.sql
+2fdcff1717d6c4b058c5c4d91614a474e6fbee60378cf86150377aa7ac8590ce infra/sql/020_indexes.sql
+6d79534ab74b8a183a03ef135617f0c8d5ee9343490f77ba06b11a2c9bf862e5 infra/sql/030_comments.sql
+3093b2062a1739871bda37119109076b205ffec8bebf020e5b97da31cc8e285c infra/sql/040_seed_permissions.sql

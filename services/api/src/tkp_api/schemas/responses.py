@@ -82,6 +82,24 @@ class TenantRolePermissionData(BaseSchema):
     permission_codes: list[str] = Field(description="该角色拥有的权限点编码列表。")
 
 
+class PermissionTemplateData(BaseSchema):
+    """权限模板结构。"""
+
+    template_key: str = Field(description="模板标识。")
+    version: str = Field(description="模板版本。")
+    catalog: list[str] = Field(description="模板对应白名单权限目录。")
+    role_permissions: list[TenantRolePermissionData] = Field(description="模板角色权限映射。")
+
+
+class PermissionTemplatePublishData(BaseSchema):
+    """模板发布结果结构。"""
+
+    template_key: str = Field(description="模板标识。")
+    version: str = Field(description="模板版本。")
+    overwrite_existing: bool = Field(description="是否覆盖了已有租户角色权限。")
+    role_permissions: list[TenantRolePermissionData] = Field(description="发布后的租户角色权限映射。")
+
+
 class RoleUserBindingData(BaseSchema):
     """角色用户绑定结构。"""
 

@@ -12,13 +12,22 @@ from tkp_api.models.enums import MembershipStatus, TenantRole
 from tkp_api.models.tenant import TenantMembership, User
 from tkp_api.utils.response import success
 from tkp_api.schemas.common import ErrorResponse, SuccessResponse
-from tkp_api.schemas.permission import RolePermissionUpdateRequest
-from tkp_api.schemas.responses import PermissionCatalogData, RoleUserBindingData, TenantRolePermissionData
+from tkp_api.schemas.permission import PermissionTemplatePublishRequest, RolePermissionUpdateRequest
+from tkp_api.schemas.responses import (
+    PermissionCatalogData,
+    PermissionTemplateData,
+    PermissionTemplatePublishData,
+    RoleUserBindingData,
+    TenantRolePermissionData,
+)
 from tkp_api.services.membership_sync import sync_workspace_memberships_for_tenant_member
 from tkp_api.services import (
+    DEFAULT_PERMISSION_TEMPLATE_KEY,
     audit_log,
+    default_permission_template,
     list_tenant_role_permission_matrix,
     permission_catalog,
+    publish_default_permission_template,
     reset_tenant_role_actions,
     set_tenant_role_actions,
 )
@@ -58,6 +67,83 @@ def get_permission_catalog(
     """返回权限点目录。"""
     _ensure_permission_admin(ctx.tenant_role)
     return success(request, {"permission_codes": permission_catalog()})
+
+
+@router.get(
+    "/templates/default",
+    summary="查询默认权限模板",
+    description="返回系统内置的角色权限模板（可用于菜单/按钮/功能/API 一体化发布）。",
+    status_code=status.HTTP_200_OK,
+    response_model=SuccessResponse[PermissionTemplateData],
+    responses={401: {"model": ErrorResponse}, 403: {"model": ErrorResponse}, 422: {"model": ErrorResponse}},
+)
+def get_default_template(
+    request: Request,
+    ctx=Depends(get_request_context),
+):
+    """查询默认权限模板。"""
+    _ensure_permission_admin(ctx.tenant_role)
+    template = default_permission_template()
+    role_permissions = [
+        {"role": role, "permission_codes": codes}
+        for role, codes in template["role_permissions"].items()
+    ]
+    return success(
+        request,
+        {
+            "template_key": template["template_key"],
+            "version": template["version"],
+            "catalog": template["catalog"],
+            "role_permissions": role_permissions,
+        },
+    )
+
+
+@router.post(
+    "/templates/default/publish",
+    summary="发布默认权限模板",
+    description="将默认模板发布到当前租户（可覆盖已有配置或仅填充未配置角色）。",
+    status_code=status.HTTP_200_OK,
+    response_model=SuccessResponse[PermissionTemplatePublishData],
+    responses={401: {"model": ErrorResponse}, 403: {"model": ErrorResponse}, 422: {"model": ErrorResponse}},
+)
+def publish_default_template(
+    payload: PermissionTemplatePublishRequest,
+    request: Request,
+    ctx=Depends(get_request_context),
+    db: Session = Depends(get_db),
+):
+    """发布默认权限模板到当前租户。"""
+    _ensure_permission_admin(ctx.tenant_role)
+    matrix = publish_default_permission_template(
+        db,
+        tenant_id=ctx.tenant_id,
+        overwrite_existing=payload.overwrite_existing,
+    )
+    audit_log(
+        db=db,
+        request=request,
+        tenant_id=ctx.tenant_id,
+        actor_user_id=ctx.user_id,
+        action="permission.template.publish",
+        resource_type="tenant_role_permission",
+        resource_id=str(ctx.tenant_id),
+        after_json={
+            "template_key": DEFAULT_PERMISSION_TEMPLATE_KEY,
+            "overwrite_existing": payload.overwrite_existing,
+            "roles": {role: codes for role, codes in matrix.items()},
+        },
+    )
+    db.commit()
+    return success(
+        request,
+        {
+            "template_key": DEFAULT_PERMISSION_TEMPLATE_KEY,
+            "version": default_permission_template()["version"],
+            "overwrite_existing": payload.overwrite_existing,
+            "role_permissions": [{"role": role, "permission_codes": codes} for role, codes in matrix.items()],
+        },
+    )
 
 
 @router.get(
