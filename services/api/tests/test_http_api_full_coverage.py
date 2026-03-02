@@ -606,6 +606,69 @@ class WorkflowRunner:
         if status is not None:
             assert data["status"] == status
 
+    def _assert_document_version_data(
+        self,
+        data: dict,
+        *,
+        document_id: str,
+        version: int | None = None,
+        parse_status: str | None = None,
+    ) -> None:
+        _require_keys(
+            data,
+            ["id", "document_id", "version", "object_key", "parser_type", "parse_status", "checksum", "created_at"],
+            "document.version.data",
+        )
+        _assert_uuid(data["id"], "document.version.id")
+        assert data["document_id"] == document_id
+        assert isinstance(data["version"], int) and data["version"] >= 1
+        assert data["object_key"] is None or isinstance(data["object_key"], str)
+        assert data["parser_type"] is None or isinstance(data["parser_type"], str)
+        _assert_non_empty_str(data["parse_status"], "document.version.parse_status")
+        assert data["checksum"] is None or isinstance(data["checksum"], str)
+        _assert_iso_datetime(data["created_at"], "document.version.created_at")
+        if version is not None:
+            assert data["version"] == version
+        if parse_status is not None:
+            assert data["parse_status"] == parse_status
+
+    def _assert_document_chunk_page_data(
+        self,
+        data: dict,
+        *,
+        document_id: str,
+        version: int | None = None,
+    ) -> None:
+        _require_keys(
+            data,
+            ["document_id", "version", "document_version_id", "total", "offset", "limit", "items"],
+            "document.chunk.page.data",
+        )
+        assert data["document_id"] == document_id
+        assert isinstance(data["version"], int) and data["version"] >= 1
+        _assert_uuid(data["document_version_id"], "document.chunk.page.document_version_id")
+        assert isinstance(data["total"], int) and data["total"] >= 0
+        assert isinstance(data["offset"], int) and data["offset"] >= 0
+        assert isinstance(data["limit"], int) and data["limit"] >= 1
+        assert isinstance(data["items"], list)
+        if version is not None:
+            assert data["version"] == version
+        for item in data["items"]:
+            _require_keys(
+                item,
+                ["id", "document_id", "document_version_id", "chunk_no", "title_path", "content", "token_count", "metadata", "created_at"],
+                "document.chunk.item",
+            )
+            _assert_uuid(item["id"], "document.chunk.id")
+            assert item["document_id"] == document_id
+            _assert_uuid(item["document_version_id"], "document.chunk.document_version_id")
+            assert isinstance(item["chunk_no"], int) and item["chunk_no"] >= 0
+            assert item["title_path"] is None or isinstance(item["title_path"], str)
+            _assert_non_empty_str(item["content"], "document.chunk.content")
+            assert isinstance(item["token_count"], int) and item["token_count"] >= 0
+            assert item["metadata"] is None or isinstance(item["metadata"], dict)
+            _assert_iso_datetime(item["created_at"], "document.chunk.created_at")
+
     def run(self) -> None:
         """按业务顺序执行全链路流程：注册登录 -> 资源创建 -> 权限 -> 清理。"""
         try:
@@ -1007,7 +1070,12 @@ class WorkflowRunner:
         assert isinstance(snapshot_after["allowed_actions"], list) and len(snapshot_after["allowed_actions"]) > 0
 
         ui_manifest = self.success("GET", "/api/permissions/ui-manifest", token=self.ctx.member_token)
-        _require_keys(ui_manifest, ["tenant_role", "allowed_actions", "menus", "buttons", "features"], "permissions.ui_manifest")
+        _require_keys(
+            ui_manifest,
+            ["version", "tenant_role", "allowed_actions", "menus", "buttons", "features"],
+            "permissions.ui_manifest",
+        )
+        _assert_non_empty_str(ui_manifest["version"], "permissions.ui_manifest.version")
         assert ui_manifest["tenant_role"] == "admin"
         assert set(ui_manifest["allowed_actions"]) == set(snapshot_after["allowed_actions"])
 
@@ -1495,6 +1563,64 @@ class WorkflowRunner:
             workspace_id=self.ctx.ws1_id,
         )
 
+        versions = self.success(
+            "GET",
+            "/api/documents/{document_id}/versions",
+            actual_path=f"/api/documents/{self.ctx.document_id}/versions",
+            token=self.ctx.owner_token,
+        )
+        assert isinstance(versions, list) and len(versions) >= 1
+        latest_version = _find_one(versions, where="document versions", version=doc_detail["current_version"])
+        self._assert_document_version_data(
+            latest_version,
+            document_id=self.ctx.document_id,
+            version=doc_detail["current_version"],
+        )
+
+        version_detail = self.success(
+            "GET",
+            "/api/documents/{document_id}/versions/{version}",
+            actual_path=f"/api/documents/{self.ctx.document_id}/versions/{doc_detail['current_version']}",
+            token=self.ctx.owner_token,
+        )
+        self._assert_document_version_data(
+            version_detail,
+            document_id=self.ctx.document_id,
+            version=doc_detail["current_version"],
+        )
+
+        chunks_page = self.success(
+            "GET",
+            "/api/documents/{document_id}/chunks",
+            actual_path=f"/api/documents/{self.ctx.document_id}/chunks",
+            token=self.ctx.owner_token,
+            params={"version": doc_detail["current_version"], "offset": 0, "limit": 20},
+        )
+        self._assert_document_chunk_page_data(
+            chunks_page,
+            document_id=self.ctx.document_id,
+            version=doc_detail["current_version"],
+        )
+        version_chunks_page = self.success(
+            "GET",
+            "/api/documents/{document_id}/versions/{version}/chunks",
+            actual_path=f"/api/documents/{self.ctx.document_id}/versions/{doc_detail['current_version']}/chunks",
+            token=self.ctx.owner_token,
+            params={"offset": 0, "limit": 20},
+        )
+        self._assert_document_chunk_page_data(
+            version_chunks_page,
+            document_id=self.ctx.document_id,
+            version=doc_detail["current_version"],
+        )
+        self.expect_error(
+            "GET",
+            "/api/documents/{document_id}/versions/{version}/chunks",
+            actual_path=f"/api/documents/{self.ctx.document_id}/versions/999999/chunks",
+            token=self.ctx.owner_token,
+            expected_status=404,
+        )
+
         updated_doc = self.success(
             "PATCH",
             "/api/documents/{document_id}",
@@ -1902,7 +2028,12 @@ def test_http_api_permissions_ui_manifest_contract(api_client: TestClient):
     allowed_action_set = set(allowed_actions)
 
     manifest = runner.success("GET", "/api/permissions/ui-manifest", token=runner.ctx.member_token)
-    _require_keys(manifest, ["tenant_role", "allowed_actions", "menus", "buttons", "features"], "permissions.ui.manifest")
+    _require_keys(
+        manifest,
+        ["version", "tenant_role", "allowed_actions", "menus", "buttons", "features"],
+        "permissions.ui.manifest",
+    )
+    _assert_non_empty_str(manifest["version"], "permissions.ui.manifest.version")
     assert manifest["tenant_role"] == snapshot["tenant_role"]
     assert set(manifest["allowed_actions"]) == allowed_action_set
 
@@ -1922,6 +2053,354 @@ def test_http_api_permissions_ui_manifest_contract(api_client: TestClient):
 
     runner._finish_current_stage()
     _log(f"[DONE] permissions-ui-manifest 完成，耗时 {runner.elapsed():.2f}s")
+
+
+@pytest.mark.permissions_matrix
+def test_http_api_scope_guard_matrix_cross_tenant_workspace_kb_document(api_client: TestClient):
+    """
+    范围越权专项：
+    - 跨租户访问：应返回 403/404（按接口语义）
+    - 同租户但缺动作权限：应返回 403
+    """
+    runner = WorkflowRunner(api_client)
+    runner.stage_auth_and_health()
+    runner.stage_tenant_flow()
+    runner.stage_member_join_flow()
+    runner.stage_users_and_workspaces_flow()
+
+    runner.stage("准备本租户资源")
+    own_kb = runner.success(
+        "POST",
+        "/api/knowledge-bases",
+        token=runner.ctx.owner_token,
+        json={"workspace_id": runner.ctx.ws1_id, "name": "KB Own Scope", "embedding_model": "text-embedding-3-large"},
+    )
+    own_kb_id = own_kb["id"]
+
+    own_upload = runner.success(
+        "POST",
+        "/api/knowledge-bases/{kb_id}/documents",
+        actual_path=f"/api/knowledge-bases/{own_kb_id}/documents",
+        token=runner.ctx.owner_token,
+        headers={"Idempotency-Key": f"scope-own-{uuid4().hex}"},
+        files={"file": ("own.txt", b"own scope content", "text/plain")},
+        data={"metadata": json.dumps({"case": "own-scope"})},
+    )
+    own_doc_id = own_upload["document_id"]
+
+    runner.stage("准备跨租户资源")
+    foreign_tenant = runner.success(
+        "POST",
+        "/api/tenants",
+        token=runner.ctx.owner_token,
+        json={"name": "Foreign Tenant", "slug": f"foreign-{uuid4().hex[:8]}"},
+    )
+    foreign_tenant_id = foreign_tenant["tenant_id"]
+
+    switched_foreign = runner.success(
+        "POST",
+        "/api/auth/switch-tenant",
+        token=runner.ctx.owner_token,
+        json={"tenant_id": foreign_tenant_id},
+    )
+    runner.ctx.owner_token = switched_foreign["access_token"]
+
+    foreign_ws = runner.success(
+        "POST",
+        "/api/workspaces",
+        token=runner.ctx.owner_token,
+        json={"name": "WS Foreign", "slug": f"ws-foreign-{uuid4().hex[:8]}"},
+    )
+    foreign_ws_id = foreign_ws["id"]
+
+    foreign_kb = runner.success(
+        "POST",
+        "/api/knowledge-bases",
+        token=runner.ctx.owner_token,
+        json={"workspace_id": foreign_ws_id, "name": "KB Foreign", "embedding_model": "text-embedding-3-large"},
+    )
+    foreign_kb_id = foreign_kb["id"]
+
+    foreign_upload = runner.success(
+        "POST",
+        "/api/knowledge-bases/{kb_id}/documents",
+        actual_path=f"/api/knowledge-bases/{foreign_kb_id}/documents",
+        token=runner.ctx.owner_token,
+        headers={"Idempotency-Key": f"scope-foreign-{uuid4().hex}"},
+        files={"file": ("foreign.txt", b"foreign scope content", "text/plain")},
+        data={"metadata": json.dumps({"case": "foreign-scope"})},
+    )
+    foreign_doc_id = foreign_upload["document_id"]
+    foreign_job_id = foreign_upload["job_id"]
+
+    switched_back = runner.success(
+        "POST",
+        "/api/auth/switch-tenant",
+        token=runner.ctx.owner_token,
+        json={"tenant_id": runner.ctx.enterprise_tenant_id},
+    )
+    runner.ctx.owner_token = switched_back["access_token"]
+
+    runner.stage("跨租户越权矩阵")
+    # tenant 路由使用路径租户与 token 租户一致性校验，跨租户返回 403。
+    runner.expect_error(
+        "GET",
+        "/api/tenants/{tenant_id}",
+        actual_path=f"/api/tenants/{foreign_tenant_id}",
+        token=runner.ctx.owner_token,
+        expected_status=403,
+    )
+    runner.expect_error(
+        "PATCH",
+        "/api/tenants/{tenant_id}",
+        actual_path=f"/api/tenants/{foreign_tenant_id}",
+        token=runner.ctx.owner_token,
+        expected_status=403,
+        json={"name": "forbidden-tenant"},
+    )
+    runner.expect_error(
+        "DELETE",
+        "/api/tenants/{tenant_id}",
+        actual_path=f"/api/tenants/{foreign_tenant_id}",
+        token=runner.ctx.owner_token,
+        expected_status=403,
+    )
+    runner.expect_error(
+        "GET",
+        "/api/tenants/{tenant_id}/members",
+        actual_path=f"/api/tenants/{foreign_tenant_id}/members",
+        token=runner.ctx.owner_token,
+        expected_status=403,
+    )
+
+    # workspace/kb/document 路由跨租户应视为资源不存在（404）。
+    runner.expect_error(
+        "GET",
+        "/api/workspaces/{workspace_id}",
+        actual_path=f"/api/workspaces/{foreign_ws_id}",
+        token=runner.ctx.owner_token,
+        expected_status=404,
+    )
+    runner.expect_error(
+        "PATCH",
+        "/api/workspaces/{workspace_id}",
+        actual_path=f"/api/workspaces/{foreign_ws_id}",
+        token=runner.ctx.owner_token,
+        expected_status=404,
+        json={"name": "forbidden-workspace"},
+    )
+    runner.expect_error(
+        "DELETE",
+        "/api/workspaces/{workspace_id}",
+        actual_path=f"/api/workspaces/{foreign_ws_id}",
+        token=runner.ctx.owner_token,
+        expected_status=404,
+    )
+    runner.expect_error(
+        "GET",
+        "/api/workspaces/{workspace_id}/members",
+        actual_path=f"/api/workspaces/{foreign_ws_id}/members",
+        token=runner.ctx.owner_token,
+        expected_status=404,
+    )
+
+    runner.expect_error(
+        "GET",
+        "/api/knowledge-bases/{kb_id}",
+        actual_path=f"/api/knowledge-bases/{foreign_kb_id}",
+        token=runner.ctx.owner_token,
+        expected_status=404,
+    )
+    runner.expect_error(
+        "PATCH",
+        "/api/knowledge-bases/{kb_id}",
+        actual_path=f"/api/knowledge-bases/{foreign_kb_id}",
+        token=runner.ctx.owner_token,
+        expected_status=404,
+        json={"name": "forbidden-kb"},
+    )
+    runner.expect_error(
+        "DELETE",
+        "/api/knowledge-bases/{kb_id}",
+        actual_path=f"/api/knowledge-bases/{foreign_kb_id}",
+        token=runner.ctx.owner_token,
+        expected_status=404,
+    )
+    runner.expect_error(
+        "GET",
+        "/api/knowledge-bases/{kb_id}/members",
+        actual_path=f"/api/knowledge-bases/{foreign_kb_id}/members",
+        token=runner.ctx.owner_token,
+        expected_status=404,
+    )
+    runner.expect_error(
+        "GET",
+        "/api/knowledge-bases/{kb_id}/documents",
+        actual_path=f"/api/knowledge-bases/{foreign_kb_id}/documents",
+        token=runner.ctx.owner_token,
+        expected_status=404,
+    )
+
+    runner.expect_error(
+        "GET",
+        "/api/documents/{document_id}",
+        actual_path=f"/api/documents/{foreign_doc_id}",
+        token=runner.ctx.owner_token,
+        expected_status=404,
+    )
+    runner.expect_error(
+        "GET",
+        "/api/documents/{document_id}/versions",
+        actual_path=f"/api/documents/{foreign_doc_id}/versions",
+        token=runner.ctx.owner_token,
+        expected_status=404,
+    )
+    runner.expect_error(
+        "GET",
+        "/api/documents/{document_id}/versions/{version}",
+        actual_path=f"/api/documents/{foreign_doc_id}/versions/1",
+        token=runner.ctx.owner_token,
+        expected_status=404,
+    )
+    runner.expect_error(
+        "GET",
+        "/api/documents/{document_id}/chunks",
+        actual_path=f"/api/documents/{foreign_doc_id}/chunks",
+        token=runner.ctx.owner_token,
+        expected_status=404,
+    )
+    runner.expect_error(
+        "GET",
+        "/api/documents/{document_id}/versions/{version}/chunks",
+        actual_path=f"/api/documents/{foreign_doc_id}/versions/1/chunks",
+        token=runner.ctx.owner_token,
+        expected_status=404,
+    )
+    runner.expect_error(
+        "PATCH",
+        "/api/documents/{document_id}",
+        actual_path=f"/api/documents/{foreign_doc_id}",
+        token=runner.ctx.owner_token,
+        expected_status=404,
+        json={"title": "forbidden-doc"},
+    )
+    runner.expect_error(
+        "POST",
+        "/api/documents/{document_id}/reindex",
+        actual_path=f"/api/documents/{foreign_doc_id}/reindex",
+        token=runner.ctx.owner_token,
+        expected_status=404,
+    )
+    runner.expect_error(
+        "DELETE",
+        "/api/documents/{document_id}",
+        actual_path=f"/api/documents/{foreign_doc_id}",
+        token=runner.ctx.owner_token,
+        expected_status=404,
+    )
+    runner.expect_error(
+        "GET",
+        "/api/ingestion-jobs/{job_id}",
+        actual_path=f"/api/ingestion-jobs/{foreign_job_id}",
+        token=runner.ctx.owner_token,
+        expected_status=404,
+    )
+
+    runner.stage("同租户缺权限矩阵")
+    runner.success(
+        "PUT",
+        "/api/permissions/roles/{role}",
+        actual_path="/api/permissions/roles/owner",
+        token=runner.ctx.owner_token,
+        json={
+            "permission_codes": [
+                "api.tenant.read",
+                "api.workspace.read",
+                "api.kb.read",
+                "api.document.read",
+                "menu.workspace",
+                "menu.kb",
+                "menu.document",
+            ]
+        },
+    )
+
+    runner.expect_error(
+        "GET",
+        "/api/tenants/{tenant_id}/members",
+        actual_path=f"/api/tenants/{runner.ctx.enterprise_tenant_id}/members",
+        token=runner.ctx.owner_token,
+        expected_status=403,
+    )
+    runner.expect_error(
+        "PATCH",
+        "/api/workspaces/{workspace_id}",
+        actual_path=f"/api/workspaces/{runner.ctx.ws1_id}",
+        token=runner.ctx.owner_token,
+        expected_status=403,
+        json={"name": "should-forbidden"},
+    )
+    runner.expect_error(
+        "DELETE",
+        "/api/workspaces/{workspace_id}",
+        actual_path=f"/api/workspaces/{runner.ctx.ws1_id}",
+        token=runner.ctx.owner_token,
+        expected_status=403,
+    )
+    runner.expect_error(
+        "GET",
+        "/api/workspaces/{workspace_id}/members",
+        actual_path=f"/api/workspaces/{runner.ctx.ws1_id}/members",
+        token=runner.ctx.owner_token,
+        expected_status=403,
+    )
+    runner.expect_error(
+        "PATCH",
+        "/api/knowledge-bases/{kb_id}",
+        actual_path=f"/api/knowledge-bases/{own_kb_id}",
+        token=runner.ctx.owner_token,
+        expected_status=403,
+        json={"name": "should-forbidden"},
+    )
+    runner.expect_error(
+        "DELETE",
+        "/api/knowledge-bases/{kb_id}",
+        actual_path=f"/api/knowledge-bases/{own_kb_id}",
+        token=runner.ctx.owner_token,
+        expected_status=403,
+    )
+    runner.expect_error(
+        "GET",
+        "/api/knowledge-bases/{kb_id}/members",
+        actual_path=f"/api/knowledge-bases/{own_kb_id}/members",
+        token=runner.ctx.owner_token,
+        expected_status=403,
+    )
+    runner.expect_error(
+        "PATCH",
+        "/api/documents/{document_id}",
+        actual_path=f"/api/documents/{own_doc_id}",
+        token=runner.ctx.owner_token,
+        expected_status=403,
+        json={"title": "should-forbidden"},
+    )
+    runner.expect_error(
+        "POST",
+        "/api/documents/{document_id}/reindex",
+        actual_path=f"/api/documents/{own_doc_id}/reindex",
+        token=runner.ctx.owner_token,
+        expected_status=403,
+    )
+    runner.expect_error(
+        "DELETE",
+        "/api/documents/{document_id}",
+        actual_path=f"/api/documents/{own_doc_id}",
+        token=runner.ctx.owner_token,
+        expected_status=403,
+    )
+
+    runner._finish_current_stage()
+    _log(f"[DONE] scope-guard-matrix 完成，耗时 {runner.elapsed():.2f}s")
 
 
 @pytest.mark.permissions_matrix

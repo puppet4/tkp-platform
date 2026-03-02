@@ -4,8 +4,8 @@ import hashlib
 import json
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, File, Form, Header, HTTPException, Path, Request, UploadFile, status
-from sqlalchemy import delete, select
+from fastapi import APIRouter, Depends, File, Form, Header, HTTPException, Path, Query, Request, UploadFile, status
+from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
 
 from tkp_api.dependencies import get_request_context
@@ -16,7 +16,9 @@ from tkp_api.utils.response import success
 from tkp_api.schemas.common import ErrorResponse, SuccessResponse
 from tkp_api.schemas.document import DocumentUpdateRequest
 from tkp_api.schemas.responses import (
+    DocumentChunkPageData,
     DocumentData,
+    DocumentVersionData,
     DocumentUploadData,
     IngestionJobData,
     ReindexData,
@@ -294,6 +296,240 @@ def get_document(
             "current_version": document.current_version,
             "status": document.status,
             "metadata": document.metadata_,
+        },
+    )
+
+
+@router.get(
+    "/documents/{document_id}/versions",
+    summary="查询文档版本列表",
+    description="按文档 ID 返回所有版本信息（按版本号倒序）。",
+    status_code=status.HTTP_200_OK,
+    response_model=SuccessResponse[list[DocumentVersionData]],
+    responses={401: {"model": ErrorResponse}, 403: {"model": ErrorResponse}, 404: {"model": ErrorResponse}},
+)
+def list_document_versions(
+    request: Request,
+    document_id: UUID = Path(..., description="文档 ID。"),
+    ctx=Depends(get_request_context),
+    db: Session = Depends(get_db),
+):
+    """查询文档版本列表。"""
+    require_tenant_action(
+        db,
+        tenant_id=ctx.tenant_id,
+        tenant_role=ctx.tenant_role,
+        action=PermissionAction.DOCUMENT_READ,
+    )
+    ensure_document_read_access(
+        db,
+        tenant_id=ctx.tenant_id,
+        document_id=document_id,
+        user_id=ctx.user_id,
+    )
+
+    versions = (
+        db.execute(
+            select(DocumentVersion)
+            .where(DocumentVersion.tenant_id == ctx.tenant_id)
+            .where(DocumentVersion.document_id == document_id)
+            .order_by(DocumentVersion.version.desc())
+        )
+        .scalars()
+        .all()
+    )
+    data = [
+        {
+            "id": version.id,
+            "document_id": version.document_id,
+            "version": version.version,
+            "object_key": version.object_key,
+            "parser_type": version.parser_type,
+            "parse_status": version.parse_status,
+            "checksum": version.checksum,
+            "created_at": version.created_at,
+        }
+        for version in versions
+    ]
+    return success(request, data)
+
+
+@router.get(
+    "/documents/{document_id}/versions/{version}",
+    summary="查询文档版本详情",
+    description="按文档 ID + 版本号返回单个版本详情。",
+    status_code=status.HTTP_200_OK,
+    response_model=SuccessResponse[DocumentVersionData],
+    responses={401: {"model": ErrorResponse}, 403: {"model": ErrorResponse}, 404: {"model": ErrorResponse}},
+)
+def get_document_version(
+    request: Request,
+    document_id: UUID = Path(..., description="文档 ID。"),
+    version: int = Path(..., ge=1, description="文档版本号。"),
+    ctx=Depends(get_request_context),
+    db: Session = Depends(get_db),
+):
+    """查询文档版本详情。"""
+    require_tenant_action(
+        db,
+        tenant_id=ctx.tenant_id,
+        tenant_role=ctx.tenant_role,
+        action=PermissionAction.DOCUMENT_READ,
+    )
+    ensure_document_read_access(
+        db,
+        tenant_id=ctx.tenant_id,
+        document_id=document_id,
+        user_id=ctx.user_id,
+    )
+
+    doc_version = (
+        db.execute(
+            select(DocumentVersion)
+            .where(DocumentVersion.tenant_id == ctx.tenant_id)
+            .where(DocumentVersion.document_id == document_id)
+            .where(DocumentVersion.version == version)
+        )
+        .scalar_one_or_none()
+    )
+    if not doc_version:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="document version not found")
+
+    return success(
+        request,
+        {
+            "id": doc_version.id,
+            "document_id": doc_version.document_id,
+            "version": doc_version.version,
+            "object_key": doc_version.object_key,
+            "parser_type": doc_version.parser_type,
+            "parse_status": doc_version.parse_status,
+            "checksum": doc_version.checksum,
+            "created_at": doc_version.created_at,
+        },
+    )
+
+
+@router.get(
+    "/documents/{document_id}/versions/{version}/chunks",
+    summary="按版本查询文档切片分页",
+    description="按文档 ID + 版本号分页查询切片内容。",
+    status_code=status.HTTP_200_OK,
+    response_model=SuccessResponse[DocumentChunkPageData],
+    responses={401: {"model": ErrorResponse}, 403: {"model": ErrorResponse}, 404: {"model": ErrorResponse}},
+)
+def list_document_chunks_by_version(
+    request: Request,
+    document_id: UUID = Path(..., description="文档 ID。"),
+    version: int = Path(..., ge=1, description="文档版本号。"),
+    offset: int = Query(default=0, ge=0, description="分页偏移。"),
+    limit: int = Query(default=50, ge=1, le=200, description="分页大小。"),
+    ctx=Depends(get_request_context),
+    db: Session = Depends(get_db),
+):
+    """按显式版本号分页查询文档切片。"""
+    return list_document_chunks(
+        request=request,
+        document_id=document_id,
+        version=version,
+        offset=offset,
+        limit=limit,
+        ctx=ctx,
+        db=db,
+    )
+
+
+@router.get(
+    "/documents/{document_id}/chunks",
+    summary="查询文档切片分页",
+    description="按文档版本分页查询切片内容。未指定版本时默认使用文档当前版本。",
+    status_code=status.HTTP_200_OK,
+    response_model=SuccessResponse[DocumentChunkPageData],
+    responses={401: {"model": ErrorResponse}, 403: {"model": ErrorResponse}, 404: {"model": ErrorResponse}},
+)
+def list_document_chunks(
+    request: Request,
+    document_id: UUID = Path(..., description="文档 ID。"),
+    version: int | None = Query(default=None, ge=1, description="可选文档版本号，默认当前版本。"),
+    offset: int = Query(default=0, ge=0, description="分页偏移。"),
+    limit: int = Query(default=50, ge=1, le=200, description="分页大小。"),
+    ctx=Depends(get_request_context),
+    db: Session = Depends(get_db),
+):
+    """分页查询文档切片。"""
+    require_tenant_action(
+        db,
+        tenant_id=ctx.tenant_id,
+        tenant_role=ctx.tenant_role,
+        action=PermissionAction.DOCUMENT_READ,
+    )
+    document, _ = ensure_document_read_access(
+        db,
+        tenant_id=ctx.tenant_id,
+        document_id=document_id,
+        user_id=ctx.user_id,
+    )
+
+    target_version = version if version is not None else document.current_version
+    doc_version = (
+        db.execute(
+            select(DocumentVersion)
+            .where(DocumentVersion.tenant_id == ctx.tenant_id)
+            .where(DocumentVersion.document_id == document_id)
+            .where(DocumentVersion.version == target_version)
+        )
+        .scalar_one_or_none()
+    )
+    if not doc_version:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="document version not found")
+
+    total = (
+        db.execute(
+            select(func.count())
+            .select_from(DocumentChunk)
+            .where(DocumentChunk.tenant_id == ctx.tenant_id)
+            .where(DocumentChunk.document_id == document_id)
+            .where(DocumentChunk.document_version_id == doc_version.id)
+        )
+        .scalar_one()
+    )
+    chunks = (
+        db.execute(
+            select(DocumentChunk)
+            .where(DocumentChunk.tenant_id == ctx.tenant_id)
+            .where(DocumentChunk.document_id == document_id)
+            .where(DocumentChunk.document_version_id == doc_version.id)
+            .order_by(DocumentChunk.chunk_no.asc())
+            .offset(offset)
+            .limit(limit)
+        )
+        .scalars()
+        .all()
+    )
+
+    return success(
+        request,
+        {
+            "document_id": document_id,
+            "version": target_version,
+            "document_version_id": doc_version.id,
+            "total": int(total),
+            "offset": offset,
+            "limit": limit,
+            "items": [
+                {
+                    "id": chunk.id,
+                    "document_id": chunk.document_id,
+                    "document_version_id": chunk.document_version_id,
+                    "chunk_no": chunk.chunk_no,
+                    "title_path": chunk.title_path,
+                    "content": chunk.content,
+                    "token_count": chunk.token_count,
+                    "metadata": chunk.metadata_,
+                    "created_at": chunk.created_at,
+                }
+                for chunk in chunks
+            ],
         },
     )
 
