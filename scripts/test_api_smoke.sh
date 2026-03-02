@@ -4,8 +4,4 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT_DIR"
 
-export TEST_HTTP_MODE="${TEST_HTTP_MODE:-sqlite}"
-export TEST_TARGET="services/api/tests/test_http_api_full_coverage.py::test_http_api_smoke_core_auth_and_health"
-export TEST_PYTEST_OPTS="${TEST_PYTEST_OPTS:--q -s}"
-
-bash scripts/test_api_full_coverage.sh
+exec bash scripts/test_api.sh --suite smoke "$@"

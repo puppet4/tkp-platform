@@ -83,8 +83,27 @@ Required vars for API currently:
 - `KD_AUTH_JWT_ALGORITHMS`
 - `KD_AUTH_JWT_SECRET` (or `KD_AUTH_JWKS_URL`)
 - `KD_STORAGE_ROOT`
+- `KD_STORAGE_BACKEND` (`local|minio|oss`)
+- `KD_STORAGE_BUCKET` (minio/oss 必填)
+- `KD_STORAGE_ENDPOINT` / `KD_STORAGE_ACCESS_KEY` / `KD_STORAGE_SECRET_KEY` (minio/oss 必填)
 
 Auth and tenancy headers:
 
 - `Authorization: Bearer <jwt>`
 - `Idempotency-Key: <client_key>` (optional, for upload/reindex write idempotency)
+
+## API Tests
+
+统一入口脚本：
+
+```bash
+bash scripts/test_api.sh --suite full --mode postgres
+```
+
+常用场景：
+
+```bash
+bash scripts/test_api.sh --suite smoke --mode sqlite
+bash scripts/test_api.sh --suite permissions --mode sqlite
+bash scripts/test_api.sh --suite all --mode postgres
+```
