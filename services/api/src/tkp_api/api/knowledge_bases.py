@@ -19,6 +19,7 @@ from tkp_api.services import (
     PermissionAction,
     audit_log,
     can_manage_kb_members,
+    ensure_kb_read_access,
     ensure_kb_write_access,
     ensure_workspace_write_access,
     require_tenant_action,
@@ -214,6 +215,48 @@ def list_knowledge_bases(
     return success(request, data)
 
 
+@router.get(
+    "/{kb_id}",
+    summary="查询知识库详情",
+    description="返回目标知识库基础信息与当前用户知识库角色。",
+    status_code=status.HTTP_200_OK,
+    response_model=SuccessResponse[KnowledgeBaseData],
+    responses={401: {"model": ErrorResponse}, 403: {"model": ErrorResponse}, 404: {"model": ErrorResponse}},
+)
+def get_knowledge_base(
+    request: Request,
+    kb_id: UUID = Path(..., description="目标知识库 ID。"),
+    ctx=Depends(get_request_context),
+    db: Session = Depends(get_db),
+):
+    """查询单个知识库详情。"""
+    require_tenant_action(
+        db,
+        tenant_id=ctx.tenant_id,
+        tenant_role=ctx.tenant_role,
+        action=PermissionAction.KB_READ,
+    )
+    kb, _, kb_membership = ensure_kb_read_access(
+        db,
+        tenant_id=ctx.tenant_id,
+        kb_id=kb_id,
+        user_id=ctx.user_id,
+    )
+    role = kb_membership.role if kb_membership else None
+    return success(
+        request,
+        {
+            "id": kb.id,
+            "workspace_id": kb.workspace_id,
+            "name": kb.name,
+            "description": kb.description,
+            "embedding_model": kb.embedding_model,
+            "status": kb.status,
+            "role": role,
+        },
+    )
+
+
 @router.patch(
     "/{kb_id}",
     summary="更新知识库",
@@ -230,6 +273,12 @@ def update_knowledge_base(
     db: Session = Depends(get_db),
 ):
     """更新知识库。"""
+    require_tenant_action(
+        db,
+        tenant_id=ctx.tenant_id,
+        tenant_role=ctx.tenant_role,
+        action=PermissionAction.KB_UPDATE,
+    )
     kb, _, kb_membership = ensure_kb_write_access(
         db,
         tenant_id=ctx.tenant_id,
@@ -304,6 +353,12 @@ def delete_knowledge_base(
     db: Session = Depends(get_db),
 ):
     """删除知识库。"""
+    require_tenant_action(
+        db,
+        tenant_id=ctx.tenant_id,
+        tenant_role=ctx.tenant_role,
+        action=PermissionAction.KB_DELETE,
+    )
     kb = _get_kb_or_404(db, tenant_id=ctx.tenant_id, kb_id=kb_id)
     requester_ws_membership = _get_workspace_membership(
         db,
@@ -378,6 +433,12 @@ def list_kb_members(
     db: Session = Depends(get_db),
 ):
     """查询知识库成员。"""
+    require_tenant_action(
+        db,
+        tenant_id=ctx.tenant_id,
+        tenant_role=ctx.tenant_role,
+        action=PermissionAction.KB_MEMBER_MANAGE,
+    )
     kb = _get_kb_or_404(db, tenant_id=ctx.tenant_id, kb_id=kb_id)
     ws_membership = _get_workspace_membership(
         db,
@@ -438,6 +499,12 @@ def upsert_kb_membership(
     db: Session = Depends(get_db),
 ):
     """维护知识库成员关系并记录审计日志。"""
+    require_tenant_action(
+        db,
+        tenant_id=ctx.tenant_id,
+        tenant_role=ctx.tenant_role,
+        action=PermissionAction.KB_MEMBER_MANAGE,
+    )
     kb = _get_kb_or_404(db, tenant_id=ctx.tenant_id, kb_id=kb_id)
     ws_membership = _get_workspace_membership(
         db,
@@ -536,6 +603,12 @@ def remove_kb_membership(
     db: Session = Depends(get_db),
 ):
     """移除知识库成员。"""
+    require_tenant_action(
+        db,
+        tenant_id=ctx.tenant_id,
+        tenant_role=ctx.tenant_role,
+        action=PermissionAction.KB_MEMBER_MANAGE,
+    )
     kb = _get_kb_or_404(db, tenant_id=ctx.tenant_id, kb_id=kb_id)
     ws_membership = _get_workspace_membership(
         db,
