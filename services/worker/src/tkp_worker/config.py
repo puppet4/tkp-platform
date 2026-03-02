@@ -1,6 +1,7 @@
 """工作进程配置。"""
 
 from functools import lru_cache
+from typing import Literal
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -16,6 +17,17 @@ class Settings(BaseSettings):
         description="数据库连接地址。",
     )
     storage_root: str = Field(default="./.storage", description="对象存储根目录。")
+    storage_backend: Literal["local", "minio", "oss"] = Field(
+        default="local",
+        description="对象存储后端类型（local/minio/oss）。",
+    )
+    storage_bucket: str = Field(default="tkp-documents", description="对象存储桶名称。")
+    storage_key_prefix: str | None = Field(default=None, description="对象键前缀。")
+    storage_endpoint: str | None = Field(default=None, description="对象存储服务端点。")
+    storage_access_key: str | None = Field(default=None, description="对象存储访问 Key。")
+    storage_secret_key: str | None = Field(default=None, description="对象存储访问 Secret。")
+    storage_region: str | None = Field(default=None, description="对象存储区域标识（可选）。")
+    storage_secure: bool = Field(default=False, description="对象存储连接是否启用 HTTPS。")
 
     worker_id: str = Field(default="tkp-worker-1", description="工作进程唯一标识。")
     worker_poll_interval_seconds: float = Field(default=2.0, description="空闲轮询间隔（秒）。")

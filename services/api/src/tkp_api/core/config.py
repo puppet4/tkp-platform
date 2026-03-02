@@ -1,6 +1,7 @@
 """应用运行配置。"""
 
 from functools import lru_cache
+from typing import Literal
 
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -34,6 +35,17 @@ class Settings(BaseSettings):
     auth_token_session_prefix: str = Field(default="auth:session:", description="登录会话键前缀。")
 
     storage_root: str = Field(default="./.storage", description="上传文件落盘根目录。")
+    storage_backend: Literal["local", "minio", "oss"] = Field(
+        default="local",
+        description="对象存储后端类型（local/minio/oss）。",
+    )
+    storage_bucket: str = Field(default="tkp-documents", description="对象存储桶名称。")
+    storage_key_prefix: str | None = Field(default=None, description="对象键前缀。")
+    storage_endpoint: str | None = Field(default=None, description="对象存储服务端点。")
+    storage_access_key: str | None = Field(default=None, description="对象存储访问 Key。")
+    storage_secret_key: str | None = Field(default=None, description="对象存储访问 Secret。")
+    storage_region: str | None = Field(default=None, description="对象存储区域标识（可选）。")
+    storage_secure: bool = Field(default=False, description="对象存储连接是否启用 HTTPS。")
     ingestion_default_max_attempts: int = Field(default=5, description="入库任务默认最大重试次数。")
     ingestion_retry_base_seconds: int = Field(default=15, description="重试退避基准秒数。")
     ingestion_retry_max_seconds: int = Field(default=1800, description="重试退避最大秒数。")

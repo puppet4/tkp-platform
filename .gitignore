@@ -32,6 +32,8 @@ htmlcov/
 # Node (if any frontend later)
 node_modules/
 
+# minio
+.minio-data
 
 # md
 findings.md

@@ -8,7 +8,9 @@
 """
 
 import json
+import hashlib
 import logging
+import math
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -35,20 +37,120 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def _read_text_from_object(storage_root: str, object_key: str, parser_type: str | None) -> str:
+def _build_minio_client(*, endpoint: str, access_key: str, secret_key: str, secure: bool, region: str | None = None):
+    """构建 MinIO 客户端（延迟导入）。"""
+    try:
+        from minio import Minio
+    except ModuleNotFoundError as exc:
+        raise RuntimeError("minio backend requires package 'minio'") from exc
+    return Minio(
+        endpoint,
+        access_key=access_key,
+        secret_key=secret_key,
+        secure=secure,
+        region=region,
+    )
+
+
+def _build_oss_bucket(*, endpoint: str, access_key: str, secret_key: str, bucket_name: str, secure: bool):
+    """构建阿里云 OSS Bucket 客户端（延迟导入）。"""
+    try:
+        import oss2
+    except ModuleNotFoundError as exc:
+        raise RuntimeError("oss backend requires package 'oss2'") from exc
+
+    endpoint_url = endpoint
+    if not endpoint_url.startswith("http://") and not endpoint_url.startswith("https://"):
+        endpoint_url = f"https://{endpoint_url}" if secure else f"http://{endpoint_url}"
+    auth = oss2.Auth(access_key, secret_key)
+    return oss2.Bucket(auth, endpoint_url, bucket_name)
+
+
+def _read_object_bytes(
+    *,
+    backend: str,
+    storage_root: str,
+    object_key: str,
+    bucket_name: str,
+    endpoint: str | None = None,
+    access_key: str | None = None,
+    secret_key: str | None = None,
+    secure: bool = False,
+    region: str | None = None,
+) -> bytes:
+    """按后端配置读取对象字节。"""
+    if backend == "local":
+        path = Path(storage_root).joinpath(object_key)
+        if not path.exists():
+            raise FileNotFoundError(f"object not found: {path}")
+        return path.read_bytes()
+
+    if backend == "minio":
+        if not endpoint or not access_key or not secret_key:
+            raise RuntimeError("minio backend requires endpoint/access_key/secret_key")
+        client = _build_minio_client(
+            endpoint=endpoint,
+            access_key=access_key,
+            secret_key=secret_key,
+            secure=secure,
+            region=region,
+        )
+        obj = client.get_object(bucket_name, object_key)
+        try:
+            return obj.read()
+        finally:
+            obj.close()
+            obj.release_conn()
+
+    if backend == "oss":
+        if not endpoint or not access_key or not secret_key:
+            raise RuntimeError("oss backend requires endpoint/access_key/secret_key")
+        bucket = _build_oss_bucket(
+            endpoint=endpoint,
+            access_key=access_key,
+            secret_key=secret_key,
+            bucket_name=bucket_name,
+            secure=secure,
+        )
+        return bucket.get_object(object_key).read()
+
+    raise RuntimeError(f"unsupported storage backend: {backend}")
+
+
+def _read_text_from_object(
+    *,
+    backend: str,
+    storage_root: str,
+    object_key: str,
+    parser_type: str | None,
+    bucket_name: str,
+    endpoint: str | None = None,
+    access_key: str | None = None,
+    secret_key: str | None = None,
+    secure: bool = False,
+    region: str | None = None,
+) -> str:
     """按对象键读取文件并执行基础解析。"""
-    path = Path(storage_root).joinpath(object_key)
-    if not path.exists():
-        raise FileNotFoundError(f"object not found: {path}")
+    payload = _read_object_bytes(
+        backend=backend,
+        storage_root=storage_root,
+        object_key=object_key,
+        bucket_name=bucket_name,
+        endpoint=endpoint,
+        access_key=access_key,
+        secret_key=secret_key,
+        secure=secure,
+        region=region,
+    )
 
     parser = parser_type or "generic"
     if parser in {"markdown", "generic"}:
-        return path.read_text(encoding="utf-8", errors="ignore")
+        return payload.decode("utf-8", errors="ignore")
     if parser == "pdf":
         raise RuntimeError("pdf parser not configured")
     if parser == "image":
         raise RuntimeError("image parser/ocr not configured")
-    return path.read_text(encoding="utf-8", errors="ignore")
+    return payload.decode("utf-8", errors="ignore")
 
 
 def _chunk_text(content: str, chunk_size: int = 900, overlap: int = 120) -> list[str]:
@@ -70,6 +172,41 @@ def _chunk_text(content: str, chunk_size: int = 900, overlap: int = 120) -> list
         # 通过 overlap 保留上下文连续性，提升检索质量。
         start = max(0, end - overlap)
     return chunks
+
+
+def _embed_text(content: str, *, dim: int = 1536) -> list[float]:
+    """使用确定性哈希算法生成向量（用于本地/开发检索回路）。"""
+    normalized = " ".join(content.strip().lower().split())
+    if not normalized:
+        return [0.0] * dim
+
+    base_tokens = [token for token in normalized.split(" ") if token]
+    if len(base_tokens) < 8:
+        compact = normalized.replace(" ", "")
+        # 对无空格文本（如中文）追加字符切片，提升可区分性。
+        base_tokens.extend(compact[i : i + 2] for i in range(max(0, len(compact) - 1)))
+    if not base_tokens:
+        base_tokens = [normalized]
+
+    vector = [0.0] * dim
+    for pos, token in enumerate(base_tokens[:1024], start=1):
+        digest = hashlib.sha256(token.encode("utf-8")).digest()
+        weight = 1.0 / math.sqrt(pos)
+        for offset in (0, 4, 8, 12, 16, 20):
+            idx = int.from_bytes(digest[offset : offset + 2], "big") % dim
+            sign = -1.0 if (digest[offset + 2] & 1) else 1.0
+            magnitude = 0.2 + (digest[offset + 3] / 255.0)
+            vector[idx] += sign * magnitude * weight
+
+    norm = math.sqrt(sum(value * value for value in vector))
+    if norm <= 0:
+        return [0.0] * dim
+    return [value / norm for value in vector]
+
+
+def _vector_to_pg_literal(vector: list[float]) -> str:
+    """将向量转为 pgvector 字面量字符串。"""
+    return "[" + ",".join(f"{value:.6f}" for value in vector) + "]"
 
 
 def _claim_next_job(conn, worker_id: str, lock_timeout_seconds: int) -> dict[str, Any] | None:
@@ -272,7 +409,20 @@ def _mark_failure(
     )
 
 
-def _process_job(conn, job: dict[str, Any], storage_root: str, worker_id: str) -> None:
+def _process_job(
+    conn,
+    job: dict[str, Any],
+    *,
+    storage_backend: str,
+    storage_root: str,
+    storage_bucket: str,
+    storage_endpoint: str | None,
+    storage_access_key: str | None,
+    storage_secret_key: str | None,
+    storage_secure: bool,
+    storage_region: str | None,
+    worker_id: str,
+) -> None:
     """执行单条入库任务。"""
     job_id: UUID = job["id"]
     document_id: UUID = job["document_id"]
@@ -315,22 +465,55 @@ def _process_job(conn, job: dict[str, Any], storage_root: str, worker_id: str) -
     )
 
     _touch_heartbeat(conn, job_id, worker_id)
-    content = _read_text_from_object(storage_root, object_key, parser_type)
+    content = _read_text_from_object(
+        backend=storage_backend,
+        storage_root=storage_root,
+        object_key=object_key,
+        parser_type=parser_type,
+        bucket_name=storage_bucket,
+        endpoint=storage_endpoint,
+        access_key=storage_access_key,
+        secret_key=storage_secret_key,
+        secure=storage_secure,
+        region=storage_region,
+    )
 
     conn.execute(
         text(
             """
             UPDATE ingestion_jobs
-            SET stage = 'chunking', progress = 45, heartbeat_at = now(), updated_at = now()
+            SET stage = 'parsing', progress = 20, heartbeat_at = now(), updated_at = now()
             WHERE id = :job_id
             """
         ),
         {"job_id": str(job_id)},
     )
 
+    conn.execute(
+        text(
+            """
+            UPDATE document_versions
+            SET parse_status = 'pending'
+            WHERE id = :document_version_id
+            """
+        ),
+        {"document_version_id": str(document_version_id)},
+    )
+
     chunks = _chunk_text(content)
     if not chunks:
         raise RuntimeError("document has no parseable content")
+
+    conn.execute(
+        text(
+            """
+            UPDATE ingestion_jobs
+            SET stage = 'chunking', progress = 55, heartbeat_at = now(), updated_at = now()
+            WHERE id = :job_id
+            """
+        ),
+        {"job_id": str(job_id)},
+    )
 
     # 重跑时先清理同版本旧切片，保证幂等覆盖。
     conn.execute(
@@ -383,11 +566,57 @@ def _process_job(conn, job: dict[str, Any], storage_root: str, worker_id: str) -
         """
     )
 
+    embedding_model = (
+        conn.execute(
+            text(
+                """
+                SELECT embedding_model
+                FROM knowledge_bases
+                WHERE id = :kb_id
+                LIMIT 1
+                """
+            ),
+            {"kb_id": str(kb_id)},
+        ).scalar_one_or_none()
+        or "local-hash-1536"
+    )
+
+    conn.execute(
+        text(
+            """
+            UPDATE ingestion_jobs
+            SET stage = 'embedding', progress = 75, heartbeat_at = now(), updated_at = now()
+            WHERE id = :job_id
+            """
+        ),
+        {"job_id": str(job_id)},
+    )
+    embedding_insert_stmt = text(
+        """
+        INSERT INTO chunk_embeddings (
+            chunk_id,
+            tenant_id,
+            kb_id,
+            embedding_model,
+            vector,
+            created_at
+        ) VALUES (
+            :chunk_id,
+            :tenant_id,
+            :kb_id,
+            :embedding_model,
+            CAST(:vector AS vector),
+            now()
+        )
+        """
+    )
+
     for i, chunk in enumerate(chunks, start=1):
+        chunk_id = str(uuid4())
         conn.execute(
             insert_stmt,
             {
-                "id": str(uuid4()),
+                "id": chunk_id,
                 "tenant_id": str(tenant_id),
                 "workspace_id": str(workspace_id),
                 "kb_id": str(kb_id),
@@ -399,6 +628,27 @@ def _process_job(conn, job: dict[str, Any], storage_root: str, worker_id: str) -
                 "metadata": json.dumps({}),
             },
         )
+        conn.execute(
+            embedding_insert_stmt,
+            {
+                "chunk_id": chunk_id,
+                "tenant_id": str(tenant_id),
+                "kb_id": str(kb_id),
+                "embedding_model": embedding_model,
+                "vector": _vector_to_pg_literal(_embed_text(chunk)),
+            },
+        )
+
+    conn.execute(
+        text(
+            """
+            UPDATE ingestion_jobs
+            SET stage = 'indexing', progress = 90, heartbeat_at = now(), updated_at = now()
+            WHERE id = :job_id
+            """
+        ),
+        {"job_id": str(job_id)},
+    )
 
     # 切片写入成功后，刷新版本与文档状态。
     conn.execute(
@@ -459,7 +709,14 @@ def main() -> None:
                 _process_job(
                     conn,
                     claimed,
+                    storage_backend=settings.storage_backend,
                     storage_root=settings.storage_root,
+                    storage_bucket=settings.storage_bucket,
+                    storage_endpoint=settings.storage_endpoint,
+                    storage_access_key=settings.storage_access_key,
+                    storage_secret_key=settings.storage_secret_key,
+                    storage_secure=settings.storage_secure,
+                    storage_region=settings.storage_region,
                     worker_id=settings.worker_id,
                 )
                 _mark_success(conn, claimed["id"])
