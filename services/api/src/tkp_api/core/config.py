@@ -49,6 +49,19 @@ class Settings(BaseSettings):
     ingestion_default_max_attempts: int = Field(default=5, description="入库任务默认最大重试次数。")
     ingestion_retry_base_seconds: int = Field(default=15, description="重试退避基准秒数。")
     ingestion_retry_max_seconds: int = Field(default=1800, description="重试退避最大秒数。")
+    rag_base_url: str | None = Field(
+        default=None,
+        description="RAG 服务基础地址；为空时 API 使用本地检索实现。",
+    )
+    rag_timeout_seconds: float = Field(default=8.0, description="API 调用 RAG 服务的超时时间（秒）。")
+    rag_max_retries: int = Field(default=1, description="RAG 调用最大重试次数（不含首次请求）。")
+    rag_retry_backoff_seconds: float = Field(default=0.2, description="RAG 重试退避基准秒数。")
+    rag_circuit_breaker_fail_threshold: int = Field(default=3, description="连续失败达到阈值后开启熔断。")
+    rag_circuit_breaker_open_seconds: int = Field(default=30, description="熔断开启持续时长（秒）。")
+    internal_service_token: str = Field(
+        default="change-me-internal-token",
+        description="服务间内部调用鉴权令牌（API->RAG）。",
+    )
 
     @field_validator("auth_jwt_algorithms")
     @classmethod

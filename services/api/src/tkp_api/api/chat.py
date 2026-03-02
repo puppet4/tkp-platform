@@ -11,18 +11,14 @@ from tkp_api.utils.response import success
 from tkp_api.schemas.chat import ChatCompletionRequest
 from tkp_api.schemas.common import ErrorResponse, SuccessResponse
 from tkp_api.schemas.responses import ChatCompletionData
-from tkp_api.services import PermissionAction, filter_readable_kb_ids, require_tenant_action, search_chunks
+from tkp_api.services import (
+    PermissionAction,
+    filter_readable_kb_ids,
+    generate_chat_answer,
+    require_tenant_action,
+)
 
 router = APIRouter(prefix="/chat", tags=["chat"])
-
-
-def _compose_answer(question: str, hits: list[dict[str, object]]) -> str:
-    """根据检索结果拼装可复现答案，便于联调验证。"""
-    if not hits:
-        return f"未检索到与问题“{question}”相关的知识片段。"
-
-    bullet_lines = [f"- {hit['snippet']}" for hit in hits[:3]]
-    return "基于知识库检索到以下信息:\n" + "\n".join(bullet_lines)
 
 
 @router.post(
@@ -97,30 +93,16 @@ def chat_completions(
         )
     )
 
-    hits = search_chunks(
+    rag_data = generate_chat_answer(
         db,
         tenant_id=ctx.tenant_id,
         kb_ids=readable_kb_ids,
-        query=question,
+        question=question,
         top_k=6,
-        filters={},
-        with_citations=True,
     )
-    answer_text = _compose_answer(question, hits)
-
-    # 引用信息用于前端可追溯展示“答案来自哪些切片”。
-    citations = [
-        {
-            "document_id": hit["document_id"],
-            "chunk_id": hit["chunk_id"],
-            "document_version_id": hit["document_version_id"],
-        }
-        for hit in hits
-    ]
-
-    # 这里使用简化 token 估算，后续可替换为真实 tokenizer 统计。
-    prompt_tokens = max(1, len(question.split()))
-    completion_tokens = max(1, len(answer_text.split()))
+    answer_text = rag_data["answer"]
+    citations = rag_data["citations"]
+    usage = rag_data["usage"]
 
     assistant_message = Message(
         tenant_id=ctx.tenant_id,
@@ -128,11 +110,7 @@ def chat_completions(
         role=MessageRole.ASSISTANT,
         content=answer_text,
         citations=citations,
-        usage={
-            "prompt_tokens": prompt_tokens,
-            "completion_tokens": completion_tokens,
-            "total_tokens": prompt_tokens + completion_tokens,
-        },
+        usage=usage,
     )
     db.add(assistant_message)
     db.commit()
@@ -143,11 +121,7 @@ def chat_completions(
             "message_id": assistant_message.id,
             "answer": answer_text,
             "citations": citations,
-            "usage": {
-                "prompt_tokens": prompt_tokens,
-                "completion_tokens": completion_tokens,
-                "total_tokens": prompt_tokens + completion_tokens,
-            },
+            "usage": usage,
             "conversation_id": conversation.id,
         },
     )

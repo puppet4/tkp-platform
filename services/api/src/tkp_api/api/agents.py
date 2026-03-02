@@ -15,7 +15,7 @@ from tkp_api.utils.response import success
 from tkp_api.schemas.agent import AgentRunCreateRequest
 from tkp_api.schemas.common import ErrorResponse, SuccessResponse
 from tkp_api.schemas.responses import AgentRunData, AgentRunDetailData
-from tkp_api.services import PermissionAction, audit_log, require_tenant_action
+from tkp_api.services import PermissionAction, audit_log, build_agent_plan, require_tenant_action
 
 router = APIRouter(prefix="/agent", tags=["agent"])
 
@@ -50,14 +50,24 @@ def create_agent_run(
         ):
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="conversation not found")
 
-    # 任务初始化为 queued，后续由异步执行器推进状态。
+    plan_data = build_agent_plan(
+        db,
+        tenant_id=ctx.tenant_id,
+        user_id=ctx.user_id,
+        task=payload.task,
+        kb_ids=payload.kb_ids,
+        conversation_id=payload.conversation_id,
+        tool_policy=payload.tool_policy,
+    )
+
+    # 任务初始化状态由规划器返回，后续由异步执行器推进状态。
     run = AgentRun(
         tenant_id=ctx.tenant_id,
         user_id=ctx.user_id,
         conversation_id=payload.conversation_id,
-        plan_json={"task": payload.task, "kb_ids": [str(k) for k in payload.kb_ids]},
-        tool_calls=[],
-        status=AgentRunStatus.QUEUED,
+        plan_json=plan_data["plan_json"],
+        tool_calls=plan_data["tool_calls"],
+        status=plan_data["status"],
     )
     db.add(run)
     db.flush()

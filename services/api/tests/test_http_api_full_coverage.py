@@ -1919,6 +1919,8 @@ def api_client(monkeypatch: pytest.MonkeyPatch, tmp_path) -> Generator[TestClien
     monkeypatch.setenv("KD_AUTH_JWT_SECRET", "http-test-secret-key-at-least-32-bytes")
     monkeypatch.setenv("KD_AUTH_JWT_ALGORITHMS", "HS256")
     monkeypatch.setenv("KD_STORAGE_ROOT", str(tmp_path / "storage"))
+    monkeypatch.setenv("KD_STORAGE_BACKEND", "local")
+    monkeypatch.setenv("KD_RAG_BASE_URL", "")
     get_settings.cache_clear()
     _reset_runtime_auth_state()
     app.dependency_overrides.clear()
@@ -2609,6 +2611,88 @@ def test_http_api_crud_read_detail_endpoints_for_core_resources(api_client: Test
 
     runner._finish_current_stage()
     _log(f"[DONE] crud-detail-read 完成，耗时 {runner.elapsed():.2f}s")
+
+
+@pytest.mark.full
+def test_http_api_retrieval_should_fail_fast_when_rag_remote_unavailable(
+    api_client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """
+    拆服务专项：
+    当启用 RAG 远程服务且服务不可达时，API 应明确返回 503 与可诊断错误码，
+    而不是静默走本地逻辑。
+    """
+    monkeypatch.setenv("KD_RAG_BASE_URL", "http://127.0.0.1:9")
+    get_settings.cache_clear()
+
+    runner = WorkflowRunner(api_client)
+    runner.stage_auth_and_health()
+    runner.stage_tenant_flow()
+    runner.stage_member_join_flow()
+    runner.stage_users_and_workspaces_flow()
+    kb = runner.success(
+        "POST",
+        "/api/knowledge-bases",
+        token=runner.ctx.owner_token,
+        json={
+            "workspace_id": runner.ctx.ws1_id,
+            "name": "KB For RAG Remote",
+            "embedding_model": "text-embedding-3-large",
+        },
+    )
+
+    runner.stage("RAG 远程不可达")
+    error = runner.expect_error(
+        "POST",
+        "/api/retrieval/query",
+        token=runner.ctx.owner_token,
+        expected_status=503,
+        json={
+            "query": "退款流程",
+            "kb_ids": [kb["id"]],
+            "top_k": 3,
+            "filters": {},
+            "with_citations": True,
+        },
+    )
+    assert error["code"] == "RAG_UNAVAILABLE"
+    runner._finish_current_stage()
+    _log(f"[DONE] rag-remote-unavailable 完成，耗时 {runner.elapsed():.2f}s")
+
+
+@pytest.mark.full
+def test_http_api_agent_should_fail_fast_when_rag_remote_unavailable(
+    api_client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """
+    拆服务专项：
+    启用 RAG 远程规划后，若 RAG 不可达，agent 创建应返回明确 503。
+    """
+    monkeypatch.setenv("KD_RAG_BASE_URL", "http://127.0.0.1:9")
+    get_settings.cache_clear()
+
+    runner = WorkflowRunner(api_client)
+    runner.stage_auth_and_health()
+    runner.stage_tenant_flow()
+    runner.stage_member_join_flow()
+
+    runner.stage("Agent 远程不可达")
+    error = runner.expect_error(
+        "POST",
+        "/api/agent/runs",
+        token=runner.ctx.owner_token,
+        expected_status=503,
+        json={
+            "task": "create test plan",
+            "kb_ids": [],
+            "tool_policy": {},
+        },
+    )
+    assert error["code"] == "RAG_UNAVAILABLE"
+    runner._finish_current_stage()
+    _log(f"[DONE] agent-rag-remote-unavailable 完成，耗时 {runner.elapsed():.2f}s")
 
 
 @pytest.mark.full

@@ -60,6 +60,11 @@ Start API:
 PYTHONPATH=services/api/src uv run --project services/api uvicorn tkp_api.main:app --reload --port 8000
 ```
 
+说明：
+- 当配置 `KD_RAG_BASE_URL` 时，`/api/retrieval/query`、`/api/chat/completions`、`/api/agent/runs` 会转发到 RAG 服务。
+- 未配置 `KD_RAG_BASE_URL` 时，API 使用本地检索实现（用于单进程测试）。
+- API->RAG 内部调用会携带 `X-Internal-Token`，RAG 默认要求校验（值来自 `KD_INTERNAL_SERVICE_TOKEN`）。
+
 ## Worker service
 
 ```bash
@@ -86,6 +91,13 @@ Required vars for API currently:
 - `KD_STORAGE_BACKEND` (`local|minio|oss`)
 - `KD_STORAGE_BUCKET` (minio/oss 必填)
 - `KD_STORAGE_ENDPOINT` / `KD_STORAGE_ACCESS_KEY` / `KD_STORAGE_SECRET_KEY` (minio/oss 必填)
+- `KD_RAG_BASE_URL` (可选，配置后启用 API->RAG 远程调用)
+- `KD_RAG_TIMEOUT_SECONDS` (可选，默认 8s)
+- `KD_RAG_MAX_RETRIES` (可选，默认 1)
+- `KD_RAG_RETRY_BACKOFF_SECONDS` (可选，默认 0.2)
+- `KD_RAG_CIRCUIT_BREAKER_FAIL_THRESHOLD` (可选，默认 3)
+- `KD_RAG_CIRCUIT_BREAKER_OPEN_SECONDS` (可选，默认 30)
+- `KD_INTERNAL_SERVICE_TOKEN` (建议必配，API 与 RAG 必须一致)
 
 Auth and tenancy headers:
 

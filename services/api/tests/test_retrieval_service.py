@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from tkp_api.models.enums import DocumentStatus, SourceType
 from tkp_api.models.knowledge import Document, DocumentChunk
-from tkp_api.services.retrieval import search_chunks
+from tkp_api.services.retrieval_local import search_chunks
 
 
 @compiles(JSONB, "sqlite")

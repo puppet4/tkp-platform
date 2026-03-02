@@ -1,5 +1,6 @@
 """服务层能力导出集合。"""
 
+from tkp_api.services.agent_planner import build_agent_plan
 from tkp_api.services.audit import audit_log
 from tkp_api.services.authorization import (
     ensure_document_read_access,
@@ -26,16 +27,18 @@ from tkp_api.services.permissions import (
     reset_tenant_role_actions,
     set_tenant_role_actions,
 )
-from tkp_api.services.retrieval import search_chunks
+from tkp_api.services.retrieval import generate_chat_answer, query_chunks
 from tkp_api.services.storage import infer_parser_type, persist_upload
 from tkp_api.services.tenant_bootstrap import build_unique_tenant_slug, create_tenant_with_owner, normalize_tenant_slug
 
 __all__ = [
+    "build_agent_plan",
     "audit_log",
     "enqueue_ingestion_job",
+    "generate_chat_answer",
     "infer_parser_type",
     "persist_upload",
-    "search_chunks",
+    "query_chunks",
     "normalize_email",
     "normalize_tenant_slug",
     "build_unique_tenant_slug",
