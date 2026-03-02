@@ -128,6 +128,7 @@ DEFAULT_UI_PERMISSIONS: list[str] = [
     "button.member.remove",
     "feature.auth.permissions",
 ]
+PERMISSION_UI_MANIFEST_VERSION = "2026-03-02"
 
 PERMISSION_UI_MANIFEST: dict[str, list[dict[str, str | list[str]]]] = {
     "menus": [
@@ -233,6 +234,7 @@ def permission_ui_manifest(db: Session, *, tenant_id: UUID, tenant_role: str) ->
         return resolved
 
     return {
+        "version": PERMISSION_UI_MANIFEST_VERSION,
         "tenant_role": tenant_role,
         "allowed_actions": allowed_actions,
         "menus": _resolve_items(PERMISSION_UI_MANIFEST["menus"]),
