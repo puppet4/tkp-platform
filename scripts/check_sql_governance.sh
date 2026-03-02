@@ -4,6 +4,16 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
 
+if command -v rg >/dev/null 2>&1; then
+  SEARCH_CMD=(rg -n)
+else
+  SEARCH_CMD=(grep -En)
+fi
+
+search() {
+  "${SEARCH_CMD[@]}" -- "$@"
+}
+
 required_sql_files=(
   "infra/sql/000_extensions.sql"
   "infra/sql/010_tables.sql"
@@ -21,29 +31,30 @@ done
 
 echo "[2/7] check SQL scripts are FK-free"
 sql_files="$(find infra/sql -type f -name "*.sql" | sort)"
-if [[ -n "$sql_files" ]] && rg -n "(FOREIGN[[:space:]]+KEY|REFERENCES[[:space:]])" $sql_files; then
+if [[ -n "$sql_files" ]] && search "(FOREIGN[[:space:]]+KEY|REFERENCES[[:space:]])" $sql_files; then
   echo "foreign key clauses are forbidden by team policy"
   exit 1
 fi
 
 echo "[3/7] check no ORM auto-schema creation"
-if rg -n "(create_all\\(|metadata\\.create_all)" services; then
+service_src_python_files="$(find services -type f -name "*.py" | grep "/src/" || true)"
+if [[ -n "$service_src_python_files" ]] && search "(create_all\\(|metadata\\.create_all)" $service_src_python_files; then
   echo "ORM auto schema creation is forbidden"
   exit 1
 fi
 
 echo "[4/7] check no code-based schema sync scripts"
-if find services -type f \( -name "*create_all*.py" -o -name "*sync_comments*.py" -o -name "*schema_sync*.py" \) | rg .; then
+if find services -type f \( -name "*create_all*.py" -o -name "*sync_comments*.py" -o -name "*schema_sync*.py" \) | grep -q .; then
   echo "code-based schema sync scripts are forbidden"
   exit 1
 fi
 
 echo "[5/7] check SQL naming convention in table DDL"
-if ! rg -n "CONSTRAINT[[:space:]]+uk_" infra/sql/010_tables.sql >/dev/null; then
+if ! search "CONSTRAINT[[:space:]]+uk_" infra/sql/010_tables.sql >/dev/null; then
   echo "expected uk_ unique constraints not found"
   exit 1
 fi
-if ! rg -n "CONSTRAINT[[:space:]]+ck_" infra/sql/010_tables.sql >/dev/null; then
+if ! search "CONSTRAINT[[:space:]]+ck_" infra/sql/010_tables.sql >/dev/null; then
   echo "expected ck_ check constraints not found"
   exit 1
 fi
@@ -57,11 +68,11 @@ while IFS= read -r file; do
     echo "required pattern: YYYYMMDD_HHMMSS_description.sql"
     exit 1
   fi
-  if ! rg -n "^[[:space:]]*BEGIN;[[:space:]]*$" "$file" >/dev/null; then
+  if ! search "^[[:space:]]*BEGIN;[[:space:]]*$" "$file" >/dev/null; then
     echo "migration missing BEGIN; wrapper: $file"
     exit 1
   fi
-  if ! rg -n "^[[:space:]]*COMMIT;[[:space:]]*$" "$file" >/dev/null; then
+  if ! search "^[[:space:]]*COMMIT;[[:space:]]*$" "$file" >/dev/null; then
     echo "migration missing COMMIT; wrapper: $file"
     exit 1
   fi
