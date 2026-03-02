@@ -3,18 +3,18 @@
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request, status
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from tkp_api.dependencies import get_request_context
 from tkp_api.db.session import get_db
-from tkp_api.models.enums import DocumentStatus, KBRole, KBStatus, MembershipStatus, TenantRole, WorkspaceRole
-from tkp_api.models.knowledge import Document, KBMembership, KnowledgeBase
+from tkp_api.models.enums import DocumentStatus, IngestionJobStatus, KBRole, KBStatus, MembershipStatus, TenantRole, WorkspaceRole
+from tkp_api.models.knowledge import Document, DocumentChunk, IngestionJob, KBMembership, KnowledgeBase
 from tkp_api.models.workspace import WorkspaceMembership
 from tkp_api.utils.response import success
 from tkp_api.schemas.common import ErrorResponse, SuccessResponse
 from tkp_api.schemas.knowledge import KBMembershipUpsertRequest, KnowledgeBaseCreateRequest, KnowledgeBaseUpdateRequest
-from tkp_api.schemas.responses import KBMembershipData, KnowledgeBaseData
+from tkp_api.schemas.responses import KBMembershipData, KnowledgeBaseData, KnowledgeBaseStatsData
 from tkp_api.services import (
     PermissionAction,
     audit_log,
@@ -213,6 +213,122 @@ def list_knowledge_bases(
         for kb in kbs
     ]
     return success(request, data)
+
+
+@router.get(
+    "/{kb_id}/stats",
+    summary="查询知识库运营统计",
+    description="返回文档、切片、入库任务与最近失败信息统计，便于排障和运营分析。",
+    status_code=status.HTTP_200_OK,
+    response_model=SuccessResponse[KnowledgeBaseStatsData],
+    responses={401: {"model": ErrorResponse}, 403: {"model": ErrorResponse}, 404: {"model": ErrorResponse}},
+)
+def get_knowledge_base_stats(
+    request: Request,
+    kb_id: UUID = Path(..., description="目标知识库 ID。"),
+    ctx=Depends(get_request_context),
+    db: Session = Depends(get_db),
+):
+    """查询知识库统计。"""
+    require_tenant_action(
+        db,
+        tenant_id=ctx.tenant_id,
+        tenant_role=ctx.tenant_role,
+        action=PermissionAction.KB_READ,
+    )
+    ensure_kb_read_access(
+        db,
+        tenant_id=ctx.tenant_id,
+        kb_id=kb_id,
+        user_id=ctx.user_id,
+    )
+
+    document_total = (
+        db.execute(
+            select(func.count())
+            .select_from(Document)
+            .where(Document.tenant_id == ctx.tenant_id)
+            .where(Document.kb_id == kb_id)
+        ).scalar_one()
+    )
+    document_status_rows = (
+        db.execute(
+            select(Document.status, func.count())
+            .where(Document.tenant_id == ctx.tenant_id)
+            .where(Document.kb_id == kb_id)
+            .group_by(Document.status)
+        ).all()
+    )
+    document_status_map = {status: int(count) for status, count in document_status_rows}
+
+    chunk_total = (
+        db.execute(
+            select(func.count())
+            .select_from(DocumentChunk)
+            .where(DocumentChunk.tenant_id == ctx.tenant_id)
+            .where(DocumentChunk.kb_id == kb_id)
+        ).scalar_one()
+    )
+
+    job_total = (
+        db.execute(
+            select(func.count())
+            .select_from(IngestionJob)
+            .where(IngestionJob.tenant_id == ctx.tenant_id)
+            .where(IngestionJob.kb_id == kb_id)
+        ).scalar_one()
+    )
+    job_status_rows = (
+        db.execute(
+            select(IngestionJob.status, func.count())
+            .where(IngestionJob.tenant_id == ctx.tenant_id)
+            .where(IngestionJob.kb_id == kb_id)
+            .group_by(IngestionJob.status)
+        ).all()
+    )
+    job_status_map = {status: int(count) for status, count in job_status_rows}
+
+    latest_job = (
+        db.execute(
+            select(IngestionJob)
+            .where(IngestionJob.tenant_id == ctx.tenant_id)
+            .where(IngestionJob.kb_id == kb_id)
+            .order_by(IngestionJob.created_at.desc())
+            .limit(1)
+        ).scalar_one_or_none()
+    )
+    latest_failed_job = (
+        db.execute(
+            select(IngestionJob)
+            .where(IngestionJob.tenant_id == ctx.tenant_id)
+            .where(IngestionJob.kb_id == kb_id)
+            .where(IngestionJob.error.is_not(None))
+            .order_by(IngestionJob.updated_at.desc())
+            .limit(1)
+        ).scalar_one_or_none()
+    )
+
+    return success(
+        request,
+        {
+            "kb_id": kb_id,
+            "document_total": int(document_total),
+            "document_ready": int(document_status_map.get(DocumentStatus.READY, 0)),
+            "document_processing": int(document_status_map.get(DocumentStatus.PROCESSING, 0)),
+            "document_failed": int(document_status_map.get(DocumentStatus.FAILED, 0)),
+            "document_deleted": int(document_status_map.get(DocumentStatus.DELETED, 0)),
+            "chunk_total": int(chunk_total),
+            "job_total": int(job_total),
+            "job_queued": int(job_status_map.get(IngestionJobStatus.QUEUED, 0)),
+            "job_processing": int(job_status_map.get(IngestionJobStatus.PROCESSING, 0)),
+            "job_retrying": int(job_status_map.get(IngestionJobStatus.RETRYING, 0)),
+            "job_completed": int(job_status_map.get(IngestionJobStatus.COMPLETED, 0)),
+            "job_dead_letter": int(job_status_map.get(IngestionJobStatus.DEAD_LETTER, 0)),
+            "latest_job_created_at": latest_job.created_at if latest_job else None,
+            "latest_job_finished_at": latest_job.finished_at if latest_job else None,
+            "latest_job_error": latest_failed_job.error if latest_failed_job else None,
+        },
+    )
 
 
 @router.get(

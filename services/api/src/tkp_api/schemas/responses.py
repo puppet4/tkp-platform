@@ -201,6 +201,27 @@ class KnowledgeBaseData(BaseSchema):
     role: str | None = Field(default=None, description="当前用户在该知识库中的角色。")
 
 
+class KnowledgeBaseStatsData(BaseSchema):
+    """知识库运营统计结构。"""
+
+    kb_id: UUID = Field(description="知识库 ID。")
+    document_total: int = Field(description="文档总数（含 deleted）。")
+    document_ready: int = Field(description="状态为 ready 的文档数。")
+    document_processing: int = Field(description="状态为 processing 的文档数。")
+    document_failed: int = Field(description="状态为 failed 的文档数。")
+    document_deleted: int = Field(description="状态为 deleted 的文档数。")
+    chunk_total: int = Field(description="切片总数。")
+    job_total: int = Field(description="入库任务总数。")
+    job_queued: int = Field(description="queued 状态任务数。")
+    job_processing: int = Field(description="processing 状态任务数。")
+    job_retrying: int = Field(description="retrying 状态任务数。")
+    job_completed: int = Field(description="completed 状态任务数。")
+    job_dead_letter: int = Field(description="dead_letter 状态任务数。")
+    latest_job_created_at: datetime | None = Field(default=None, description="最近任务创建时间。")
+    latest_job_finished_at: datetime | None = Field(default=None, description="最近任务完成时间。")
+    latest_job_error: str | None = Field(default=None, description="最近失败任务错误摘要。")
+
+
 class KBMembershipData(BaseSchema):
     """知识库成员新增/更新返回结构。"""
 
@@ -322,8 +343,12 @@ class RetrievalHit(BaseSchema):
     document_id: UUID = Field(description="所属文档 ID。")
     document_version_id: UUID = Field(description="所属文档版本 ID。")
     kb_id: UUID = Field(description="所属知识库 ID。")
+    chunk_no: int = Field(description="切片序号。")
+    title_path: str | None = Field(default=None, description="切片标题路径。")
     score: int = Field(description="命中分数，分值越高代表相关性越高。")
     snippet: str = Field(description="切片摘要文本。")
+    metadata: dict[str, Any] | None = Field(default=None, description="切片 metadata 快照。")
+    citation: dict[str, Any] | None = Field(default=None, description="引用定位信息。")
 
 
 class RetrievalQueryData(BaseSchema):

@@ -60,6 +60,8 @@ def retrieval_query(
         kb_ids=readable_kb_ids,
         query=payload.query,
         top_k=payload.top_k,
+        filters=payload.filters,
+        with_citations=payload.with_citations,
     )
 
     # 记录端到端检索耗时，便于后续性能分析。

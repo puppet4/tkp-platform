@@ -103,6 +103,8 @@ def chat_completions(
         kb_ids=readable_kb_ids,
         query=question,
         top_k=6,
+        filters={},
+        with_citations=True,
     )
     answer_text = _compose_answer(question, hits)
 
