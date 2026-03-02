@@ -87,6 +87,7 @@ class PermissionUIItemData(BaseSchema):
 class PermissionUIManifestData(BaseSchema):
     """前端权限映射契约结构。"""
 
+    version: str = Field(description="权限契约版本号，用于前后端兼容控制。")
     tenant_role: str = Field(description="当前用户在租户中的角色。")
     allowed_actions: list[str] = Field(description="当前角色最终生效的权限码集合。")
     menus: list[PermissionUIItemData] = Field(description="菜单权限映射列表。")
@@ -221,6 +222,45 @@ class DocumentData(BaseSchema):
     current_version: int = Field(description="当前版本号。")
     status: str = Field(description="文档状态。")
     metadata: dict[str, Any] | None = Field(default=None, description="文档元数据。")
+
+
+class DocumentVersionData(BaseSchema):
+    """文档版本信息结构。"""
+
+    id: UUID = Field(description="文档版本 ID。")
+    document_id: UUID = Field(description="所属文档 ID。")
+    version: int = Field(description="文档版本号。")
+    object_key: str | None = Field(default=None, description="对象存储键。")
+    parser_type: str | None = Field(default=None, description="解析器类型。")
+    parse_status: str = Field(description="解析状态。")
+    checksum: str | None = Field(default=None, description="内容校验和。")
+    created_at: datetime = Field(description="版本创建时间。")
+
+
+class DocumentChunkData(BaseSchema):
+    """文档切片信息结构。"""
+
+    id: UUID = Field(description="切片 ID。")
+    document_id: UUID = Field(description="所属文档 ID。")
+    document_version_id: UUID = Field(description="所属文档版本 ID。")
+    chunk_no: int = Field(description="切片序号。")
+    title_path: str | None = Field(default=None, description="标题路径。")
+    content: str = Field(description="切片内容。")
+    token_count: int = Field(description="切片 token 数。")
+    metadata: dict[str, Any] | None = Field(default=None, description="切片元数据。")
+    created_at: datetime = Field(description="切片创建时间。")
+
+
+class DocumentChunkPageData(BaseSchema):
+    """文档切片分页结构。"""
+
+    document_id: UUID = Field(description="文档 ID。")
+    version: int = Field(description="查询的文档版本号。")
+    document_version_id: UUID = Field(description="文档版本 ID。")
+    total: int = Field(description="切片总数。")
+    offset: int = Field(description="分页偏移。")
+    limit: int = Field(description="分页大小。")
+    items: list[DocumentChunkData] = Field(description="当前页切片列表。")
 
 
 class TenantUserData(BaseSchema):
