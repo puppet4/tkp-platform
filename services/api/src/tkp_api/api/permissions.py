@@ -14,6 +14,7 @@ from tkp_api.schemas.responses import (
     PermissionSnapshotData,
     PermissionTemplateData,
     PermissionTemplatePublishData,
+    PermissionUIManifestData,
     TenantRolePermissionData,
 )
 from tkp_api.services import (
@@ -23,6 +24,7 @@ from tkp_api.services import (
     list_tenant_role_permission_matrix,
     list_tenant_actions,
     permission_catalog,
+    permission_ui_manifest,
     publish_default_permission_template,
     reset_tenant_role_actions,
     set_tenant_role_actions,
@@ -72,6 +74,25 @@ def my_permission_snapshot(
             "allowed_actions": list_tenant_actions(db, tenant_id=ctx.tenant_id, tenant_role=ctx.tenant_role),
         },
     )
+
+
+@router.get(
+    "/ui-manifest",
+    tags=_PERMISSION_RUNTIME_TAG,
+    summary="运行时权限映射（前端菜单/按钮/功能）",
+    description="返回前端可直接消费的权限映射契约：菜单、按钮、功能对应的后端动作权限，以及当前角色是否允许。",
+    status_code=status.HTTP_200_OK,
+    response_model=SuccessResponse[PermissionUIManifestData],
+    responses={401: {"model": ErrorResponse}, 403: {"model": ErrorResponse}, 422: {"model": ErrorResponse}},
+)
+def get_permission_ui_manifest(
+    request: Request,
+    ctx=Depends(get_request_context),
+    db: Session = Depends(get_db),
+):
+    """返回当前租户上下文下的前端权限映射。"""
+    data = permission_ui_manifest(db, tenant_id=ctx.tenant_id, tenant_role=ctx.tenant_role)
+    return success(request, data)
 
 
 @router.get(

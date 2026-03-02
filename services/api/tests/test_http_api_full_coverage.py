@@ -1006,6 +1006,11 @@ class WorkflowRunner:
         assert snapshot_after["tenant_role"] == "admin"
         assert isinstance(snapshot_after["allowed_actions"], list) and len(snapshot_after["allowed_actions"]) > 0
 
+        ui_manifest = self.success("GET", "/api/permissions/ui-manifest", token=self.ctx.member_token)
+        _require_keys(ui_manifest, ["tenant_role", "allowed_actions", "menus", "buttons", "features"], "permissions.ui_manifest")
+        assert ui_manifest["tenant_role"] == "admin"
+        assert set(ui_manifest["allowed_actions"]) == set(snapshot_after["allowed_actions"])
+
         catalog_data = self.success("GET", "/api/permissions/catalog", token=self.ctx.member_token)
         _require_keys(catalog_data, ["permission_codes"], "permissions.catalog.data")
         assert isinstance(catalog_data["permission_codes"], list) and len(catalog_data["permission_codes"]) > 0
@@ -1876,6 +1881,47 @@ def test_http_api_permissions_config_matrix_by_role(api_client: TestClient):
 
     runner._finish_current_stage()
     _log(f"[DONE] permissions-matrix 完成，耗时 {runner.elapsed():.2f}s")
+
+
+@pytest.mark.permissions_matrix
+def test_http_api_permissions_ui_manifest_contract(api_client: TestClient):
+    """
+    权限契约专项：
+    前端消费的菜单/按钮/功能权限映射必须可查询，并与当前快照保持一致。
+    """
+    runner = WorkflowRunner(api_client)
+    runner.stage_auth_and_health()
+    runner.stage_tenant_flow()
+    runner.stage_member_join_flow()
+
+    runner.stage("权限 UI 契约")
+    snapshot = runner.success("GET", "/api/permissions/me", token=runner.ctx.member_token)
+    _require_keys(snapshot, ["tenant_role", "allowed_actions"], "permissions.ui.snapshot")
+    allowed_actions = snapshot["allowed_actions"]
+    assert isinstance(allowed_actions, list) and len(allowed_actions) > 0
+    allowed_action_set = set(allowed_actions)
+
+    manifest = runner.success("GET", "/api/permissions/ui-manifest", token=runner.ctx.member_token)
+    _require_keys(manifest, ["tenant_role", "allowed_actions", "menus", "buttons", "features"], "permissions.ui.manifest")
+    assert manifest["tenant_role"] == snapshot["tenant_role"]
+    assert set(manifest["allowed_actions"]) == allowed_action_set
+
+    for key in ("menus", "buttons", "features"):
+        items = manifest[key]
+        assert isinstance(items, list), f"{key} must be list"
+        for item in items:
+            _require_keys(item, ["code", "name", "required_actions", "allowed"], f"permissions.ui.{key}.item")
+            _assert_non_empty_str(item["code"], f"permissions.ui.{key}.code")
+            _assert_non_empty_str(item["name"], f"permissions.ui.{key}.name")
+            assert isinstance(item["required_actions"], list)
+            assert isinstance(item["allowed"], bool)
+            expected_allowed = item["code"] in allowed_action_set and all(
+                action in allowed_action_set for action in item["required_actions"]
+            )
+            assert item["allowed"] == expected_allowed
+
+    runner._finish_current_stage()
+    _log(f"[DONE] permissions-ui-manifest 完成，耗时 {runner.elapsed():.2f}s")
 
 
 @pytest.mark.permissions_matrix

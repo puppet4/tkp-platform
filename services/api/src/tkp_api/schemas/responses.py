@@ -75,6 +75,25 @@ class PermissionCatalogData(BaseSchema):
     permission_codes: list[str] = Field(description="可用权限点编码列表。")
 
 
+class PermissionUIItemData(BaseSchema):
+    """单个前端权限项结构。"""
+
+    code: str = Field(description="前端权限编码，例如 menu.workspace。")
+    name: str = Field(description="前端展示名称。")
+    required_actions: list[str] = Field(description="该前端能力依赖的后端动作权限集合。")
+    allowed: bool = Field(description="当前角色是否允许展示/启用该能力。")
+
+
+class PermissionUIManifestData(BaseSchema):
+    """前端权限映射契约结构。"""
+
+    tenant_role: str = Field(description="当前用户在租户中的角色。")
+    allowed_actions: list[str] = Field(description="当前角色最终生效的权限码集合。")
+    menus: list[PermissionUIItemData] = Field(description="菜单权限映射列表。")
+    buttons: list[PermissionUIItemData] = Field(description="按钮权限映射列表。")
+    features: list[PermissionUIItemData] = Field(description="功能开关权限映射列表。")
+
+
 class TenantRolePermissionData(BaseSchema):
     """单个角色权限映射结构。"""
 
