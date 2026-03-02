@@ -3,7 +3,9 @@ name = "tkp-platform"
 version = "0.1.0"
 description = "Monorepo for multi-tenant knowledge platform services"
 requires-python = ">=3.12"
-dependencies = []
+dependencies = [
+    "pytest>=9.0.2",
+]
 
 [tool.uv.workspace]
 members = [
