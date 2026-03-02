@@ -24,32 +24,32 @@ required_sql_files=(
 migration_dir="infra/sql/migrations"
 baseline_lock_file="infra/sql/baseline.lock"
 
-echo "[1/7] check required SQL files"
+echo "[1/10] check required SQL files"
 for f in "${required_sql_files[@]}"; do
   [[ -f "$f" ]] || { echo "missing required file: $f"; exit 1; }
 done
 
-echo "[2/7] check SQL scripts are FK-free"
+echo "[2/10] check SQL scripts are FK-free"
 sql_files="$(find infra/sql -type f -name "*.sql" | sort)"
 if [[ -n "$sql_files" ]] && search "(FOREIGN[[:space:]]+KEY|REFERENCES[[:space:]])" $sql_files; then
   echo "foreign key clauses are forbidden by team policy"
   exit 1
 fi
 
-echo "[3/7] check no ORM auto-schema creation"
+echo "[3/10] check no ORM auto-schema creation"
 service_src_python_files="$(find services -type f -name "*.py" | grep "/src/" || true)"
 if [[ -n "$service_src_python_files" ]] && search "(create_all\\(|metadata\\.create_all)" $service_src_python_files; then
   echo "ORM auto schema creation is forbidden"
   exit 1
 fi
 
-echo "[4/7] check no code-based schema sync scripts"
+echo "[4/10] check no code-based schema sync scripts"
 if find services -type f \( -name "*create_all*.py" -o -name "*sync_comments*.py" -o -name "*schema_sync*.py" \) | grep -q .; then
   echo "code-based schema sync scripts are forbidden"
   exit 1
 fi
 
-echo "[5/7] check SQL naming convention in table DDL"
+echo "[5/10] check SQL naming convention in table DDL"
 if ! search "CONSTRAINT[[:space:]]+uk_" infra/sql/010_tables.sql >/dev/null; then
   echo "expected uk_ unique constraints not found"
   exit 1
@@ -59,7 +59,33 @@ if ! search "CONSTRAINT[[:space:]]+ck_" infra/sql/010_tables.sql >/dev/null; the
   exit 1
 fi
 
-echo "[6/7] check migration directory and filename convention"
+echo "[6/10] check SQL index naming convention"
+if ! awk '
+  BEGIN { failed = 0 }
+  {
+    line = $0
+    gsub(/^[[:space:]]+|[[:space:]]+$/, "", line)
+    if (line ~ /^CREATE (UNIQUE )?INDEX IF NOT EXISTS /) {
+      n = split(line, parts, /[[:space:]]+/)
+      idx = ""
+      for (i = 1; i <= n; i++) {
+        if (parts[i] == "EXISTS" && i < n) {
+          idx = parts[i + 1]
+          break
+        }
+      }
+      if (idx != "" && idx !~ /^ix_/) {
+        print "invalid index name, expected ix_*: " idx
+        failed = 1
+      }
+    }
+  }
+  END { exit failed }
+' infra/sql/020_indexes.sql; then
+  exit 1
+fi
+
+echo "[7/10] check migration directory and filename convention"
 [[ -d "$migration_dir" ]] || { echo "missing migration directory: $migration_dir"; exit 1; }
 while IFS= read -r file; do
   base_name="$(basename "$file")"
@@ -78,7 +104,7 @@ while IFS= read -r file; do
   fi
 done < <(find "$migration_dir" -maxdepth 1 -type f -name "*.sql" | sort)
 
-echo "[7/7] check baseline lock integrity"
+echo "[8/10] check baseline lock integrity"
 [[ -f "$baseline_lock_file" ]] || { echo "missing baseline lock file: $baseline_lock_file"; exit 1; }
 while IFS= read -r line; do
   [[ -z "${line// }" ]] && continue
@@ -97,5 +123,57 @@ while IFS= read -r line; do
     exit 1
   fi
 done < "$baseline_lock_file"
+
+echo "[9/10] check table/column comments coverage"
+comment_file="infra/sql/030_comments.sql"
+while IFS= read -r table_name; do
+  [[ -z "$table_name" ]] && continue
+  if ! search "COMMENT ON TABLE[[:space:]]+${table_name}[[:space:]]+IS" "$comment_file" >/dev/null; then
+    echo "missing table comment: ${table_name}"
+    exit 1
+  fi
+done < <(awk '/^CREATE TABLE IF NOT EXISTS / {t=$6; gsub(/\(/, "", t); print t}' infra/sql/010_tables.sql)
+
+while IFS= read -r column_ref; do
+  [[ -z "$column_ref" ]] && continue
+  if ! search "COMMENT ON COLUMN[[:space:]]+${column_ref}[[:space:]]+IS" "$comment_file" >/dev/null; then
+    echo "missing column comment: ${column_ref}"
+    exit 1
+  fi
+done < <(awk '
+  /^CREATE TABLE IF NOT EXISTS / {
+    table_name = $6
+    gsub(/\(/, "", table_name)
+    in_table = 1
+    next
+  }
+  in_table && /^\);/ {
+    in_table = 0
+    next
+  }
+  in_table {
+    line = $0
+    sub(/^[[:space:]]+/, "", line)
+    if (line == "" || line ~ /^CONSTRAINT[[:space:]]/) {
+      next
+    }
+    split(line, parts, /[[:space:]]+/)
+    column_name = parts[1]
+    sub(/,$/, "", column_name)
+    if (column_name != "") {
+      print table_name "." column_name
+    }
+  }
+' infra/sql/010_tables.sql)
+
+echo "[10/10] check test env SQL replay includes migrations"
+if ! search "infra/sql/migrations" scripts/test_env_up.sh >/dev/null; then
+  echo "scripts/test_env_up.sh must apply infra/sql/migrations/*.sql"
+  exit 1
+fi
+if ! search "infra/sql/migrations" scripts/test_env_reset_db.sh >/dev/null; then
+  echo "scripts/test_env_reset_db.sh must apply infra/sql/migrations/*.sql"
+  exit 1
+fi
 
 echo "SQL governance checks passed."

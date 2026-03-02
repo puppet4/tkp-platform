@@ -22,4 +22,10 @@ do
     psql -U "$TEST_DB_USER" -d "$TEST_DB_NAME" -v ON_ERROR_STOP=1 < "$f"
 done
 
+while IFS= read -r f; do
+  echo "apply migration: ${f##*/}"
+  podman exec -i "$TEST_PG_CONTAINER" \
+    psql -U "$TEST_DB_USER" -d "$TEST_DB_NAME" -v ON_ERROR_STOP=1 < "$f"
+done < <(find "$ROOT_DIR/infra/sql/migrations" -maxdepth 1 -type f -name "*.sql" | sort)
+
 echo "database reset done: $TEST_DB_NAME"
