@@ -21,6 +21,7 @@ class PermissionAction(StrEnum):
 
     USER_READ = "api.user.read"
     USER_UPDATE = "api.user.update"
+    USER_DELETE = "api.user.delete"
 
     WORKSPACE_CREATE = "api.workspace.create"
     WORKSPACE_READ = "api.workspace.read"
@@ -61,6 +62,7 @@ _ADMIN_ACTIONS = {
     PermissionAction.TENANT_MEMBER_MANAGE.value,
     PermissionAction.USER_READ.value,
     PermissionAction.USER_UPDATE.value,
+    PermissionAction.USER_DELETE.value,
     PermissionAction.WORKSPACE_CREATE.value,
     PermissionAction.WORKSPACE_READ.value,
     PermissionAction.WORKSPACE_UPDATE.value,
@@ -121,6 +123,7 @@ DEFAULT_UI_PERMISSIONS: list[str] = [
     "button.document.upload",
     "button.document.update",
     "button.document.delete",
+    "button.user.delete",
     "button.member.add",
     "button.member.remove",
     "feature.auth.permissions",

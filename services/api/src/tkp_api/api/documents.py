@@ -22,6 +22,7 @@ from tkp_api.schemas.responses import (
     ReindexData,
 )
 from tkp_api.services import (
+    PermissionAction,
     audit_log,
     enqueue_ingestion_job,
     ensure_document_read_access,
@@ -29,6 +30,7 @@ from tkp_api.services import (
     ensure_kb_write_access,
     infer_parser_type,
     persist_upload,
+    require_tenant_action,
 )
 
 router = APIRouter(tags=["documents"])
@@ -62,6 +64,12 @@ async def upload_document(
     db: Session = Depends(get_db),
 ):
     """上传文档并创建异步入库任务。"""
+    require_tenant_action(
+        db,
+        tenant_id=ctx.tenant_id,
+        tenant_role=ctx.tenant_role,
+        action=PermissionAction.DOCUMENT_WRITE,
+    )
     # 入口先校验写权限，确保只有有权限的用户可以触发入库。
     kb, _, _ = ensure_kb_write_access(
         db,
@@ -207,6 +215,12 @@ def list_documents(
     db: Session = Depends(get_db),
 ):
     """按知识库范围查询文档。"""
+    require_tenant_action(
+        db,
+        tenant_id=ctx.tenant_id,
+        tenant_role=ctx.tenant_role,
+        action=PermissionAction.DOCUMENT_READ,
+    )
     # 先做知识库读权限校验，避免通过枚举 kb_id 越权读取文档清单。
     kb, _, _ = ensure_kb_read_access(
         db,
@@ -255,6 +269,12 @@ def get_document(
     db: Session = Depends(get_db),
 ):
     """查询单个文档详情。"""
+    require_tenant_action(
+        db,
+        tenant_id=ctx.tenant_id,
+        tenant_role=ctx.tenant_role,
+        action=PermissionAction.DOCUMENT_READ,
+    )
     document, _ = ensure_document_read_access(
         db,
         tenant_id=ctx.tenant_id,
@@ -294,6 +314,12 @@ def update_document(
     db: Session = Depends(get_db),
 ):
     """更新文档元信息。"""
+    require_tenant_action(
+        db,
+        tenant_id=ctx.tenant_id,
+        tenant_role=ctx.tenant_role,
+        action=PermissionAction.DOCUMENT_WRITE,
+    )
     document, kb = ensure_document_read_access(
         db,
         tenant_id=ctx.tenant_id,
@@ -367,6 +393,12 @@ def reindex_document(
     db: Session = Depends(get_db),
 ):
     """创建（或复用）重建索引任务。"""
+    require_tenant_action(
+        db,
+        tenant_id=ctx.tenant_id,
+        tenant_role=ctx.tenant_role,
+        action=PermissionAction.DOCUMENT_WRITE,
+    )
     # 读权限用于确认文档可见性，写权限用于确认可发起重建任务。
     document, kb = ensure_document_read_access(
         db,
@@ -436,6 +468,12 @@ def delete_document(
     db: Session = Depends(get_db),
 ):
     """删除文档。"""
+    require_tenant_action(
+        db,
+        tenant_id=ctx.tenant_id,
+        tenant_role=ctx.tenant_role,
+        action=PermissionAction.DOCUMENT_DELETE,
+    )
     document, kb = ensure_document_read_access(
         db,
         tenant_id=ctx.tenant_id,
@@ -519,6 +557,12 @@ def get_ingestion_job(
     db: Session = Depends(get_db),
 ):
     """按任务 ID 返回任务运行状态。"""
+    require_tenant_action(
+        db,
+        tenant_id=ctx.tenant_id,
+        tenant_role=ctx.tenant_role,
+        action=PermissionAction.DOCUMENT_READ,
+    )
     job = db.get(IngestionJob, job_id)
     if not job or job.tenant_id != ctx.tenant_id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="job not found")

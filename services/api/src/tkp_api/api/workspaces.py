@@ -190,6 +190,46 @@ def list_workspaces(
     return success(request, data)
 
 
+@router.get(
+    "/{workspace_id}",
+    summary="查询工作空间详情",
+    description="返回目标工作空间的基础信息与当前用户角色。",
+    status_code=status.HTTP_200_OK,
+    response_model=SuccessResponse[WorkspaceData],
+    responses={401: {"model": ErrorResponse}, 403: {"model": ErrorResponse}, 404: {"model": ErrorResponse}},
+)
+def get_workspace(
+    request: Request,
+    workspace_id: UUID = Path(..., description="目标工作空间 ID。"),
+    ctx=Depends(get_request_context),
+    db: Session = Depends(get_db),
+):
+    """查询单个工作空间详情。"""
+    require_tenant_action(
+        db,
+        tenant_id=ctx.tenant_id,
+        tenant_role=ctx.tenant_role,
+        action=PermissionAction.WORKSPACE_READ,
+    )
+    workspace, membership = ensure_workspace_read_access(
+        db,
+        tenant_id=ctx.tenant_id,
+        workspace_id=workspace_id,
+        user_id=ctx.user_id,
+    )
+    return success(
+        request,
+        {
+            "id": workspace.id,
+            "name": workspace.name,
+            "slug": workspace.slug,
+            "description": workspace.description,
+            "status": workspace.status,
+            "role": membership.role,
+        },
+    )
+
+
 @router.patch(
     "/{workspace_id}",
     summary="更新工作空间",
@@ -206,6 +246,12 @@ def update_workspace(
     db: Session = Depends(get_db),
 ):
     """更新工作空间。"""
+    require_tenant_action(
+        db,
+        tenant_id=ctx.tenant_id,
+        tenant_role=ctx.tenant_role,
+        action=PermissionAction.WORKSPACE_UPDATE,
+    )
     workspace, membership = ensure_workspace_write_access(
         db,
         tenant_id=ctx.tenant_id,
@@ -288,6 +334,12 @@ def delete_workspace(
     db: Session = Depends(get_db),
 ):
     """删除工作空间。"""
+    require_tenant_action(
+        db,
+        tenant_id=ctx.tenant_id,
+        tenant_role=ctx.tenant_role,
+        action=PermissionAction.WORKSPACE_DELETE,
+    )
     workspace, membership = ensure_workspace_read_access(
         db,
         tenant_id=ctx.tenant_id,
@@ -365,6 +417,12 @@ def list_workspace_members(
     db: Session = Depends(get_db),
 ):
     """查询工作空间成员。"""
+    require_tenant_action(
+        db,
+        tenant_id=ctx.tenant_id,
+        tenant_role=ctx.tenant_role,
+        action=PermissionAction.WORKSPACE_MEMBER_MANAGE,
+    )
     workspace, membership = ensure_workspace_read_access(
         db,
         tenant_id=ctx.tenant_id,
@@ -410,6 +468,12 @@ def upsert_workspace_member(
     db: Session = Depends(get_db),
 ):
     """维护工作空间成员关系并记录审计日志。"""
+    require_tenant_action(
+        db,
+        tenant_id=ctx.tenant_id,
+        tenant_role=ctx.tenant_role,
+        action=PermissionAction.WORKSPACE_MEMBER_MANAGE,
+    )
     workspace, membership = ensure_workspace_read_access(
         db,
         tenant_id=ctx.tenant_id,
@@ -505,6 +569,12 @@ def remove_workspace_member(
     db: Session = Depends(get_db),
 ):
     """移除工作空间成员。"""
+    require_tenant_action(
+        db,
+        tenant_id=ctx.tenant_id,
+        tenant_role=ctx.tenant_role,
+        action=PermissionAction.WORKSPACE_MEMBER_MANAGE,
+    )
     _, membership = ensure_workspace_read_access(
         db,
         tenant_id=ctx.tenant_id,

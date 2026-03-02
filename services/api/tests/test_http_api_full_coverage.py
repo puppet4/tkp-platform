@@ -737,6 +737,14 @@ class WorkflowRunner:
             tenant_id=self.ctx.enterprise_tenant_id,
         )
 
+        tenant_detail = self.success(
+            "GET",
+            "/api/tenants/{tenant_id}",
+            actual_path=f"/api/tenants/{self.ctx.enterprise_tenant_id}",
+            token=self.ctx.owner_token,
+        )
+        self._assert_tenant_data(tenant_detail, tenant_id=self.ctx.enterprise_tenant_id, role="owner")
+
         members_data = self.success(
             "GET",
             "/api/tenants/{tenant_id}/members",
@@ -1170,6 +1178,14 @@ class WorkflowRunner:
         self._assert_workspace_data(ws1_item, workspace_id=self.ctx.ws1_id)
         self._assert_workspace_data(ws2_item, workspace_id=self.ctx.ws2_id)
 
+        ws1_detail = self.success(
+            "GET",
+            "/api/workspaces/{workspace_id}",
+            actual_path=f"/api/workspaces/{self.ctx.ws1_id}",
+            token=self.ctx.owner_token,
+        )
+        self._assert_workspace_data(ws1_detail, workspace_id=self.ctx.ws1_id)
+
         ws1_updated = self.success(
             "PATCH",
             "/api/workspaces/{workspace_id}",
@@ -1308,6 +1324,14 @@ class WorkflowRunner:
         assert isinstance(kb_list, list)
         _find_one(kb_list, where="kb list", id=self.ctx.kb1_id)
         _find_one(kb_list, where="kb list", id=self.ctx.kb2_id)
+
+        kb1_detail = self.success(
+            "GET",
+            "/api/knowledge-bases/{kb_id}",
+            actual_path=f"/api/knowledge-bases/{self.ctx.kb1_id}",
+            token=self.ctx.owner_token,
+        )
+        self._assert_kb_data(kb1_detail, kb_id=self.ctx.kb1_id, workspace_id=self.ctx.ws1_id)
 
         kb1_updated = self.success(
             "PATCH",
@@ -1852,6 +1876,121 @@ def test_http_api_permissions_config_matrix_by_role(api_client: TestClient):
 
     runner._finish_current_stage()
     _log(f"[DONE] permissions-matrix 完成，耗时 {runner.elapsed():.2f}s")
+
+
+@pytest.mark.permissions_matrix
+def test_http_api_business_endpoints_must_follow_permission_actions(api_client: TestClient):
+    """
+    权限绑定专项：
+    当角色权限被收紧后，业务接口应立即按权限点返回 403（而不是仅靠成员关系放行）。
+    """
+    runner = WorkflowRunner(api_client)
+    runner.stage_auth_and_health()
+    runner.stage_tenant_flow()
+    runner.stage_member_join_flow()
+    runner.stage_users_and_workspaces_flow()
+
+    runner.stage("权限绑定到业务接口")
+    kb = runner.success(
+        "POST",
+        "/api/knowledge-bases",
+        token=runner.ctx.owner_token,
+        json={"workspace_id": runner.ctx.ws1_id, "name": "KB For Permission Binding", "embedding_model": "text-embedding-3-large"},
+    )
+    runner._assert_kb_data(kb, workspace_id=runner.ctx.ws1_id, status="active")
+    kb_id = kb["id"]
+
+    upload_data = runner.success(
+        "POST",
+        "/api/knowledge-bases/{kb_id}/documents",
+        actual_path=f"/api/knowledge-bases/{kb_id}/documents",
+        token=runner.ctx.owner_token,
+        headers={"Idempotency-Key": f"perm-bind-{uuid4().hex}"},
+        files={"file": ("perm.txt", b"permission binding content", "text/plain")},
+        data={"metadata": json.dumps({"case": "permission-binding"})},
+    )
+    _assert_uuid(upload_data["document_id"], "permission.binding.document_id")
+
+    # 将 owner 角色权限收紧，移除 workspace.update 与 document.read。
+    updated_owner_permissions = runner.success(
+        "PUT",
+        "/api/permissions/roles/{role}",
+        actual_path="/api/permissions/roles/owner",
+        token=runner.ctx.owner_token,
+        json={
+            "permission_codes": [
+                "api.tenant.read",
+                "menu.workspace",
+            ]
+        },
+    )
+    runner._assert_role_permission_data(updated_owner_permissions, role="owner")
+
+    runner.expect_error(
+        "PATCH",
+        "/api/workspaces/{workspace_id}",
+        actual_path=f"/api/workspaces/{runner.ctx.ws1_id}",
+        token=runner.ctx.owner_token,
+        expected_status=403,
+        json={"name": "Should Be Forbidden"},
+    )
+    runner.expect_error(
+        "GET",
+        "/api/knowledge-bases/{kb_id}/documents",
+        actual_path=f"/api/knowledge-bases/{kb_id}/documents",
+        token=runner.ctx.owner_token,
+        expected_status=403,
+    )
+
+    runner._finish_current_stage()
+    _log(f"[DONE] permission-binding 完成，耗时 {runner.elapsed():.2f}s")
+
+
+@pytest.mark.full
+def test_http_api_crud_read_detail_endpoints_for_core_resources(api_client: TestClient):
+    """
+    CRUD 补齐专项：
+    tenant/workspace/kb 需要具备单资源读取接口，形成完整 C/R/U/D。
+    """
+    runner = WorkflowRunner(api_client)
+    runner.stage_auth_and_health()
+    runner.stage_tenant_flow()
+    runner.stage_member_join_flow()
+    runner.stage_users_and_workspaces_flow()
+
+    runner.stage("CRUD 详情读取补齐")
+    tenant_detail = runner.success(
+        "GET",
+        "/api/tenants/{tenant_id}",
+        actual_path=f"/api/tenants/{runner.ctx.enterprise_tenant_id}",
+        token=runner.ctx.owner_token,
+    )
+    runner._assert_tenant_data(tenant_detail, tenant_id=runner.ctx.enterprise_tenant_id)
+
+    workspace_detail = runner.success(
+        "GET",
+        "/api/workspaces/{workspace_id}",
+        actual_path=f"/api/workspaces/{runner.ctx.ws1_id}",
+        token=runner.ctx.owner_token,
+    )
+    runner._assert_workspace_data(workspace_detail, workspace_id=runner.ctx.ws1_id)
+
+    kb = runner.success(
+        "POST",
+        "/api/knowledge-bases",
+        token=runner.ctx.owner_token,
+        json={"workspace_id": runner.ctx.ws1_id, "name": "KB For CRUD Detail", "embedding_model": "text-embedding-3-large"},
+    )
+    kb_detail = runner.success(
+        "GET",
+        "/api/knowledge-bases/{kb_id}",
+        actual_path=f"/api/knowledge-bases/{kb['id']}",
+        token=runner.ctx.owner_token,
+    )
+    runner._assert_kb_data(kb_detail, kb_id=kb["id"], workspace_id=runner.ctx.ws1_id)
+
+    runner._finish_current_stage()
+    _log(f"[DONE] crud-detail-read 完成，耗时 {runner.elapsed():.2f}s")
 
 
 @pytest.mark.full

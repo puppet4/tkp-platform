@@ -197,6 +197,41 @@ def list_my_tenant_invitations(
     return success(request, data)
 
 
+@router.get(
+    "/{tenant_id}",
+    summary="查询租户详情",
+    description="返回目标租户基础信息与当前用户在该租户中的角色。",
+    status_code=status.HTTP_200_OK,
+    response_model=SuccessResponse[TenantData],
+    responses={401: {"model": ErrorResponse}, 403: {"model": ErrorResponse}, 404: {"model": ErrorResponse}},
+)
+def get_tenant(
+    request: Request,
+    tenant_id: UUID = Path(..., description="目标租户 ID。"),
+    ctx=Depends(get_request_context),
+    db: Session = Depends(get_db),
+):
+    """查询单个租户详情。"""
+    _ensure_tenant_context(ctx=ctx, tenant_id=tenant_id)
+    require_tenant_action(
+        db,
+        tenant_id=ctx.tenant_id,
+        tenant_role=ctx.tenant_role,
+        action=PermissionAction.TENANT_READ,
+    )
+    tenant = _get_tenant_or_404(db, tenant_id)
+    return success(
+        request,
+        {
+            "tenant_id": tenant.id,
+            "name": tenant.name,
+            "slug": tenant.slug,
+            "status": tenant.status,
+            "role": ctx.tenant_role,
+        },
+    )
+
+
 @router.patch(
     "/{tenant_id}",
     summary="更新租户",
