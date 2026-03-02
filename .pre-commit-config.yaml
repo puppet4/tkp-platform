@@ -1,0 +1,8 @@
+repos:
+  - repo: local
+    hooks:
+      - id: ci-gate
+        name: CI Gate (SQL + API Tests)
+        entry: bash scripts/pre_commit_ci_gate.sh
+        language: system
+        pass_filenames: false
