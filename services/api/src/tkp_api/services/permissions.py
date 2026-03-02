@@ -129,6 +129,51 @@ DEFAULT_UI_PERMISSIONS: list[str] = [
     "feature.auth.permissions",
 ]
 
+PERMISSION_UI_MANIFEST: dict[str, list[dict[str, str | list[str]]]] = {
+    "menus": [
+        {"code": "menu.tenant", "name": "租户管理", "required_actions": [PermissionAction.TENANT_READ.value]},
+        {"code": "menu.workspace", "name": "工作空间", "required_actions": [PermissionAction.WORKSPACE_READ.value]},
+        {"code": "menu.kb", "name": "知识库", "required_actions": [PermissionAction.KB_READ.value]},
+        {"code": "menu.document", "name": "文档中心", "required_actions": [PermissionAction.DOCUMENT_READ.value]},
+        {"code": "menu.user", "name": "用户管理", "required_actions": [PermissionAction.USER_READ.value]},
+    ],
+    "buttons": [
+        {"code": "button.tenant.update", "name": "编辑租户", "required_actions": [PermissionAction.TENANT_UPDATE.value]},
+        {"code": "button.tenant.delete", "name": "删除租户", "required_actions": [PermissionAction.TENANT_DELETE.value]},
+        {
+            "code": "button.workspace.create",
+            "name": "创建工作空间",
+            "required_actions": [PermissionAction.WORKSPACE_CREATE.value],
+        },
+        {"code": "button.workspace.update", "name": "编辑工作空间", "required_actions": [PermissionAction.WORKSPACE_UPDATE.value]},
+        {"code": "button.workspace.delete", "name": "删除工作空间", "required_actions": [PermissionAction.WORKSPACE_DELETE.value]},
+        {"code": "button.kb.create", "name": "创建知识库", "required_actions": [PermissionAction.KB_CREATE.value]},
+        {"code": "button.kb.update", "name": "编辑知识库", "required_actions": [PermissionAction.KB_UPDATE.value]},
+        {"code": "button.kb.delete", "name": "删除知识库", "required_actions": [PermissionAction.KB_DELETE.value]},
+        {"code": "button.document.upload", "name": "上传文档", "required_actions": [PermissionAction.DOCUMENT_WRITE.value]},
+        {"code": "button.document.update", "name": "编辑文档", "required_actions": [PermissionAction.DOCUMENT_WRITE.value]},
+        {"code": "button.document.delete", "name": "删除文档", "required_actions": [PermissionAction.DOCUMENT_DELETE.value]},
+        {"code": "button.user.delete", "name": "删除用户", "required_actions": [PermissionAction.USER_DELETE.value]},
+        {
+            "code": "button.member.add",
+            "name": "添加成员",
+            "required_actions": [PermissionAction.TENANT_MEMBER_MANAGE.value],
+        },
+        {
+            "code": "button.member.remove",
+            "name": "移除成员",
+            "required_actions": [PermissionAction.TENANT_MEMBER_MANAGE.value],
+        },
+    ],
+    "features": [
+        {
+            "code": "feature.auth.permissions",
+            "name": "权限配置中心",
+            "required_actions": [PermissionAction.TENANT_MEMBER_MANAGE.value],
+        },
+    ],
+}
+
 _OWNER_UI_CODES = set(DEFAULT_UI_PERMISSIONS)
 _ADMIN_UI_CODES = set(DEFAULT_UI_PERMISSIONS)
 _MEMBER_UI_CODES = {
@@ -165,6 +210,35 @@ def permission_catalog() -> list[str]:
     """返回权限点目录（含 API 动作与推荐 UI 权限码）。"""
     api_codes = sorted(action.value for action in PermissionAction)
     return sorted(set(api_codes + DEFAULT_UI_PERMISSIONS))
+
+
+def permission_ui_manifest(db: Session, *, tenant_id: UUID, tenant_role: str) -> dict[str, object]:
+    """返回前端菜单/按钮/功能与后端动作权限的绑定结果。"""
+    allowed_actions = list_tenant_actions(db, tenant_id=tenant_id, tenant_role=tenant_role)
+    allowed_set = set(allowed_actions)
+
+    def _resolve_items(items: list[dict[str, str | list[str]]]) -> list[dict[str, object]]:
+        resolved: list[dict[str, object]] = []
+        for item in items:
+            code = str(item["code"])
+            required_actions = [str(action) for action in item["required_actions"]]
+            resolved.append(
+                {
+                    "code": code,
+                    "name": str(item["name"]),
+                    "required_actions": required_actions,
+                    "allowed": code in allowed_set and all(action in allowed_set for action in required_actions),
+                }
+            )
+        return resolved
+
+    return {
+        "tenant_role": tenant_role,
+        "allowed_actions": allowed_actions,
+        "menus": _resolve_items(PERMISSION_UI_MANIFEST["menus"]),
+        "buttons": _resolve_items(PERMISSION_UI_MANIFEST["buttons"]),
+        "features": _resolve_items(PERMISSION_UI_MANIFEST["features"]),
+    }
 
 
 def _normalize_permission_code(code: str) -> str:
