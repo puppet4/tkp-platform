@@ -571,6 +571,51 @@ class WorkflowRunner:
         if status is not None:
             assert data["status"] == status
 
+    def _assert_kb_stats_data(self, data: dict, *, kb_id: str) -> None:
+        _require_keys(
+            data,
+            [
+                "kb_id",
+                "document_total",
+                "document_ready",
+                "document_processing",
+                "document_failed",
+                "document_deleted",
+                "chunk_total",
+                "job_total",
+                "job_queued",
+                "job_processing",
+                "job_retrying",
+                "job_completed",
+                "job_dead_letter",
+                "latest_job_created_at",
+                "latest_job_finished_at",
+                "latest_job_error",
+            ],
+            "kb.stats.data",
+        )
+        assert data["kb_id"] == kb_id
+        for key in (
+            "document_total",
+            "document_ready",
+            "document_processing",
+            "document_failed",
+            "document_deleted",
+            "chunk_total",
+            "job_total",
+            "job_queued",
+            "job_processing",
+            "job_retrying",
+            "job_completed",
+            "job_dead_letter",
+        ):
+            assert isinstance(data[key], int) and data[key] >= 0, f"{key} must be non-negative int"
+        if data["latest_job_created_at"] is not None:
+            _assert_iso_datetime(data["latest_job_created_at"], "kb.stats.latest_job_created_at")
+        if data["latest_job_finished_at"] is not None:
+            _assert_iso_datetime(data["latest_job_finished_at"], "kb.stats.latest_job_finished_at")
+        assert data["latest_job_error"] is None or isinstance(data["latest_job_error"], str)
+
     def _assert_document_data(
         self,
         data: dict,
@@ -866,13 +911,37 @@ class WorkflowRunner:
         assert isinstance(retrieval_data["hits"], list)
         assert isinstance(retrieval_data["latency_ms"], int) and retrieval_data["latency_ms"] >= 0
         for hit in retrieval_data["hits"]:
-            _require_keys(hit, ["chunk_id", "document_id", "document_version_id", "kb_id", "score", "snippet"], "retrieval.hit")
+            _require_keys(
+                hit,
+                [
+                    "chunk_id",
+                    "document_id",
+                    "document_version_id",
+                    "kb_id",
+                    "chunk_no",
+                    "title_path",
+                    "score",
+                    "snippet",
+                    "metadata",
+                    "citation",
+                ],
+                "retrieval.hit",
+            )
             _assert_uuid(hit["chunk_id"], "retrieval.hit.chunk_id")
             _assert_uuid(hit["document_id"], "retrieval.hit.document_id")
             _assert_uuid(hit["document_version_id"], "retrieval.hit.document_version_id")
             _assert_uuid(hit["kb_id"], "retrieval.hit.kb_id")
+            assert isinstance(hit["chunk_no"], int) and hit["chunk_no"] >= 0
+            assert hit["title_path"] is None or isinstance(hit["title_path"], str)
             assert isinstance(hit["score"], int)
             _assert_non_empty_str(hit["snippet"], "retrieval.hit.snippet")
+            assert hit["metadata"] is None or isinstance(hit["metadata"], dict)
+            if hit["citation"] is not None:
+                _require_keys(
+                    hit["citation"],
+                    ["chunk_id", "document_id", "document_version_id", "kb_id", "chunk_no", "title_path"],
+                    "retrieval.hit.citation",
+                )
 
         chat_data = self.success(
             "POST",
@@ -1549,6 +1618,15 @@ class WorkflowRunner:
             kb_id=self.ctx.kb1_id,
             workspace_id=self.ctx.ws1_id,
         )
+        kb_stats_after_upload = self.success(
+            "GET",
+            "/api/knowledge-bases/{kb_id}/stats",
+            actual_path=f"/api/knowledge-bases/{self.ctx.kb1_id}/stats",
+            token=self.ctx.owner_token,
+        )
+        self._assert_kb_stats_data(kb_stats_after_upload, kb_id=self.ctx.kb1_id)
+        assert kb_stats_after_upload["document_total"] >= 1
+        assert kb_stats_after_upload["job_total"] >= 1
 
         doc_detail = self.success(
             "GET",
@@ -1727,6 +1805,14 @@ class WorkflowRunner:
             token=self.ctx.owner_token,
         )
         assert not any(item["id"] == self.ctx.document_id for item in docs_after_delete)
+        kb_stats_after_delete = self.success(
+            "GET",
+            "/api/knowledge-bases/{kb_id}/stats",
+            actual_path=f"/api/knowledge-bases/{self.ctx.kb1_id}/stats",
+            token=self.ctx.owner_token,
+        )
+        self._assert_kb_stats_data(kb_stats_after_delete, kb_id=self.ctx.kb1_id)
+        assert kb_stats_after_delete["document_deleted"] >= 1
 
     def stage_cleanup_and_logout(self) -> None:
         self.stage("资源清理与登出")
@@ -2230,6 +2316,13 @@ def test_http_api_scope_guard_matrix_cross_tenant_workspace_kb_document(api_clie
         "GET",
         "/api/knowledge-bases/{kb_id}/members",
         actual_path=f"/api/knowledge-bases/{foreign_kb_id}/members",
+        token=runner.ctx.owner_token,
+        expected_status=404,
+    )
+    runner.expect_error(
+        "GET",
+        "/api/knowledge-bases/{kb_id}/stats",
+        actual_path=f"/api/knowledge-bases/{foreign_kb_id}/stats",
         token=runner.ctx.owner_token,
         expected_status=404,
     )
