@@ -1,9 +1,53 @@
 from uuid import uuid4
 
+from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import Session
 
+from tkp_rag.app import app
+from tkp_rag.core.config import get_settings
+from tkp_rag.services.agent import build_plan
 from tkp_rag.services.retrieval import generate_answer, search_chunks
+
+
+def test_smoke() -> None:
+    assert True
+
+
+def test_build_plan_returns_structured_payload():
+    payload = build_plan(
+        tenant_id=uuid4(),
+        user_id=uuid4(),
+        task="整理文档",
+        kb_ids=[uuid4()],
+        conversation_id=None,
+        tool_policy={"allow": ["retrieval"]},
+    )
+    assert payload["status"] == "queued"
+    assert isinstance(payload["plan_json"], dict)
+    assert payload["plan_json"]["source"] == "rag"
+    assert isinstance(payload["plan_json"]["steps"], list)
+    assert payload["plan_json"]["steps"][0]["name"] == "retrieve"
+    assert payload["tool_calls"] == []
+
+
+def test_internal_endpoint_requires_token_when_configured(monkeypatch):
+    monkeypatch.setenv("KD_INTERNAL_SERVICE_TOKEN", "internal-secret")
+    get_settings.cache_clear()
+
+    with TestClient(app) as client:
+        resp = client.post(
+            "/internal/agent/plan",
+            json={
+                "tenant_id": "11111111-1111-1111-1111-111111111111",
+                "user_id": "22222222-2222-2222-2222-222222222222",
+                "task": "plan",
+                "kb_ids": [],
+                "conversation_id": None,
+                "tool_policy": {},
+            },
+        )
+    assert resp.status_code == 401
 
 
 def _init_sqlite_schema(db: Session) -> None:
@@ -124,4 +168,3 @@ def test_search_chunks_supports_metadata_filters_and_citations():
         assert answer_payload["usage"]["total_tokens"] >= 2
     finally:
         db.close()
-

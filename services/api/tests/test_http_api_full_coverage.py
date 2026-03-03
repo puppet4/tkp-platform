@@ -1,9 +1,13 @@
 import json
 import os
+import io
+import sys
 import time
 from collections.abc import Generator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime
+from pathlib import Path
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -1969,6 +1973,60 @@ def _log(message: str) -> None:
         print(message)
 
 
+@contextmanager
+def _bind_real_rag_app(monkeypatch: pytest.MonkeyPatch, *, internal_token: str) -> Generator[str, None, None]:
+    repo_root = Path(__file__).resolve().parents[3]
+    rag_src = repo_root / "services" / "rag" / "src"
+    if str(rag_src) not in sys.path:
+        sys.path.insert(0, str(rag_src))
+
+    monkeypatch.setenv("KD_INTERNAL_SERVICE_TOKEN", internal_token)
+    from tkp_rag.core.config import get_settings as get_rag_settings
+
+    get_rag_settings.cache_clear()
+    from tkp_rag.app import app as rag_app
+    from urllib import error as urlerror
+    from urllib.parse import urlsplit
+
+    class _URLResp:
+        def __init__(self, payload: bytes) -> None:
+            self._payload = payload
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def read(self):
+            return self._payload
+
+    with TestClient(rag_app) as rag_client:
+        def fake_urlopen(request_obj, timeout=None, **_kwargs):  # noqa: ANN001
+            _ = timeout
+            parsed = urlsplit(request_obj.full_url)
+            headers = {k: v for k, v in request_obj.header_items()}
+            response = rag_client.request(
+                request_obj.get_method(),
+                parsed.path,
+                content=request_obj.data,
+                headers=headers,
+            )
+            if response.status_code >= 400:
+                raise urlerror.HTTPError(
+                    request_obj.full_url,
+                    response.status_code,
+                    response.reason or "",
+                    hdrs=None,
+                    fp=io.BytesIO(response.content),
+                )
+            return _URLResp(response.content)
+
+        monkeypatch.setattr("tkp_api.services.rag_client.urlrequest.urlopen", fake_urlopen)
+        yield "http://rag.local"
+        get_rag_settings.cache_clear()
+
+
 def _all_http_openapi_endpoints() -> list[tuple[str, str]]:
     return sorted(
         {
@@ -2693,6 +2751,44 @@ def test_http_api_agent_should_fail_fast_when_rag_remote_unavailable(
     assert error["code"] == "RAG_UNAVAILABLE"
     runner._finish_current_stage()
     _log(f"[DONE] agent-rag-remote-unavailable 完成，耗时 {runner.elapsed():.2f}s")
+
+
+@pytest.mark.full
+def test_http_api_agent_remote_success_with_real_rag(api_client: TestClient, monkeypatch: pytest.MonkeyPatch):
+    """
+    远程联通专项：
+    绑定真实 RAG FastAPI 应用，验证 API 的 /api/agent/runs 走远程规划并成功落库。
+    """
+    internal_token = f"test-internal-{uuid4().hex[:8]}"
+    with _bind_real_rag_app(monkeypatch, internal_token=internal_token) as rag_base_url:
+        monkeypatch.setenv("KD_RAG_BASE_URL", rag_base_url)
+        monkeypatch.setenv("KD_INTERNAL_SERVICE_TOKEN", internal_token)
+        get_settings.cache_clear()
+
+        runner = WorkflowRunner(api_client)
+        runner.stage_auth_and_health()
+        run_data = runner.success(
+            "POST",
+            "/api/agent/runs",
+            token=runner.ctx.owner_token,
+            json={
+                "task": "create test plan",
+                "kb_ids": [],
+                "tool_policy": {"allow": ["retrieval"]},
+            },
+        )
+        _require_keys(run_data, ["run_id", "status"], "agent.remote.create.data")
+        assert run_data["status"] == "queued"
+
+        detail = runner.success(
+            "GET",
+            "/api/agent/runs/{run_id}",
+            actual_path=f"/api/agent/runs/{run_data['run_id']}",
+            token=runner.ctx.owner_token,
+        )
+        _require_keys(detail, ["plan_json", "status"], "agent.remote.detail.data")
+        assert detail["status"] == "queued"
+        assert detail["plan_json"]["source"] == "rag"
 
 
 @pytest.mark.full

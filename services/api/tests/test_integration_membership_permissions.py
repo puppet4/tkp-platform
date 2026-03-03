@@ -26,6 +26,8 @@ from tkp_api.schemas.permission import PermissionTemplatePublishRequest, RolePer
 from tkp_api.schemas.tenant import TenantMemberInviteRequest
 from tkp_api.services.tenant_bootstrap import create_tenant_with_owner
 
+TEST_JWT_SECRET = "unit-test-secret-key-at-least-32-bytes"
+
 
 def _make_request(path: str = "/test") -> Request:
     request = Request({"type": "http", "method": "GET", "path": path, "headers": []})
@@ -217,8 +219,9 @@ def test_login_disabled_user_returns_clear_error(db_session: Session):
 
 
 def test_login_response_contains_tenant_id(db_session: Session, monkeypatch):
-    monkeypatch.setenv("KD_AUTH_JWT_SECRET", "unit-test-secret")
+    monkeypatch.setenv("KD_AUTH_JWT_SECRET", TEST_JWT_SECRET)
     monkeypatch.setenv("KD_AUTH_JWT_ALGORITHMS", "HS256")
+    get_settings.cache_clear()
 
     auth_api.register(
         payload=AuthRegisterRequest(
@@ -244,10 +247,11 @@ def test_login_response_contains_tenant_id(db_session: Session, monkeypatch):
 
     assert tenant_id is not None
     assert claims["tenant_id"] == str(tenant_id)
+    get_settings.cache_clear()
 
 
 def test_login_single_session_keeps_latest_token(db_session: Session, monkeypatch):
-    monkeypatch.setenv("KD_AUTH_JWT_SECRET", "unit-test-secret")
+    monkeypatch.setenv("KD_AUTH_JWT_SECRET", TEST_JWT_SECRET)
     monkeypatch.setenv("KD_AUTH_JWT_ALGORITHMS", "HS256")
     monkeypatch.delenv("KD_AUTH_JWT_ISSUER", raising=False)
     monkeypatch.delenv("KD_AUTH_JWT_AUDIENCE", raising=False)
@@ -289,8 +293,9 @@ def test_login_single_session_keeps_latest_token(db_session: Session, monkeypatc
 
 
 def test_switch_tenant_issues_token_with_target_tenant(db_session: Session, monkeypatch):
-    monkeypatch.setenv("KD_AUTH_JWT_SECRET", "unit-test-secret")
+    monkeypatch.setenv("KD_AUTH_JWT_SECRET", TEST_JWT_SECRET)
     monkeypatch.setenv("KD_AUTH_JWT_ALGORITHMS", "HS256")
+    get_settings.cache_clear()
 
     register_response = auth_api.register(
         payload=AuthRegisterRequest(
@@ -321,6 +326,7 @@ def test_switch_tenant_issues_token_with_target_tenant(db_session: Session, monk
 
     assert switch_response["data"]["tenant_id"] == target_workspace.tenant_id
     assert claims["tenant_id"] == str(target_workspace.tenant_id)
+    get_settings.cache_clear()
 
 
 def test_invite_and_join_tenant_flow(db_session: Session, monkeypatch):

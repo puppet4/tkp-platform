@@ -9,9 +9,11 @@ from tkp_api.services.ingestion import build_job_idempotency_key
 from tkp_api.services.local_auth import hash_password, issue_access_token, verify_password
 from tkp_api.models.tenant import User
 
+TEST_JWT_SECRET = "unit-test-secret-key-at-least-32-bytes"
+
 
 def test_parse_authorization_header_jwt(monkeypatch):
-    monkeypatch.setenv("KD_AUTH_JWT_SECRET", "unit-test-secret")
+    monkeypatch.setenv("KD_AUTH_JWT_SECRET", TEST_JWT_SECRET)
     monkeypatch.setenv("KD_AUTH_JWT_ALGORITHMS", "HS256")
     monkeypatch.delenv("KD_AUTH_JWT_ISSUER", raising=False)
     monkeypatch.delenv("KD_AUTH_JWT_AUDIENCE", raising=False)
@@ -19,7 +21,7 @@ def test_parse_authorization_header_jwt(monkeypatch):
 
     get_settings.cache_clear()
 
-    token = jwt.encode({"sub": "user-1", "email": "u1@example.com"}, "unit-test-secret", algorithm="HS256")
+    token = jwt.encode({"sub": "user-1", "email": "u1@example.com"}, TEST_JWT_SECRET, algorithm="HS256")
     principal = parse_authorization_header(f"Bearer {token}")
 
     assert principal.subject == "user-1"
@@ -57,7 +59,7 @@ def test_password_hash_and_verify():
 
 
 def test_parse_authorization_header_revoked_token(monkeypatch):
-    monkeypatch.setenv("KD_AUTH_JWT_SECRET", "unit-test-secret")
+    monkeypatch.setenv("KD_AUTH_JWT_SECRET", TEST_JWT_SECRET)
     monkeypatch.setenv("KD_AUTH_JWT_ALGORITHMS", "HS256")
     monkeypatch.delenv("KD_AUTH_JWT_ISSUER", raising=False)
     monkeypatch.delenv("KD_AUTH_JWT_AUDIENCE", raising=False)
@@ -69,7 +71,7 @@ def test_parse_authorization_header_revoked_token(monkeypatch):
     jti = "revoked-test-jti"
     token = jwt.encode(
         {"sub": "user-1", "email": "u1@example.com", "jti": jti, "exp": exp_ts},
-        "unit-test-secret",
+        TEST_JWT_SECRET,
         algorithm="HS256",
     )
     revoke_token_jti(jti, exp_ts)
@@ -80,7 +82,7 @@ def test_parse_authorization_header_revoked_token(monkeypatch):
 
 
 def test_parse_authorization_header_accepts_jwt(monkeypatch):
-    monkeypatch.setenv("KD_AUTH_JWT_SECRET", "unit-test-secret")
+    monkeypatch.setenv("KD_AUTH_JWT_SECRET", TEST_JWT_SECRET)
     monkeypatch.setenv("KD_AUTH_JWT_ALGORITHMS", "HS256")
     monkeypatch.delenv("KD_AUTH_JWT_ISSUER", raising=False)
     monkeypatch.delenv("KD_AUTH_JWT_AUDIENCE", raising=False)
@@ -90,7 +92,7 @@ def test_parse_authorization_header_accepts_jwt(monkeypatch):
 
     token = jwt.encode(
         {"sub": "jwt-user", "email": "jwt@example.com", "name": "JWT User"},
-        "unit-test-secret",
+        TEST_JWT_SECRET,
         algorithm="HS256",
     )
     principal = parse_authorization_header(f"Bearer {token}")
@@ -100,7 +102,7 @@ def test_parse_authorization_header_accepts_jwt(monkeypatch):
 
 
 def test_parse_authorization_header_prefers_real_token_when_placeholder_exists(monkeypatch):
-    monkeypatch.setenv("KD_AUTH_JWT_SECRET", "unit-test-secret")
+    monkeypatch.setenv("KD_AUTH_JWT_SECRET", TEST_JWT_SECRET)
     monkeypatch.setenv("KD_AUTH_JWT_ALGORITHMS", "HS256")
     monkeypatch.delenv("KD_AUTH_JWT_ISSUER", raising=False)
     monkeypatch.delenv("KD_AUTH_JWT_AUDIENCE", raising=False)
@@ -109,7 +111,7 @@ def test_parse_authorization_header_prefers_real_token_when_placeholder_exists(m
 
     token = jwt.encode(
         {"sub": "jwt-user-2", "email": "jwt2@example.com"},
-        "unit-test-secret",
+        TEST_JWT_SECRET,
         algorithm="HS256",
     )
     principal = parse_authorization_header(f"Bearer {{bearerToken}}, Bearer {token}")
@@ -118,7 +120,7 @@ def test_parse_authorization_header_prefers_real_token_when_placeholder_exists(m
 
 
 def test_parse_authorization_header_rejects_placeholder_token(monkeypatch):
-    monkeypatch.setenv("KD_AUTH_JWT_SECRET", "unit-test-secret")
+    monkeypatch.setenv("KD_AUTH_JWT_SECRET", TEST_JWT_SECRET)
     monkeypatch.setenv("KD_AUTH_JWT_ALGORITHMS", "HS256")
     monkeypatch.delenv("KD_AUTH_JWT_ISSUER", raising=False)
     monkeypatch.delenv("KD_AUTH_JWT_AUDIENCE", raising=False)
@@ -133,7 +135,7 @@ def test_parse_authorization_header_rejects_placeholder_token(monkeypatch):
 
 
 def test_issue_access_token_contains_tenant_claim(monkeypatch):
-    monkeypatch.setenv("KD_AUTH_JWT_SECRET", "unit-test-secret")
+    monkeypatch.setenv("KD_AUTH_JWT_SECRET", TEST_JWT_SECRET)
     monkeypatch.setenv("KD_AUTH_JWT_ALGORITHMS", "HS256")
     monkeypatch.delenv("KD_AUTH_JWT_ISSUER", raising=False)
     monkeypatch.delenv("KD_AUTH_JWT_AUDIENCE", raising=False)
@@ -155,7 +157,7 @@ def test_issue_access_token_contains_tenant_claim(monkeypatch):
 
 
 def test_single_session_new_login_invalidates_old_token(monkeypatch):
-    monkeypatch.setenv("KD_AUTH_JWT_SECRET", "unit-test-secret")
+    monkeypatch.setenv("KD_AUTH_JWT_SECRET", TEST_JWT_SECRET)
     monkeypatch.setenv("KD_AUTH_JWT_ALGORITHMS", "HS256")
     monkeypatch.delenv("KD_AUTH_JWT_ISSUER", raising=False)
     monkeypatch.delenv("KD_AUTH_JWT_AUDIENCE", raising=False)
