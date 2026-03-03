@@ -85,6 +85,7 @@ services:
       KD_DATABASE_URL: ${KD_DATABASE_URL:-postgresql+psycopg://postgres:postgres@postgres:5432/tkp_api}
       KD_INTERNAL_SERVICE_TOKEN: ${KD_INTERNAL_SERVICE_TOKEN:-change-me-internal-token}
       UV_LINK_MODE: copy
+      UV_PROJECT_ENVIRONMENT: /tmp/.venv-rag
     ports:
       - "${RAG_PORT:-8010}:8010"
     volumes:
@@ -130,6 +131,7 @@ services:
       KD_RAG_CIRCUIT_BREAKER_OPEN_SECONDS: ${KD_RAG_CIRCUIT_BREAKER_OPEN_SECONDS:-30}
       KD_INTERNAL_SERVICE_TOKEN: ${KD_INTERNAL_SERVICE_TOKEN:-change-me-internal-token}
       UV_LINK_MODE: copy
+      UV_PROJECT_ENVIRONMENT: /tmp/.venv-api
     ports:
       - "${API_PORT:-8000}:8000"
     volumes:
@@ -160,6 +162,7 @@ services:
       KD_STORAGE_SECURE: ${KD_STORAGE_SECURE:-false}
       KD_WORKER_POLL_INTERVAL_SECONDS: ${KD_WORKER_POLL_INTERVAL_SECONDS:-1.0}
       UV_LINK_MODE: copy
+      UV_PROJECT_ENVIRONMENT: /tmp/.venv-worker
     volumes:
       - ../:/workspace:Z
       - uv-cache:/root/.cache/uv
