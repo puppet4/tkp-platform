@@ -25,20 +25,20 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p artifacts
-          TEST_HTTP_MODE=sqlite TKP_TEST_LOG=1 TKP_TEST_LOG_VERBOSE=1 TKP_TEST_LOG_PAYLOAD=0 \
-            bash scripts/test_api_smoke.sh | tee artifacts/api-smoke.log
+          TKP_TEST_LOG=1 TKP_TEST_LOG_VERBOSE=1 TKP_TEST_LOG_PAYLOAD=0 \
+            bash scripts/test_api.sh --suite smoke --mode sqlite | tee artifacts/api-smoke.log
 
       - name: Run API permissions matrix
         run: |
           set -euo pipefail
-          TEST_HTTP_MODE=sqlite TKP_TEST_LOG=1 TKP_TEST_LOG_VERBOSE=1 TKP_TEST_LOG_PAYLOAD=0 \
-            bash scripts/test_api_permissions_matrix.sh | tee artifacts/api-permissions-matrix.log
+          TKP_TEST_LOG=1 TKP_TEST_LOG_VERBOSE=1 TKP_TEST_LOG_PAYLOAD=0 \
+            bash scripts/test_api.sh --suite permissions --mode sqlite | tee artifacts/api-permissions-matrix.log
 
       - name: Run API full
         run: |
           set -euo pipefail
-          TEST_HTTP_MODE=sqlite TKP_TEST_LOG=1 TKP_TEST_LOG_VERBOSE=1 TKP_TEST_LOG_PAYLOAD=0 \
-            bash scripts/test_api_full_coverage.sh | tee artifacts/api-full.log
+          TKP_TEST_LOG=1 TKP_TEST_LOG_VERBOSE=1 TKP_TEST_LOG_PAYLOAD=0 \
+            bash scripts/test_api.sh --suite full --mode sqlite | tee artifacts/api-full.log
 
       - name: Upload API test logs
         if: always()
@@ -118,8 +118,8 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p artifacts
-          TEST_HTTP_MODE=postgres TKP_TEST_LOG=1 TKP_TEST_LOG_VERBOSE=1 TKP_TEST_LOG_PAYLOAD=0 \
-            bash scripts/test_api_full_coverage.sh | tee artifacts/api-full-postgres.log
+          TKP_TEST_LOG=1 TKP_TEST_LOG_VERBOSE=1 TKP_TEST_LOG_PAYLOAD=0 \
+            bash scripts/test_api.sh --suite full --mode postgres | tee artifacts/api-full-postgres.log
 
       - name: Upload Postgres API test logs
         if: always()
