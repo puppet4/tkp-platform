@@ -2708,6 +2708,99 @@ def test_http_api_business_endpoints_must_follow_permission_actions(api_client: 
     _log(f"[DONE] permission-binding 完成，耗时 {runner.elapsed():.2f}s")
 
 
+@pytest.mark.permissions_matrix
+def test_http_api_scope_guard_matrix_same_tenant_owner_isolation_for_chat_and_agent(api_client: TestClient):
+    """
+    范围越权专项（同租户）：
+    - 成员有动作权限，也不能访问其他用户创建的 conversation / agent run。
+    """
+    runner = WorkflowRunner(api_client)
+    runner.stage_auth_and_health()
+    runner.stage_tenant_flow()
+    runner.stage_member_join_flow()
+
+    runner.stage("owner 创建会话与任务")
+    owner_chat = runner.success(
+        "POST",
+        "/api/chat/completions",
+        token=runner.ctx.owner_token,
+        json={
+            "messages": [{"role": "user", "content": "owner scoped conversation"}],
+            "kb_ids": [],
+            "generation": {"temperature": 0.2, "max_tokens": 128},
+        },
+    )
+    _require_keys(owner_chat, ["conversation_id"], "owner.chat.data")
+    owner_conversation_id = owner_chat["conversation_id"]
+    _assert_uuid(owner_conversation_id, "owner.chat.conversation_id")
+
+    owner_run = runner.success(
+        "POST",
+        "/api/agent/runs",
+        token=runner.ctx.owner_token,
+        json={
+            "conversation_id": owner_conversation_id,
+            "task": "owner only run",
+            "kb_ids": [],
+            "tool_policy": {},
+        },
+    )
+    _require_keys(owner_run, ["run_id"], "owner.agent.run.create.data")
+    owner_run_id = owner_run["run_id"]
+    _assert_uuid(owner_run_id, "owner.agent.run.create.run_id")
+
+    runner.stage("同租户成员越权访问 owner 资源")
+    # viewer 角色默认具备 chat / agent 基础动作权限，此处验证资源 owner 隔离，而非动作权限拦截。
+    runner.expect_error(
+        "POST",
+        "/api/chat/completions",
+        token=runner.ctx.member_token,
+        expected_status=404,
+        json={
+            "conversation_id": owner_conversation_id,
+            "messages": [{"role": "user", "content": "member hijack conversation"}],
+            "kb_ids": [],
+            "generation": {"temperature": 0.2, "max_tokens": 128},
+        },
+    )
+    runner.expect_error(
+        "GET",
+        "/api/agent/runs/{run_id}",
+        actual_path=f"/api/agent/runs/{owner_run_id}",
+        token=runner.ctx.member_token,
+        expected_status=404,
+    )
+    runner.expect_error(
+        "POST",
+        "/api/agent/runs/{run_id}/cancel",
+        actual_path=f"/api/agent/runs/{owner_run_id}/cancel",
+        token=runner.ctx.member_token,
+        expected_status=404,
+    )
+
+    # owner 本人仍可读写，避免误判成“资源不存在”。
+    owner_run_detail = runner.success(
+        "GET",
+        "/api/agent/runs/{run_id}",
+        actual_path=f"/api/agent/runs/{owner_run_id}",
+        token=runner.ctx.owner_token,
+    )
+    _require_keys(owner_run_detail, ["run_id", "status"], "owner.agent.run.detail.data")
+    assert owner_run_detail["run_id"] == owner_run_id
+
+    owner_cancel = runner.success(
+        "POST",
+        "/api/agent/runs/{run_id}/cancel",
+        actual_path=f"/api/agent/runs/{owner_run_id}/cancel",
+        token=runner.ctx.owner_token,
+    )
+    _require_keys(owner_cancel, ["run_id", "status"], "owner.agent.run.cancel.data")
+    assert owner_cancel["run_id"] == owner_run_id
+
+    runner._finish_current_stage()
+    _log(f"[DONE] scope-guard-owner-isolation 完成，耗时 {runner.elapsed():.2f}s")
+
+
 @pytest.mark.full
 def test_http_api_crud_read_detail_endpoints_for_core_resources(api_client: TestClient):
     """
