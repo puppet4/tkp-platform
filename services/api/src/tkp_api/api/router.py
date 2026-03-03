@@ -9,6 +9,7 @@ from . import (
     documents,
     health,
     knowledge_bases,
+    ops,
     permissions,
     retrieval,
     tenants,
@@ -30,3 +31,4 @@ api_router.include_router(documents.router)
 api_router.include_router(retrieval.router)
 api_router.include_router(chat.router)
 api_router.include_router(agents.router)
+api_router.include_router(ops.router)

@@ -1788,6 +1788,57 @@ class WorkflowRunner:
         assert job_detail["error"] is None or isinstance(job_detail["error"], str)
         assert isinstance(job_detail["terminal"], bool)
 
+        ingestion_metrics = self.success(
+            "GET",
+            "/api/ops/ingestion/metrics",
+            actual_path="/api/ops/ingestion/metrics",
+            token=self.ctx.owner_token,
+        )
+        _require_keys(
+            ingestion_metrics,
+            [
+                "tenant_id",
+                "window_hours",
+                "queued",
+                "processing",
+                "retrying",
+                "completed",
+                "dead_letter",
+                "backlog_total",
+                "completed_last_window",
+                "dead_letter_last_window",
+                "failure_rate_last_window",
+                "avg_latency_ms_last_window",
+                "p95_latency_ms_last_window",
+                "stale_processing_jobs",
+            ],
+            "ops.ingestion.metrics.data",
+        )
+        _assert_uuid(ingestion_metrics["tenant_id"], "ops.ingestion.metrics.tenant_id")
+        assert isinstance(ingestion_metrics["window_hours"], int) and ingestion_metrics["window_hours"] >= 1
+        for key in (
+            "queued",
+            "processing",
+            "retrying",
+            "completed",
+            "dead_letter",
+            "backlog_total",
+            "completed_last_window",
+            "dead_letter_last_window",
+            "stale_processing_jobs",
+        ):
+            assert isinstance(ingestion_metrics[key], int) and ingestion_metrics[key] >= 0
+        assert isinstance(ingestion_metrics["failure_rate_last_window"], float)
+        assert 0.0 <= ingestion_metrics["failure_rate_last_window"] <= 1.0
+        assert ingestion_metrics["avg_latency_ms_last_window"] is None or (
+            isinstance(ingestion_metrics["avg_latency_ms_last_window"], int)
+            and ingestion_metrics["avg_latency_ms_last_window"] >= 0
+        )
+        assert ingestion_metrics["p95_latency_ms_last_window"] is None or (
+            isinstance(ingestion_metrics["p95_latency_ms_last_window"], int)
+            and ingestion_metrics["p95_latency_ms_last_window"] >= 0
+        )
+
         deleted_doc = self.success(
             "DELETE",
             "/api/documents/{document_id}",

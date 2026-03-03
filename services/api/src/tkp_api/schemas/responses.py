@@ -222,6 +222,25 @@ class KnowledgeBaseStatsData(BaseSchema):
     latest_job_error: str | None = Field(default=None, description="最近失败任务错误摘要。")
 
 
+class IngestionOpsMetricsData(BaseSchema):
+    """入库运行态指标结构。"""
+
+    tenant_id: UUID = Field(description="租户 ID。")
+    window_hours: int = Field(description="统计窗口小时数。")
+    queued: int = Field(description="queued 状态任务数。")
+    processing: int = Field(description="processing 状态任务数。")
+    retrying: int = Field(description="retrying 状态任务数。")
+    completed: int = Field(description="completed 状态任务数。")
+    dead_letter: int = Field(description="dead_letter 状态任务数。")
+    backlog_total: int = Field(description="积压任务数（queued + retrying）。")
+    completed_last_window: int = Field(description="窗口内 completed 数量。")
+    dead_letter_last_window: int = Field(description="窗口内 dead_letter 数量。")
+    failure_rate_last_window: float = Field(description="窗口内失败率（0-1）。")
+    avg_latency_ms_last_window: int | None = Field(default=None, description="窗口内平均处理耗时（毫秒）。")
+    p95_latency_ms_last_window: int | None = Field(default=None, description="窗口内 p95 处理耗时（毫秒）。")
+    stale_processing_jobs: int = Field(description="疑似卡住的 processing 任务数。")
+
+
 class KBMembershipData(BaseSchema):
     """知识库成员新增/更新返回结构。"""
 

@@ -32,6 +32,7 @@ def create_app() -> FastAPI:
             {"name": "workspaces", "description": "工作空间生命周期与成员管理。"},
             {"name": "knowledge_bases", "description": "知识库与知识库成员管理。"},
             {"name": "documents", "description": "文档上传、版本管理与入库任务查询。"},
+            {"name": "ops", "description": "运行态可观测指标与运维辅助接口。"},
             {"name": "retrieval", "description": "授权范围内的检索接口。"},
             {"name": "chat", "description": "带检索引用的问答接口。"},
             {"name": "agent", "description": "智能体运行创建、查询与取消。"},
