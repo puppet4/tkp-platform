@@ -6,6 +6,8 @@
 3. 字段描述会直接用于 Swagger 展示，便于联调时理解含义。
 """
 
+from __future__ import annotations
+
 from datetime import datetime
 from typing import Any
 from uuid import UUID
@@ -376,7 +378,32 @@ class IngestionJobData(BaseSchema):
     retryable: bool = Field(description="当前任务是否允许手工重试。")
     can_retry_now: bool = Field(description="当前时刻是否可立即重试。")
     retry_in_seconds: int = Field(description="距离可重试还有多少秒，0 表示可立即重试。")
-    diagnosis: dict[str, Any] = Field(description="任务诊断信息（分类/摘要/建议）。")
+    diagnosis: "IngestionJobDiagnosisData" = Field(description="任务诊断信息。")
+
+
+class IngestionJobDiagnosisData(BaseSchema):
+    """入库任务诊断结构。"""
+
+    category: str = Field(description="诊断分类，例如 retrying/dead_letter/completed。")
+    summary: str = Field(description="诊断摘要。")
+    suggestion: str = Field(description="建议操作。")
+
+
+class RetrievalScoreBreakdownData(BaseSchema):
+    """检索得分拆解结构。"""
+
+    vector_score: int = Field(description="向量召回分。")
+    keyword_score: int = Field(description="关键词匹配分。")
+    rerank_bonus: int = Field(description="重排加分。")
+    final_score: int = Field(description="最终分。")
+
+
+class RetrievalQueryRewriteData(BaseSchema):
+    """检索查询改写结构。"""
+
+    original_query: str = Field(description="原始查询。")
+    rewritten_query: str = Field(description="改写后查询。")
+    rewrite_applied: bool = Field(description="是否应用了改写规则。")
 
 
 class RetrievalHit(BaseSchema):
@@ -395,7 +422,7 @@ class RetrievalHit(BaseSchema):
     citation: dict[str, Any] | None = Field(default=None, description="引用定位信息。")
     reason: str = Field(description="命中原因说明。")
     matched_terms: list[str] = Field(description="命中的查询词列表。")
-    score_breakdown: dict[str, int] = Field(description="分数拆解（vector/keyword/rerank/final）。")
+    score_breakdown: RetrievalScoreBreakdownData = Field(description="分数拆解。")
 
 
 class RetrievalQueryData(BaseSchema):
@@ -404,7 +431,7 @@ class RetrievalQueryData(BaseSchema):
     hits: list[RetrievalHit] = Field(description="命中结果列表。")
     latency_ms: int = Field(description="检索耗时（毫秒）。")
     retrieval_strategy: str = Field(description="本次检索生效策略（hybrid/vector/keyword）。")
-    query_rewrite: dict[str, Any] = Field(description="查询改写信息（原始查询、改写后查询、是否改写）。")
+    query_rewrite: RetrievalQueryRewriteData = Field(description="查询改写信息。")
     effective_min_score: int = Field(description="本次检索生效的最低分阈值。")
     rerank_applied: bool = Field(description="是否执行了重排增强。")
 

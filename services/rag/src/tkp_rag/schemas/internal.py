@@ -23,13 +23,21 @@ class RetrievalQueryInternalRequest(BaseModel):
     min_score: int = Field(default=0, ge=0, le=1000, description="最低分阈值。")
 
 
+class RetrievalQueryRewriteInternalData(BaseModel):
+    """查询改写信息。"""
+
+    original_query: str = Field(description="原始查询。")
+    rewritten_query: str = Field(description="改写后查询。")
+    rewrite_applied: bool = Field(description="是否执行了改写。")
+
+
 class RetrievalQueryInternalResponse(BaseModel):
     """检索查询响应。"""
 
     hits: list[dict[str, Any]] = Field(description="命中切片列表。")
     latency_ms: int = Field(description="检索耗时（毫秒）。")
     retrieval_strategy: str = Field(description="本次检索生效策略。")
-    query_rewrite: dict[str, Any] = Field(description="查询改写信息。")
+    query_rewrite: RetrievalQueryRewriteInternalData = Field(description="查询改写信息。")
     effective_min_score: int = Field(description="生效的最低分阈值。")
     rerank_applied: bool = Field(description="是否执行重排增强。")
 
