@@ -25,22 +25,22 @@ run_step "SQL governance" \
 
 run_step "API smoke (sqlite)" \
   env TEST_HTTP_MODE=sqlite TKP_TEST_LOG=1 TKP_TEST_LOG_VERBOSE=1 TKP_TEST_LOG_PAYLOAD=0 \
-  bash scripts/test_api_smoke.sh
+  bash scripts/test_api.sh --suite smoke
 
 run_step "API permissions matrix (sqlite)" \
   env TEST_HTTP_MODE=sqlite TKP_TEST_LOG=1 TKP_TEST_LOG_VERBOSE=1 TKP_TEST_LOG_PAYLOAD=0 \
-  bash scripts/test_api_permissions_matrix.sh
+  bash scripts/test_api.sh --suite permissions
 
 run_step "API full (sqlite)" \
   env TEST_HTTP_MODE=sqlite TKP_TEST_LOG=1 TKP_TEST_LOG_VERBOSE=1 TKP_TEST_LOG_PAYLOAD=0 \
-  bash scripts/test_api_full_coverage.sh
+  bash scripts/test_api.sh --suite full
 
 run_step "Prepare postgres+redis test env" \
   bash scripts/test_env_up.sh
 
 run_step "API full (postgres)" \
   env TEST_HTTP_MODE=postgres TKP_TEST_LOG=1 TKP_TEST_LOG_VERBOSE=1 TKP_TEST_LOG_PAYLOAD=0 \
-  bash scripts/test_api_full_coverage.sh
+  bash scripts/test_api.sh --suite full
 
 echo
 echo "[pre-commit] 所有 CI 门禁校验通过，允许提交。"
