@@ -2,8 +2,9 @@
 
 from functools import lru_cache
 from typing import Literal
+from urllib.parse import urlparse
 
-from pydantic import Field, field_validator
+from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -25,7 +26,10 @@ class Settings(BaseSettings):
     auth_jwt_issuer: str | None = Field(default=None, description="期望的签发方。")
     auth_jwt_audience: str | None = Field(default=None, description="期望的受众。")
     auth_jwks_url: str | None = Field(default=None, description="可选密钥集合地址。")
-    auth_jwt_secret: str = Field(default="change-me-in-prod", description="未使用密钥集合时的对称密钥。")
+    auth_jwt_secret: str = Field(
+        default="change-me-in-prod-secret-at-least-32b",
+        description="未使用密钥集合时的对称密钥。",
+    )
     auth_jwt_leeway_seconds: int = Field(default=30, description="令牌校验时钟容错秒数。")
     auth_access_token_ttl_seconds: int = Field(default=7200, description="本地登录签发的访问令牌有效期（秒）。")
     auth_local_issuer: str = Field(default="local", description="本地登录签发时写入的 provider。")
@@ -76,6 +80,34 @@ class Settings(BaseSettings):
     def auth_algorithms(self) -> list[str]:
         """返回规范化后的算法数组。"""
         return [item.strip() for item in self.auth_jwt_algorithms.split(",") if item.strip()]
+
+    @model_validator(mode="after")
+    def validate_runtime_contract(self) -> "Settings":
+        """运行时关键配置校验（启动前失败，避免带病运行）。"""
+        if not self.auth_jwks_url and len(self.auth_jwt_secret.encode("utf-8")) < 32:
+            raise ValueError("KD_AUTH_JWT_SECRET must be at least 32 bytes when KD_AUTH_JWKS_URL is unset")
+
+        if self.storage_backend in {"minio", "oss"}:
+            missing: list[str] = []
+            if not self.storage_endpoint:
+                missing.append("KD_STORAGE_ENDPOINT")
+            if not self.storage_access_key:
+                missing.append("KD_STORAGE_ACCESS_KEY")
+            if not self.storage_secret_key:
+                missing.append("KD_STORAGE_SECRET_KEY")
+            if not self.storage_bucket:
+                missing.append("KD_STORAGE_BUCKET")
+            if missing:
+                raise ValueError(f"storage backend '{self.storage_backend}' requires: {', '.join(missing)}")
+
+        if not self.internal_service_token.strip():
+            raise ValueError("KD_INTERNAL_SERVICE_TOKEN must not be blank")
+
+        if self.rag_base_url:
+            parsed = urlparse(self.rag_base_url)
+            if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+                raise ValueError("KD_RAG_BASE_URL must be a valid http(s) URL")
+        return self
 
 
 @lru_cache

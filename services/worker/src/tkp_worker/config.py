@@ -3,7 +3,7 @@
 from functools import lru_cache
 from typing import Literal
 
-from pydantic import Field
+from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -36,6 +36,23 @@ class Settings(BaseSettings):
 
     ingestion_retry_base_seconds: int = Field(default=15, description="重试退避基准秒数。")
     ingestion_retry_max_seconds: int = Field(default=1800, description="重试退避最大秒数。")
+
+    @model_validator(mode="after")
+    def validate_runtime_contract(self) -> "Settings":
+        """运行时关键配置校验。"""
+        if self.storage_backend in {"minio", "oss"}:
+            missing: list[str] = []
+            if not self.storage_endpoint:
+                missing.append("KD_STORAGE_ENDPOINT")
+            if not self.storage_access_key:
+                missing.append("KD_STORAGE_ACCESS_KEY")
+            if not self.storage_secret_key:
+                missing.append("KD_STORAGE_SECRET_KEY")
+            if not self.storage_bucket:
+                missing.append("KD_STORAGE_BUCKET")
+            if missing:
+                raise ValueError(f"storage backend '{self.storage_backend}' requires: {', '.join(missing)}")
+        return self
 
 
 @lru_cache

@@ -1,0 +1,175 @@
+services:
+  postgres:
+    image: docker.io/pgvector/pgvector:pg16
+    container_name: tkp-postgres
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-tkp_api}
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - ${HOST_POSTGRES_DATA_DIR:-./.podman/postgres}:/var/lib/postgresql/data:Z
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-tkp_api}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  redis:
+    image: docker.io/library/redis:7
+    container_name: tkp-redis
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    volumes:
+      - ${HOST_REDIS_DATA_DIR:-./.podman/redis}:/data:Z
+
+  minio:
+    image: docker.io/minio/minio:RELEASE.2025-02-03T21-03-04Z
+    container_name: tkp-minio
+    command: ["server", "/data", "--console-address", ":9001"]
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
+    ports:
+      - "${MINIO_PORT:-9000}:9000"
+      - "${MINIO_CONSOLE_PORT:-9001}:9001"
+    volumes:
+      - ${HOST_MINIO_DATA_DIR:-./.podman/minio}:/data:Z
+
+  db-init:
+    image: docker.io/pgvector/pgvector:pg16
+    container_name: tkp-db-init
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+    working_dir: /workspace
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-tkp_api}
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+    volumes:
+      - ../:/workspace:Z
+    command:
+      - /bin/bash
+      - -lc
+      - |
+        set -euo pipefail
+        export PGPASSWORD="${POSTGRES_PASSWORD}"
+        for f in \
+          infra/sql/000_extensions.sql \
+          infra/sql/010_tables.sql \
+          infra/sql/020_indexes.sql \
+          infra/sql/030_comments.sql \
+          infra/sql/040_seed_permissions.sql
+        do
+          psql -h postgres -U "${POSTGRES_USER}" -d "${POSTGRES_DB}" -v ON_ERROR_STOP=1 < "$$f"
+        done
+
+        while IFS= read -r f; do
+          psql -h postgres -U "${POSTGRES_USER}" -d "${POSTGRES_DB}" -v ON_ERROR_STOP=1 < "$$f"
+        done < <(find infra/sql/migrations -maxdepth 1 -type f -name '*.sql' | sort)
+
+  rag:
+    image: ghcr.io/astral-sh/uv:python3.12-bookworm
+    container_name: tkp-rag
+    depends_on:
+      db-init:
+        condition: service_completed_successfully
+    working_dir: /workspace
+    environment:
+      KD_APP_ENV: ${KD_APP_ENV:-dev}
+      KD_APP_DEBUG: ${KD_APP_DEBUG:-true}
+      KD_DATABASE_URL: ${KD_DATABASE_URL:-postgresql+psycopg://postgres:postgres@postgres:5432/tkp_api}
+      KD_INTERNAL_SERVICE_TOKEN: ${KD_INTERNAL_SERVICE_TOKEN:-change-me-internal-token}
+      UV_LINK_MODE: copy
+    ports:
+      - "${RAG_PORT:-8010}:8010"
+    volumes:
+      - ../:/workspace:Z
+      - uv-cache:/root/.cache/uv
+    command:
+      - /bin/sh
+      - -lc
+      - |
+        PYTHONPATH=services/rag/src \
+        uv run --project services/rag --frozen \
+        uvicorn tkp_rag.app:app --host 0.0.0.0 --port 8010
+
+  api:
+    image: ghcr.io/astral-sh/uv:python3.12-bookworm
+    container_name: tkp-api
+    depends_on:
+      db-init:
+        condition: service_completed_successfully
+      rag:
+        condition: service_started
+    working_dir: /workspace
+    environment:
+      KD_APP_ENV: ${KD_APP_ENV:-dev}
+      KD_APP_DEBUG: ${KD_APP_DEBUG:-true}
+      KD_API_PREFIX: ${KD_API_PREFIX:-/api}
+      KD_DATABASE_URL: ${KD_DATABASE_URL:-postgresql+psycopg://postgres:postgres@postgres:5432/tkp_api}
+      KD_REDIS_URL: ${KD_REDIS_URL:-redis://redis:6379/0}
+      KD_AUTH_JWT_ALGORITHMS: ${KD_AUTH_JWT_ALGORITHMS:-HS256}
+      KD_AUTH_JWT_SECRET: ${KD_AUTH_JWT_SECRET:-local-dev-secret-key-at-least-32-bytes}
+      KD_STORAGE_BACKEND: ${KD_STORAGE_BACKEND:-minio}
+      KD_STORAGE_BUCKET: ${KD_STORAGE_BUCKET:-tkp-documents}
+      KD_STORAGE_KEY_PREFIX: ${KD_STORAGE_KEY_PREFIX:-tkp}
+      KD_STORAGE_ENDPOINT: ${KD_STORAGE_ENDPOINT:-minio:9000}
+      KD_STORAGE_ACCESS_KEY: ${KD_STORAGE_ACCESS_KEY:-minioadmin}
+      KD_STORAGE_SECRET_KEY: ${KD_STORAGE_SECRET_KEY:-minioadmin}
+      KD_STORAGE_SECURE: ${KD_STORAGE_SECURE:-false}
+      KD_RAG_BASE_URL: ${KD_RAG_BASE_URL:-http://rag:8010}
+      KD_RAG_TIMEOUT_SECONDS: ${KD_RAG_TIMEOUT_SECONDS:-8.0}
+      KD_RAG_MAX_RETRIES: ${KD_RAG_MAX_RETRIES:-1}
+      KD_RAG_RETRY_BACKOFF_SECONDS: ${KD_RAG_RETRY_BACKOFF_SECONDS:-0.2}
+      KD_RAG_CIRCUIT_BREAKER_FAIL_THRESHOLD: ${KD_RAG_CIRCUIT_BREAKER_FAIL_THRESHOLD:-3}
+      KD_RAG_CIRCUIT_BREAKER_OPEN_SECONDS: ${KD_RAG_CIRCUIT_BREAKER_OPEN_SECONDS:-30}
+      KD_INTERNAL_SERVICE_TOKEN: ${KD_INTERNAL_SERVICE_TOKEN:-change-me-internal-token}
+      UV_LINK_MODE: copy
+    ports:
+      - "${API_PORT:-8000}:8000"
+    volumes:
+      - ../:/workspace:Z
+      - uv-cache:/root/.cache/uv
+    command:
+      - /bin/sh
+      - -lc
+      - |
+        PYTHONPATH=services/api/src \
+        uv run --project services/api --frozen \
+        uvicorn tkp_api.main:app --host 0.0.0.0 --port 8000
+
+  worker:
+    image: ghcr.io/astral-sh/uv:python3.12-bookworm
+    container_name: tkp-worker
+    depends_on:
+      db-init:
+        condition: service_completed_successfully
+    working_dir: /workspace
+    environment:
+      KD_DATABASE_URL: ${KD_DATABASE_URL:-postgresql+psycopg://postgres:postgres@postgres:5432/tkp_api}
+      KD_STORAGE_BACKEND: ${KD_STORAGE_BACKEND:-minio}
+      KD_STORAGE_BUCKET: ${KD_STORAGE_BUCKET:-tkp-documents}
+      KD_STORAGE_ENDPOINT: ${KD_STORAGE_ENDPOINT:-minio:9000}
+      KD_STORAGE_ACCESS_KEY: ${KD_STORAGE_ACCESS_KEY:-minioadmin}
+      KD_STORAGE_SECRET_KEY: ${KD_STORAGE_SECRET_KEY:-minioadmin}
+      KD_STORAGE_SECURE: ${KD_STORAGE_SECURE:-false}
+      KD_WORKER_POLL_INTERVAL_SECONDS: ${KD_WORKER_POLL_INTERVAL_SECONDS:-1.0}
+      UV_LINK_MODE: copy
+    volumes:
+      - ../:/workspace:Z
+      - uv-cache:/root/.cache/uv
+    command:
+      - /bin/sh
+      - -lc
+      - |
+        PYTHONPATH=services/worker/src \
+        uv run --project services/worker --frozen \
+        python -m tkp_worker.main
+
+volumes:
+  uv-cache:

@@ -2,7 +2,7 @@
 
 from functools import lru_cache
 
-from pydantic import Field
+from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -22,6 +22,15 @@ class Settings(BaseSettings):
         default="change-me-internal-token",
         description="服务间内部调用鉴权令牌（API->RAG）。",
     )
+
+    @model_validator(mode="after")
+    def validate_runtime_contract(self) -> "Settings":
+        """运行时关键配置校验。"""
+        if not self.database_url.strip():
+            raise ValueError("KD_DATABASE_URL must not be blank")
+        if not self.internal_service_token.strip():
+            raise ValueError("KD_INTERNAL_SERVICE_TOKEN must not be blank")
+        return self
 
 
 @lru_cache

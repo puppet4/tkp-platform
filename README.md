@@ -99,10 +99,40 @@ Required vars for API currently:
 - `KD_RAG_CIRCUIT_BREAKER_OPEN_SECONDS` (可选，默认 30)
 - `KD_INTERNAL_SERVICE_TOKEN` (建议必配，API 与 RAG 必须一致)
 
+配置治理（启动前校验）：
+- 当未配置 `KD_AUTH_JWKS_URL` 时，`KD_AUTH_JWT_SECRET` 必须至少 32 字节。
+- 当 `KD_STORAGE_BACKEND=minio|oss` 时，`KD_STORAGE_ENDPOINT/KD_STORAGE_ACCESS_KEY/KD_STORAGE_SECRET_KEY/KD_STORAGE_BUCKET` 必填。
+- `KD_RAG_BASE_URL` 配置时必须是合法 `http(s)` URL，且 `KD_INTERNAL_SERVICE_TOKEN` 不能为空白。
+
 Auth and tenancy headers:
 
 - `Authorization: Bearer <jwt>`
 - `Idempotency-Key: <client_key>` (optional, for upload/reindex write idempotency)
+
+## Podman Stack
+
+一键拉起全栈（`postgres + redis + minio + rag + api + worker`）：
+
+```bash
+bash scripts/stack_up.sh
+```
+
+查看日志：
+
+```bash
+bash scripts/stack_logs.sh
+```
+
+停止全栈：
+
+```bash
+bash scripts/stack_down.sh
+```
+
+说明：
+- 默认使用环境文件：`infra/env/dev.env`。
+- 可通过 `STACK_ENV_FILE=/path/to/env` 切换配置层。
+- 编排文件：`infra/podman-compose.yml`。
 
 ## API Tests
 
@@ -119,3 +149,34 @@ bash scripts/test_api.sh --suite smoke --mode sqlite
 bash scripts/test_api.sh --suite permissions --mode sqlite
 bash scripts/test_api.sh --suite all --mode postgres
 ```
+
+## Production-like E2E
+
+验证真实数据面闭环（`API -> Worker -> RAG`，依赖 `Postgres + Redis + MinIO`）：
+
+```bash
+bash scripts/test_data_plane_e2e.sh
+```
+
+说明：
+- 脚本会自动拉起/复用测试依赖容器，并启动本地 `api/rag/worker` 进程。
+- 默认端口：
+  - API: `19080`
+  - RAG: `19081`
+  - Postgres: `55432`
+  - Redis: `56379`
+  - MinIO: `59000` (console `59001`)
+- 可通过环境变量覆盖端口与凭据（如 `API_PORT`、`RAG_PORT`、`TEST_MINIO_PORT`）。
+
+## Runtime Ops
+
+新增运行态指标接口（租户 owner/admin 可访问）：
+
+- `GET /api/ops/ingestion/metrics`
+
+返回维度：
+- 入库任务分状态计数（queued/processing/retrying/completed/dead_letter）
+- 积压量（backlog）
+- 窗口失败率（dead_letter / terminal）
+- 平均与 p95 入库耗时
+- 疑似卡住任务数（processing 且心跳超时）
