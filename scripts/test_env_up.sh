@@ -5,17 +5,25 @@ ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 
 TEST_PG_CONTAINER="${TEST_PG_CONTAINER:-tkp-postgres-test}"
 TEST_REDIS_CONTAINER="${TEST_REDIS_CONTAINER:-tkp-redis-test}"
+TEST_MINIO_CONTAINER="${TEST_MINIO_CONTAINER:-tkp-minio-test}"
 TEST_PG_IMAGE="${TEST_PG_IMAGE:-docker.io/pgvector/pgvector:pg16}"
 TEST_REDIS_IMAGE="${TEST_REDIS_IMAGE:-docker.io/library/redis:7}"
+TEST_MINIO_IMAGE="${TEST_MINIO_IMAGE:-docker.io/minio/minio:RELEASE.2025-02-03T21-03-04Z}"
 TEST_DB_NAME="${TEST_DB_NAME:-tkp_api_test}"
 TEST_DB_USER="${TEST_DB_USER:-postgres}"
 TEST_DB_PASSWORD="${TEST_DB_PASSWORD:-postgres}"
 TEST_PG_PORT="${TEST_PG_PORT:-55432}"
 TEST_REDIS_PORT="${TEST_REDIS_PORT:-56379}"
+TEST_MINIO_PORT="${TEST_MINIO_PORT:-59000}"
+TEST_MINIO_CONSOLE_PORT="${TEST_MINIO_CONSOLE_PORT:-59001}"
 TEST_PG_DATA_DIR="${TEST_PG_DATA_DIR:-$HOME/Documents/docker/postgres/test}"
 TEST_REDIS_DATA_DIR="${TEST_REDIS_DATA_DIR:-$HOME/Documents/docker/redis/test}"
+TEST_MINIO_DATA_DIR="${TEST_MINIO_DATA_DIR:-$HOME/Documents/docker/minio/test}"
+TEST_MINIO_ENABLED="${TEST_MINIO_ENABLED:-0}"
+TEST_MINIO_ROOT_USER="${TEST_MINIO_ROOT_USER:-minioadmin}"
+TEST_MINIO_ROOT_PASSWORD="${TEST_MINIO_ROOT_PASSWORD:-minioadmin}"
 
-mkdir -p "$TEST_PG_DATA_DIR" "$TEST_REDIS_DATA_DIR"
+mkdir -p "$TEST_PG_DATA_DIR" "$TEST_REDIS_DATA_DIR" "$TEST_MINIO_DATA_DIR"
 
 ensure_container_running() {
   local name="$1"
@@ -31,6 +39,7 @@ ensure_container_running() {
 if [[ "${TEST_ENV_RECREATE:-0}" == "1" ]]; then
   podman rm -f "$TEST_PG_CONTAINER" >/dev/null 2>&1 || true
   podman rm -f "$TEST_REDIS_CONTAINER" >/dev/null 2>&1 || true
+  podman rm -f "$TEST_MINIO_CONTAINER" >/dev/null 2>&1 || true
 fi
 
 ensure_container_running \
@@ -47,6 +56,21 @@ ensure_container_running \
   -v "$TEST_REDIS_DATA_DIR:/data:Z" \
   -p "${TEST_REDIS_PORT}:6379"
 
+if [[ "$TEST_MINIO_ENABLED" == "1" ]]; then
+  if podman ps -a --format '{{.Names}}' | grep -qx "$TEST_MINIO_CONTAINER"; then
+    podman start "$TEST_MINIO_CONTAINER" >/dev/null
+  else
+    podman run -d --name "$TEST_MINIO_CONTAINER" \
+      -e "MINIO_ROOT_USER=$TEST_MINIO_ROOT_USER" \
+      -e "MINIO_ROOT_PASSWORD=$TEST_MINIO_ROOT_PASSWORD" \
+      -v "$TEST_MINIO_DATA_DIR:/data:Z" \
+      -p "${TEST_MINIO_PORT}:9000" \
+      -p "${TEST_MINIO_CONSOLE_PORT}:9001" \
+      "$TEST_MINIO_IMAGE" \
+      server /data --console-address ":9001" >/dev/null
+  fi
+fi
+
 echo "waiting postgres..."
 for _ in $(seq 1 60); do
   if podman exec "$TEST_PG_CONTAINER" pg_isready -U "$TEST_DB_USER" >/dev/null 2>&1; then
@@ -58,6 +82,20 @@ done
 if ! podman exec "$TEST_PG_CONTAINER" pg_isready -U "$TEST_DB_USER" >/dev/null 2>&1; then
   echo "postgres not ready" >&2
   exit 1
+fi
+
+if [[ "$TEST_MINIO_ENABLED" == "1" ]]; then
+  echo "waiting minio..."
+  for _ in $(seq 1 60); do
+    if curl -fsS "http://127.0.0.1:${TEST_MINIO_PORT}/minio/health/live" >/dev/null 2>&1; then
+      break
+    fi
+    sleep 1
+  done
+  if ! curl -fsS "http://127.0.0.1:${TEST_MINIO_PORT}/minio/health/live" >/dev/null 2>&1; then
+    echo "minio not ready" >&2
+    exit 1
+  fi
 fi
 
 DB_EXISTS="$(
@@ -90,3 +128,7 @@ echo
 echo "test environment is ready:"
 echo "  postgres: postgresql+psycopg://$TEST_DB_USER:$TEST_DB_PASSWORD@127.0.0.1:$TEST_PG_PORT/$TEST_DB_NAME"
 echo "  redis:    redis://127.0.0.1:$TEST_REDIS_PORT/0"
+if [[ "$TEST_MINIO_ENABLED" == "1" ]]; then
+  echo "  minio:    http://127.0.0.1:$TEST_MINIO_PORT (console: :$TEST_MINIO_CONSOLE_PORT)"
+  echo "  minio-ak: $TEST_MINIO_ROOT_USER"
+fi

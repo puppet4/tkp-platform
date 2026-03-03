@@ -1,4 +1,4 @@
-from tkp_worker.main import _chunk_text, _embed_text, _vector_to_pg_literal
+from tkp_worker.main import _chunk_text, _embed_text, _normalize_metadata, _vector_to_pg_literal
 
 
 def test_chunk_text_splits_long_text():
@@ -23,3 +23,10 @@ def test_embed_text_is_deterministic_and_normalized():
 def test_vector_to_pg_literal_format():
     literal = _vector_to_pg_literal([0.12, -0.5, 0.0])
     assert literal == "[0.120000,-0.500000,0.000000]"
+
+
+def test_normalize_metadata_supports_dict_and_json_text():
+    assert _normalize_metadata({"lang": "zh"}) == {"lang": "zh"}
+    assert _normalize_metadata('{"topic":"refund"}') == {"topic": "refund"}
+    assert _normalize_metadata("invalid-json") == {}
+    assert _normalize_metadata(None) == {}

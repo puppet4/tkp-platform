@@ -209,6 +209,20 @@ def _vector_to_pg_literal(vector: list[float]) -> str:
     return "[" + ",".join(f"{value:.6f}" for value in vector) + "]"
 
 
+def _normalize_metadata(raw: object) -> dict[str, object]:
+    """将任意 metadata 入参归一化为字典。"""
+    if isinstance(raw, dict):
+        return raw
+    if isinstance(raw, str):
+        try:
+            parsed = json.loads(raw)
+        except json.JSONDecodeError:
+            return {}
+        if isinstance(parsed, dict):
+            return parsed
+    return {}
+
+
 def _claim_next_job(conn, worker_id: str, lock_timeout_seconds: int) -> dict[str, Any] | None:
     """抢占下一条可执行任务。
 
@@ -432,7 +446,7 @@ def _process_job(
     row = conn.execute(
         text(
             """
-            SELECT d.tenant_id, d.workspace_id, d.kb_id, dv.object_key, dv.parser_type
+            SELECT d.tenant_id, d.workspace_id, d.kb_id, d.metadata AS document_metadata, dv.object_key, dv.parser_type
             FROM document_versions dv
             JOIN documents d ON d.id = dv.document_id
             WHERE dv.id = :document_version_id
@@ -446,6 +460,7 @@ def _process_job(
     tenant_id: UUID = row["tenant_id"]
     workspace_id: UUID = row["workspace_id"]
     kb_id: UUID = row["kb_id"]
+    document_metadata = _normalize_metadata(row["document_metadata"])
     object_key: str | None = row["object_key"]
     parser_type: str | None = row["parser_type"]
 
@@ -625,7 +640,7 @@ def _process_job(
                 "chunk_no": i,
                 "content": chunk,
                 "token_count": len(chunk.split()),
-                "metadata": json.dumps({}),
+                "metadata": json.dumps(document_metadata, ensure_ascii=False),
             },
         )
         conn.execute(
