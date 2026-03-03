@@ -181,6 +181,88 @@ def test_search_chunks_supports_metadata_filters_and_citations():
     assert hit["citation"]["chunk_id"] == hit["chunk_id"]
 
 
+def test_search_chunks_supports_strategy_and_min_score():
+    engine = create_engine("sqlite+pysqlite:///:memory:", future=True)
+    Document.__table__.create(engine)
+    DocumentChunk.__table__.create(engine)
+    db_factory = sessionmaker(bind=engine, autoflush=False, autocommit=False, class_=Session)
+
+    tenant_id = uuid4()
+    kb_id = uuid4()
+    workspace_id = uuid4()
+    document_id = uuid4()
+    version_id = uuid4()
+
+    db = db_factory()
+    try:
+        db.add(
+            Document(
+                id=document_id,
+                tenant_id=tenant_id,
+                workspace_id=workspace_id,
+                kb_id=kb_id,
+                title="doc",
+                source_type=SourceType.UPLOAD,
+                source_uri="doc.txt",
+                current_version=1,
+                status=DocumentStatus.READY,
+                metadata_={},
+                created_by=None,
+            )
+        )
+        db.add_all(
+            [
+                DocumentChunk(
+                    id=uuid4(),
+                    tenant_id=tenant_id,
+                    workspace_id=workspace_id,
+                    kb_id=kb_id,
+                    document_id=document_id,
+                    document_version_id=version_id,
+                    chunk_no=1,
+                    parent_chunk_id=None,
+                    title_path="指南/退款",
+                    content="退款流程需要提交工单。",
+                    token_count=12,
+                    metadata_={"lang": "zh"},
+                ),
+                DocumentChunk(
+                    id=uuid4(),
+                    tenant_id=tenant_id,
+                    workspace_id=workspace_id,
+                    kb_id=kb_id,
+                    document_id=document_id,
+                    document_version_id=version_id,
+                    chunk_no=2,
+                    parent_chunk_id=None,
+                    title_path="指南/其他",
+                    content="其他流程信息。",
+                    token_count=8,
+                    metadata_={"lang": "zh"},
+                ),
+            ]
+        )
+        db.commit()
+
+        hits = search_chunks(
+            db,
+            tenant_id=tenant_id,
+            kb_ids=[kb_id],
+            query="退款流程",
+            top_k=5,
+            filters={},
+            with_citations=True,
+            retrieval_strategy="keyword",
+            min_score=800,
+        )
+    finally:
+        db.close()
+
+    assert len(hits) == 1
+    assert hits[0]["match_type"] in {"keyword", "hybrid"}
+    assert hits[0]["score"] >= 800
+
+
 def test_post_rag_json_forwards_internal_token(monkeypatch):
     captured = {"token": None}
 

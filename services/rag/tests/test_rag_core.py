@@ -168,3 +168,76 @@ def test_search_chunks_supports_metadata_filters_and_citations():
         assert answer_payload["usage"]["total_tokens"] >= 2
     finally:
         db.close()
+
+
+def test_search_chunks_supports_strategy_and_min_score():
+    engine = create_engine("sqlite+pysqlite:///:memory:", future=True)
+    db = Session(engine, autoflush=False, autocommit=False)
+    tenant_id = uuid4()
+    kb_id = uuid4()
+    workspace_id = uuid4()
+    document_id = uuid4()
+    version_id = uuid4()
+    try:
+        _init_sqlite_schema(db)
+        db.execute(
+            text(
+                """
+                INSERT INTO documents (id, tenant_id, workspace_id, kb_id, status)
+                VALUES (:id, :tenant_id, :workspace_id, :kb_id, :status)
+                """
+            ),
+            {
+                "id": str(document_id),
+                "tenant_id": str(tenant_id),
+                "workspace_id": str(workspace_id),
+                "kb_id": str(kb_id),
+                "status": "ready",
+            },
+        )
+        db.execute(
+            text(
+                """
+                INSERT INTO document_chunks (
+                    id, tenant_id, workspace_id, kb_id, document_id, document_version_id,
+                    chunk_no, title_path, content, metadata
+                ) VALUES
+                    (:id1, :tenant_id, :workspace_id, :kb_id, :document_id, :version_id, 1, :title1, :content1, :meta1),
+                    (:id2, :tenant_id, :workspace_id, :kb_id, :document_id, :version_id, 2, :title2, :content2, :meta2)
+                """
+            ),
+            {
+                "id1": str(uuid4()),
+                "id2": str(uuid4()),
+                "tenant_id": str(tenant_id),
+                "workspace_id": str(workspace_id),
+                "kb_id": str(kb_id),
+                "document_id": str(document_id),
+                "version_id": str(version_id),
+                "title1": "手册/退款",
+                "title2": "manual/other",
+                "content1": "退款流程需要先提交工单。",
+                "content2": "This is other content.",
+                "meta1": '{"lang":"zh","source":"policy"}',
+                "meta2": '{"lang":"en","source":"policy"}',
+            },
+        )
+        db.commit()
+
+        hits = search_chunks(
+            db,
+            tenant_id=tenant_id,
+            kb_ids=[kb_id],
+            query="退款流程",
+            top_k=5,
+            filters={},
+            with_citations=True,
+            retrieval_strategy="keyword",
+            min_score=800,
+        )
+    finally:
+        db.close()
+
+    assert len(hits) == 1
+    assert hits[0]["score"] >= 800
+    assert hits[0]["match_type"] in {"keyword", "hybrid"}

@@ -241,6 +241,26 @@ class IngestionOpsMetricsData(BaseSchema):
     stale_processing_jobs: int = Field(description="疑似卡住的 processing 任务数。")
 
 
+class IngestionOpsAlertRuleData(BaseSchema):
+    """入库告警规则状态。"""
+
+    code: str = Field(description="规则编码。")
+    name: str = Field(description="规则名称。")
+    status: str = Field(description="规则状态（ok/warn/critical）。")
+    current: int | float = Field(description="当前指标值。")
+    warn_threshold: int | float = Field(description="告警阈值。")
+    critical_threshold: int | float = Field(description="严重告警阈值。")
+    message: str = Field(description="规则说明。")
+
+
+class IngestionOpsAlertsData(BaseSchema):
+    """入库告警汇总结构。"""
+
+    tenant_id: UUID = Field(description="租户 ID。")
+    overall_status: str = Field(description="整体状态（ok/warn/critical）。")
+    rules: list[IngestionOpsAlertRuleData] = Field(description="规则级告警状态。")
+
+
 class KBMembershipData(BaseSchema):
     """知识库成员新增/更新返回结构。"""
 
@@ -365,6 +385,7 @@ class RetrievalHit(BaseSchema):
     chunk_no: int = Field(description="切片序号。")
     title_path: str | None = Field(default=None, description="切片标题路径。")
     score: int = Field(description="命中分数，分值越高代表相关性越高。")
+    match_type: str = Field(description="命中类型（vector/keyword/hybrid）。")
     snippet: str = Field(description="切片摘要文本。")
     metadata: dict[str, Any] | None = Field(default=None, description="切片 metadata 快照。")
     citation: dict[str, Any] | None = Field(default=None, description="引用定位信息。")
@@ -375,6 +396,7 @@ class RetrievalQueryData(BaseSchema):
 
     hits: list[RetrievalHit] = Field(description="命中结果列表。")
     latency_ms: int = Field(description="检索耗时（毫秒）。")
+    retrieval_strategy: str = Field(description="本次检索生效策略（hybrid/vector/keyword）。")
 
 
 class ChatCompletionData(BaseSchema):

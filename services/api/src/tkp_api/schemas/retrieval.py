@@ -1,6 +1,7 @@
 """检索请求结构。"""
 
 from typing import Any
+from typing import Literal
 from uuid import UUID
 
 from pydantic import BaseModel, Field
@@ -14,3 +15,8 @@ class RetrievalQueryRequest(BaseModel):
     top_k: int = Field(default=8, ge=1, le=50, description="返回切片数量上限。", examples=[8])
     filters: dict[str, Any] = Field(default_factory=dict, description="可选元数据过滤条件。")
     with_citations: bool = Field(default=True, description="是否期望返回引用信息。")
+    retrieval_strategy: Literal["hybrid", "vector", "keyword"] = Field(
+        default="hybrid",
+        description="检索策略：hybrid=向量+关键词融合，vector=仅向量，keyword=仅关键词。",
+    )
+    min_score: int = Field(default=0, ge=0, le=1000, description="最低分阈值，低于该分值的命中会被过滤。")

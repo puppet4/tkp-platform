@@ -173,6 +173,7 @@ bash scripts/test_data_plane_e2e.sh
 新增运行态指标接口（租户 owner/admin 可访问）：
 
 - `GET /api/ops/ingestion/metrics`
+- `GET /api/ops/ingestion/alerts`
 
 返回维度：
 - 入库任务分状态计数（queued/processing/retrying/completed/dead_letter）
@@ -180,3 +181,4 @@ bash scripts/test_data_plane_e2e.sh
 - 窗口失败率（dead_letter / terminal）
 - 平均与 p95 入库耗时
 - 疑似卡住任务数（processing 且心跳超时）
+- 规则化告警状态（ok/warn/critical）与阈值对比

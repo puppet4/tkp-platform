@@ -5,7 +5,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 
 from tkp_api.models.knowledge import IngestionJob
-from tkp_api.services.ops_metrics import build_ingestion_metrics
+from tkp_api.services.ops_metrics import build_ingestion_alerts, build_ingestion_metrics
 
 
 def test_build_ingestion_metrics_aggregates_backlog_failure_and_latency():
@@ -103,3 +103,35 @@ def test_build_ingestion_metrics_aggregates_backlog_failure_and_latency():
     assert isinstance(metrics["avg_latency_ms_last_window"], int) and metrics["avg_latency_ms_last_window"] >= 5000
     assert isinstance(metrics["p95_latency_ms_last_window"], int) and metrics["p95_latency_ms_last_window"] >= 5000
     assert metrics["stale_processing_jobs"] == 1
+
+
+def test_build_ingestion_alerts_should_mark_critical_when_threshold_exceeded():
+    metrics = {
+        "tenant_id": str(uuid4()),
+        "window_hours": 24,
+        "queued": 10,
+        "processing": 2,
+        "retrying": 6,
+        "completed": 20,
+        "dead_letter": 5,
+        "backlog_total": 16,
+        "completed_last_window": 20,
+        "dead_letter_last_window": 5,
+        "failure_rate_last_window": 0.2,
+        "avg_latency_ms_last_window": 3100,
+        "p95_latency_ms_last_window": 6400,
+        "stale_processing_jobs": 3,
+    }
+    alerts = build_ingestion_alerts(
+        metrics,
+        backlog_warn=8,
+        backlog_critical=12,
+        failure_rate_warn=0.05,
+        failure_rate_critical=0.15,
+        stale_warn=1,
+        stale_critical=2,
+    )
+    assert alerts["overall_status"] == "critical"
+    assert any(item["code"] == "BACKLOG" and item["status"] == "critical" for item in alerts["rules"])
+    assert any(item["code"] == "FAILURE_RATE" and item["status"] == "critical" for item in alerts["rules"])
+    assert any(item["code"] == "STALE_PROCESSING" and item["status"] == "critical" for item in alerts["rules"])

@@ -909,11 +909,20 @@ class WorkflowRunner:
             "POST",
             "/api/retrieval/query",
             token=self.ctx.owner_token,
-            json={"query": "hello", "kb_ids": [], "top_k": 3, "filters": {}, "with_citations": True},
+            json={
+                "query": "hello",
+                "kb_ids": [],
+                "top_k": 3,
+                "filters": {},
+                "with_citations": True,
+                "retrieval_strategy": "hybrid",
+                "min_score": 0,
+            },
         )
-        _require_keys(retrieval_data, ["hits", "latency_ms"], "retrieval.query.data")
+        _require_keys(retrieval_data, ["hits", "latency_ms", "retrieval_strategy"], "retrieval.query.data")
         assert isinstance(retrieval_data["hits"], list)
         assert isinstance(retrieval_data["latency_ms"], int) and retrieval_data["latency_ms"] >= 0
+        assert retrieval_data["retrieval_strategy"] in {"hybrid", "vector", "keyword"}
         for hit in retrieval_data["hits"]:
             _require_keys(
                 hit,
@@ -928,6 +937,7 @@ class WorkflowRunner:
                     "snippet",
                     "metadata",
                     "citation",
+                    "match_type",
                 ],
                 "retrieval.hit",
             )
@@ -940,6 +950,7 @@ class WorkflowRunner:
             assert isinstance(hit["score"], int)
             _assert_non_empty_str(hit["snippet"], "retrieval.hit.snippet")
             assert hit["metadata"] is None or isinstance(hit["metadata"], dict)
+            assert hit["match_type"] in {"vector", "keyword", "hybrid"}
             if hit["citation"] is not None:
                 _require_keys(
                     hit["citation"],
@@ -1838,6 +1849,28 @@ class WorkflowRunner:
             isinstance(ingestion_metrics["p95_latency_ms_last_window"], int)
             and ingestion_metrics["p95_latency_ms_last_window"] >= 0
         )
+
+        ingestion_alerts = self.success(
+            "GET",
+            "/api/ops/ingestion/alerts",
+            actual_path="/api/ops/ingestion/alerts",
+            token=self.ctx.owner_token,
+        )
+        _require_keys(
+            ingestion_alerts,
+            ["tenant_id", "overall_status", "rules"],
+            "ops.ingestion.alerts.data",
+        )
+        _assert_uuid(ingestion_alerts["tenant_id"], "ops.ingestion.alerts.tenant_id")
+        assert ingestion_alerts["overall_status"] in {"ok", "warn", "critical"}
+        assert isinstance(ingestion_alerts["rules"], list) and len(ingestion_alerts["rules"]) >= 3
+        for rule in ingestion_alerts["rules"]:
+            _require_keys(
+                rule,
+                ["code", "name", "status", "current", "warn_threshold", "critical_threshold", "message"],
+                "ops.ingestion.alerts.rule",
+            )
+            assert rule["status"] in {"ok", "warn", "critical"}
 
         deleted_doc = self.success(
             "DELETE",

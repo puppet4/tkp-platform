@@ -1,6 +1,7 @@
 """RAG 内部接口请求/响应模型。"""
 
 from typing import Any
+from typing import Literal
 from uuid import UUID
 
 from pydantic import BaseModel, Field
@@ -15,6 +16,11 @@ class RetrievalQueryInternalRequest(BaseModel):
     top_k: int = Field(default=8, ge=1, le=50, description="命中上限。")
     filters: dict[str, Any] = Field(default_factory=dict, description="metadata 过滤条件。")
     with_citations: bool = Field(default=True, description="是否返回 citation。")
+    retrieval_strategy: Literal["hybrid", "vector", "keyword"] = Field(
+        default="hybrid",
+        description="检索策略。",
+    )
+    min_score: int = Field(default=0, ge=0, le=1000, description="最低分阈值。")
 
 
 class RetrievalQueryInternalResponse(BaseModel):
@@ -22,6 +28,7 @@ class RetrievalQueryInternalResponse(BaseModel):
 
     hits: list[dict[str, Any]] = Field(description="命中切片列表。")
     latency_ms: int = Field(description="检索耗时（毫秒）。")
+    retrieval_strategy: str = Field(description="本次检索生效策略。")
 
 
 class ChatGenerateInternalRequest(BaseModel):

@@ -58,9 +58,12 @@ def retrieval_query(
         top_k=payload.top_k,
         filters=payload.filters,
         with_citations=payload.with_citations,
+        retrieval_strategy=payload.retrieval_strategy,
+        min_score=payload.min_score,
     )
     hits = rag_data["hits"]
     latency_ms = rag_data["latency_ms"]
+    retrieval_strategy = rag_data["retrieval_strategy"]
 
     # 将检索请求与结果快照写入日志表，用于审计、回放与质量分析。
     db.add(
@@ -77,4 +80,11 @@ def retrieval_query(
     )
     db.commit()
 
-    return success(request, {"hits": hits, "latency_ms": latency_ms})
+    return success(
+        request,
+        {
+            "hits": hits,
+            "latency_ms": latency_ms,
+            "retrieval_strategy": retrieval_strategy,
+        },
+    )

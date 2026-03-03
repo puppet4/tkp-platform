@@ -86,6 +86,7 @@ def _build_hit(
     snippet: str,
     metadata: dict[str, object],
     score: int,
+    match_type: str,
     with_citations: bool,
 ) -> dict[str, object]:
     """统一组装命中记录。"""
@@ -97,6 +98,7 @@ def _build_hit(
         "chunk_no": int(chunk_no),
         "title_path": title_path,
         "score": int(score),
+        "match_type": match_type,
         "snippet": snippet,
         "metadata": metadata,
     }
@@ -162,6 +164,7 @@ def _search_keyword_chunks(
                 snippet=chunk.content[:300],
                 metadata=metadata,
                 score=score,
+                match_type="keyword",
                 with_citations=with_citations,
             )
         )
@@ -236,11 +239,50 @@ def _search_vector_chunks_postgres(
                 snippet=row["snippet"] or "",
                 metadata=metadata,
                 score=score,
+                match_type="vector",
                 with_citations=with_citations,
             )
         )
     results.sort(key=lambda item: int(item["score"]), reverse=True)
     return results[:top_k]
+
+
+def _normalize_retrieval_strategy(value: str) -> str:
+    normalized = (value or "hybrid").strip().lower()
+    if normalized not in {"hybrid", "vector", "keyword"}:
+        return "hybrid"
+    return normalized
+
+
+def _merge_hybrid_hits(
+    vector_hits: list[dict[str, object]],
+    keyword_hits: list[dict[str, object]],
+) -> list[dict[str, object]]:
+    merged: dict[str, dict[str, object]] = {}
+    for hit in vector_hits:
+        merged[str(hit["chunk_id"])] = dict(hit)
+
+    for hit in keyword_hits:
+        chunk_id = str(hit["chunk_id"])
+        existing = merged.get(chunk_id)
+        if existing is None:
+            merged[chunk_id] = dict(hit)
+            continue
+
+        existing_score = int(existing.get("score") or 0)
+        keyword_score = int(hit.get("score") or 0)
+        existing["score"] = min(1000, max(existing_score, keyword_score) + 60)
+        existing["match_type"] = "hybrid"
+        if not existing.get("snippet"):
+            existing["snippet"] = hit.get("snippet")
+        if existing.get("metadata") in (None, {}):
+            existing["metadata"] = hit.get("metadata")
+        if existing.get("citation") is None and hit.get("citation") is not None:
+            existing["citation"] = hit["citation"]
+
+    merged_hits = list(merged.values())
+    merged_hits.sort(key=lambda item: int(item["score"]), reverse=True)
+    return merged_hits
 
 
 def search_chunks(
@@ -252,15 +294,19 @@ def search_chunks(
     top_k: int,
     filters: dict[str, object] | None = None,
     with_citations: bool = True,
+    retrieval_strategy: str = "hybrid",
+    min_score: int = 0,
 ) -> list[dict[str, object]]:
     """检索切片（向量优先，关键词兜底）。"""
     if not kb_ids:
         return []
 
+    normalized_strategy = _normalize_retrieval_strategy(retrieval_strategy)
+    normalized_min_score = max(0, min(1000, int(min_score)))
     normalized_filters = filters or {}
     dialect = db.get_bind().dialect.name
     vector_hits: list[dict[str, object]] = []
-    if dialect == "postgresql":
+    if normalized_strategy in {"hybrid", "vector"} and dialect == "postgresql":
         try:
             vector_hits = _search_vector_chunks_postgres(
                 db,
@@ -275,26 +321,26 @@ def search_chunks(
             # 向量查询异常时降级到关键词路径，保证接口可用性。
             vector_hits = []
 
-    if len(vector_hits) >= top_k:
-        return vector_hits[:top_k]
+    keyword_hits: list[dict[str, object]] = []
+    if normalized_strategy == "keyword" or (
+        normalized_strategy == "hybrid" and len(vector_hits) < top_k
+    ):
+        keyword_hits = _search_keyword_chunks(
+            db,
+            tenant_id=tenant_id,
+            kb_ids=kb_ids,
+            query=query,
+            top_k=top_k,
+            filters=normalized_filters,
+            with_citations=with_citations,
+        )
 
-    keyword_hits = _search_keyword_chunks(
-        db,
-        tenant_id=tenant_id,
-        kb_ids=kb_ids,
-        query=query,
-        top_k=top_k,
-        filters=normalized_filters,
-        with_citations=with_citations,
-    )
-    merged: list[dict[str, object]] = []
-    seen_chunk_ids: set[str] = set()
-    for hit in vector_hits + keyword_hits:
-        chunk_id = str(hit["chunk_id"])
-        if chunk_id in seen_chunk_ids:
-            continue
-        seen_chunk_ids.add(chunk_id)
-        merged.append(hit)
+    if normalized_strategy == "vector":
+        merged = vector_hits
+    elif normalized_strategy == "keyword":
+        merged = keyword_hits
+    else:
+        merged = _merge_hybrid_hits(vector_hits, keyword_hits)
 
-    merged.sort(key=lambda item: int(item["score"]), reverse=True)
-    return merged[:top_k]
+    filtered = [hit for hit in merged if int(hit["score"]) >= normalized_min_score]
+    return filtered[:top_k]

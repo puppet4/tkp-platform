@@ -31,6 +31,8 @@ def query_chunks(
     top_k: int,
     filters: dict[str, Any] | None = None,
     with_citations: bool = True,
+    retrieval_strategy: str = "hybrid",
+    min_score: int = 0,
 ) -> dict[str, Any]:
     """查询检索结果。"""
     settings = get_settings()
@@ -47,6 +49,8 @@ def query_chunks(
                 "top_k": top_k,
                 "filters": normalized_filters,
                 "with_citations": with_citations,
+                "retrieval_strategy": retrieval_strategy,
+                "min_score": min_score,
             },
             timeout_seconds=settings.rag_timeout_seconds,
             internal_token=settings.internal_service_token,
@@ -57,6 +61,7 @@ def query_chunks(
         )
         hits = remote_data.get("hits", [])
         latency_ms = int(remote_data.get("latency_ms") or 0)
+        effective_strategy = str(remote_data.get("retrieval_strategy") or retrieval_strategy)
         if not isinstance(hits, list):
             raise HTTPException(
                 status_code=status.HTTP_502_BAD_GATEWAY,
@@ -66,7 +71,11 @@ def query_chunks(
                     "details": {"reason": "invalid_hits", "path": "/internal/retrieval/query"},
                 },
             )
-        return {"hits": hits, "latency_ms": latency_ms}
+        return {
+            "hits": hits,
+            "latency_ms": latency_ms,
+            "retrieval_strategy": effective_strategy,
+        }
 
     start = time.perf_counter()
     hits = search_chunks(
@@ -77,9 +86,15 @@ def query_chunks(
         top_k=top_k,
         filters=normalized_filters,
         with_citations=with_citations,
+        retrieval_strategy=retrieval_strategy,
+        min_score=min_score,
     )
     latency_ms = int((time.perf_counter() - start) * 1000)
-    return {"hits": hits, "latency_ms": latency_ms}
+    return {
+        "hits": hits,
+        "latency_ms": latency_ms,
+        "retrieval_strategy": retrieval_strategy,
+    }
 
 
 def generate_chat_answer(

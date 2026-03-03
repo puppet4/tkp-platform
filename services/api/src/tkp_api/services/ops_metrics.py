@@ -14,6 +14,17 @@ from tkp_api.models.enums import IngestionJobStatus
 from tkp_api.models.knowledge import IngestionJob
 
 
+def _normalize_threshold_pair(
+    *,
+    warn: float,
+    critical: float,
+) -> tuple[float, float]:
+    """保证告警阈值满足 warn <= critical。"""
+    if critical < warn:
+        return critical, warn
+    return warn, critical
+
+
 def _normalize_datetime(value: datetime | None) -> datetime | None:
     """归一化时间为 UTC，兼容 sqlite 返回的 naive datetime。"""
     if value is None:
@@ -109,4 +120,92 @@ def build_ingestion_metrics(
         "avg_latency_ms_last_window": avg_latency_ms_last_window,
         "p95_latency_ms_last_window": _p95(latency_ms_last_window),
         "stale_processing_jobs": stale_processing_jobs,
+    }
+
+
+def build_ingestion_alerts(
+    metrics: dict[str, Any],
+    *,
+    backlog_warn: int = 20,
+    backlog_critical: int = 50,
+    failure_rate_warn: float = 0.05,
+    failure_rate_critical: float = 0.2,
+    stale_warn: int = 1,
+    stale_critical: int = 3,
+) -> dict[str, Any]:
+    """根据入库指标计算告警状态，供监控系统直接拉取。"""
+    backlog_warn_norm, backlog_critical_norm = _normalize_threshold_pair(
+        warn=float(max(0, backlog_warn)),
+        critical=float(max(0, backlog_critical)),
+    )
+    failure_warn_norm, failure_critical_norm = _normalize_threshold_pair(
+        warn=float(max(0.0, failure_rate_warn)),
+        critical=float(max(0.0, failure_rate_critical)),
+    )
+    stale_warn_norm, stale_critical_norm = _normalize_threshold_pair(
+        warn=float(max(0, stale_warn)),
+        critical=float(max(0, stale_critical)),
+    )
+
+    def _status(current: float, warn: float, critical: float) -> str:
+        if current >= critical:
+            return "critical"
+        if current >= warn:
+            return "warn"
+        return "ok"
+
+    rules: list[dict[str, Any]] = []
+
+    backlog_value = float(metrics.get("backlog_total") or 0)
+    backlog_status = _status(backlog_value, backlog_warn_norm, backlog_critical_norm)
+    rules.append(
+        {
+            "code": "BACKLOG",
+            "name": "入库任务积压",
+            "status": backlog_status,
+            "current": int(backlog_value),
+            "warn_threshold": int(backlog_warn_norm),
+            "critical_threshold": int(backlog_critical_norm),
+            "message": f"当前积压任务 {int(backlog_value)}。",
+        }
+    )
+
+    failure_value = float(metrics.get("failure_rate_last_window") or 0.0)
+    failure_status = _status(failure_value, failure_warn_norm, failure_critical_norm)
+    rules.append(
+        {
+            "code": "FAILURE_RATE",
+            "name": "窗口失败率",
+            "status": failure_status,
+            "current": round(failure_value, 6),
+            "warn_threshold": round(failure_warn_norm, 6),
+            "critical_threshold": round(failure_critical_norm, 6),
+            "message": f"窗口失败率 {round(failure_value, 6)}。",
+        }
+    )
+
+    stale_value = float(metrics.get("stale_processing_jobs") or 0)
+    stale_status = _status(stale_value, stale_warn_norm, stale_critical_norm)
+    rules.append(
+        {
+            "code": "STALE_PROCESSING",
+            "name": "疑似卡住任务",
+            "status": stale_status,
+            "current": int(stale_value),
+            "warn_threshold": int(stale_warn_norm),
+            "critical_threshold": int(stale_critical_norm),
+            "message": f"疑似卡住任务 {int(stale_value)}。",
+        }
+    )
+
+    overall_status = "ok"
+    if any(item["status"] == "critical" for item in rules):
+        overall_status = "critical"
+    elif any(item["status"] == "warn" for item in rules):
+        overall_status = "warn"
+
+    return {
+        "tenant_id": metrics["tenant_id"],
+        "overall_status": overall_status,
+        "rules": rules,
     }

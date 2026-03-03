@@ -37,9 +37,15 @@ def retrieval_query(payload: RetrievalQueryInternalRequest, db: Session = Depend
         top_k=payload.top_k,
         filters=payload.filters,
         with_citations=payload.with_citations,
+        retrieval_strategy=payload.retrieval_strategy,
+        min_score=payload.min_score,
     )
     latency_ms = int((time.perf_counter() - start) * 1000)
-    return {"hits": hits, "latency_ms": latency_ms}
+    return {
+        "hits": hits,
+        "latency_ms": latency_ms,
+        "retrieval_strategy": payload.retrieval_strategy,
+    }
 
 
 @router.post(
