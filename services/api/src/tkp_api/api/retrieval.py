@@ -64,6 +64,9 @@ def retrieval_query(
     hits = rag_data["hits"]
     latency_ms = rag_data["latency_ms"]
     retrieval_strategy = rag_data["retrieval_strategy"]
+    query_rewrite = rag_data["query_rewrite"]
+    effective_min_score = rag_data["effective_min_score"]
+    rerank_applied = rag_data["rerank_applied"]
 
     # 将检索请求与结果快照写入日志表，用于审计、回放与质量分析。
     db.add(
@@ -86,5 +89,8 @@ def retrieval_query(
             "hits": hits,
             "latency_ms": latency_ms,
             "retrieval_strategy": retrieval_strategy,
+            "query_rewrite": query_rewrite,
+            "effective_min_score": effective_min_score,
+            "rerank_applied": rerank_applied,
         },
     )

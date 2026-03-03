@@ -154,6 +154,10 @@ def test_search_chunks_supports_metadata_filters_and_citations():
         assert hit["metadata"]["lang"] == "zh"
         assert hit["citation"]["chunk_no"] == 1
         assert hit["citation"]["title_path"] == "手册/退款"
+        assert isinstance(hit.get("reason"), str) and hit["reason"]
+        assert isinstance(hit.get("matched_terms"), list)
+        assert isinstance(hit.get("score_breakdown"), dict)
+        assert hit["score_breakdown"]["final_score"] == hit["score"]
 
         answer_payload = generate_answer(
             db,
@@ -241,3 +245,7 @@ def test_search_chunks_supports_strategy_and_min_score():
     assert len(hits) == 1
     assert hits[0]["score"] >= 800
     assert hits[0]["match_type"] in {"keyword", "hybrid"}
+    assert isinstance(hits[0].get("reason"), str) and hits[0]["reason"]
+    assert isinstance(hits[0].get("matched_terms"), list)
+    assert isinstance(hits[0].get("score_breakdown"), dict)
+    assert hits[0]["score_breakdown"]["final_score"] == hits[0]["score"]

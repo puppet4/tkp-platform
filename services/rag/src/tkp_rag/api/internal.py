@@ -16,7 +16,7 @@ from tkp_rag.schemas.internal import (
     RetrievalQueryInternalResponse,
 )
 from tkp_rag.services.agent import build_plan
-from tkp_rag.services.retrieval import generate_answer, search_chunks
+from tkp_rag.services.retrieval import generate_answer, search_chunks_detailed
 
 router = APIRouter(prefix="/internal", tags=["internal-rag"], dependencies=[Depends(require_internal_token)])
 
@@ -29,7 +29,7 @@ router = APIRouter(prefix="/internal", tags=["internal-rag"], dependencies=[Depe
 )
 def retrieval_query(payload: RetrievalQueryInternalRequest, db: Session = Depends(get_db)):
     start = time.perf_counter()
-    hits = search_chunks(
+    retrieval = search_chunks_detailed(
         db,
         tenant_id=payload.tenant_id,
         kb_ids=payload.kb_ids,
@@ -42,9 +42,12 @@ def retrieval_query(payload: RetrievalQueryInternalRequest, db: Session = Depend
     )
     latency_ms = int((time.perf_counter() - start) * 1000)
     return {
-        "hits": hits,
+        "hits": retrieval["hits"],
         "latency_ms": latency_ms,
         "retrieval_strategy": payload.retrieval_strategy,
+        "query_rewrite": retrieval["query_rewrite"],
+        "effective_min_score": retrieval["effective_min_score"],
+        "rerank_applied": retrieval["rerank_applied"],
     }
 
 

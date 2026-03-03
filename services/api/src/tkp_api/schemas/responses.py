@@ -373,6 +373,10 @@ class IngestionJobData(BaseSchema):
     finished_at: datetime | None = Field(default=None, description="处理完成时间。")
     error: str | None = Field(default=None, description="最近一次错误信息。")
     terminal: bool = Field(description="是否为终态任务。")
+    retryable: bool = Field(description="当前任务是否允许手工重试。")
+    can_retry_now: bool = Field(description="当前时刻是否可立即重试。")
+    retry_in_seconds: int = Field(description="距离可重试还有多少秒，0 表示可立即重试。")
+    diagnosis: dict[str, Any] = Field(description="任务诊断信息（分类/摘要/建议）。")
 
 
 class RetrievalHit(BaseSchema):
@@ -389,6 +393,9 @@ class RetrievalHit(BaseSchema):
     snippet: str = Field(description="切片摘要文本。")
     metadata: dict[str, Any] | None = Field(default=None, description="切片 metadata 快照。")
     citation: dict[str, Any] | None = Field(default=None, description="引用定位信息。")
+    reason: str = Field(description="命中原因说明。")
+    matched_terms: list[str] = Field(description="命中的查询词列表。")
+    score_breakdown: dict[str, int] = Field(description="分数拆解（vector/keyword/rerank/final）。")
 
 
 class RetrievalQueryData(BaseSchema):
@@ -397,6 +404,9 @@ class RetrievalQueryData(BaseSchema):
     hits: list[RetrievalHit] = Field(description="命中结果列表。")
     latency_ms: int = Field(description="检索耗时（毫秒）。")
     retrieval_strategy: str = Field(description="本次检索生效策略（hybrid/vector/keyword）。")
+    query_rewrite: dict[str, Any] = Field(description="查询改写信息（原始查询、改写后查询、是否改写）。")
+    effective_min_score: int = Field(description="本次检索生效的最低分阈值。")
+    rerank_applied: bool = Field(description="是否执行了重排增强。")
 
 
 class ChatCompletionData(BaseSchema):

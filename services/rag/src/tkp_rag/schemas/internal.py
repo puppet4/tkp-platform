@@ -29,6 +29,9 @@ class RetrievalQueryInternalResponse(BaseModel):
     hits: list[dict[str, Any]] = Field(description="命中切片列表。")
     latency_ms: int = Field(description="检索耗时（毫秒）。")
     retrieval_strategy: str = Field(description="本次检索生效策略。")
+    query_rewrite: dict[str, Any] = Field(description="查询改写信息。")
+    effective_min_score: int = Field(description="生效的最低分阈值。")
+    rerank_applied: bool = Field(description="是否执行重排增强。")
 
 
 class ChatGenerateInternalRequest(BaseModel):

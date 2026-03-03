@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 
 from tkp_api.core.config import get_settings
 from tkp_api.services.rag_client import post_rag_json
-from tkp_api.services.retrieval_local import search_chunks
+from tkp_api.services.retrieval_local import search_chunks, search_chunks_detailed
 
 
 def _compose_answer(question: str, hits: list[dict[str, object]]) -> str:
@@ -62,6 +62,13 @@ def query_chunks(
         hits = remote_data.get("hits", [])
         latency_ms = int(remote_data.get("latency_ms") or 0)
         effective_strategy = str(remote_data.get("retrieval_strategy") or retrieval_strategy)
+        query_rewrite = remote_data.get("query_rewrite") or {
+            "original_query": query,
+            "rewritten_query": query,
+            "rewrite_applied": False,
+        }
+        effective_min_score = int(remote_data.get("effective_min_score") or max(0, min(1000, int(min_score))))
+        rerank_applied = bool(remote_data.get("rerank_applied", False))
         if not isinstance(hits, list):
             raise HTTPException(
                 status_code=status.HTTP_502_BAD_GATEWAY,
@@ -75,10 +82,13 @@ def query_chunks(
             "hits": hits,
             "latency_ms": latency_ms,
             "retrieval_strategy": effective_strategy,
+            "query_rewrite": query_rewrite,
+            "effective_min_score": effective_min_score,
+            "rerank_applied": rerank_applied,
         }
 
     start = time.perf_counter()
-    hits = search_chunks(
+    detailed = search_chunks_detailed(
         db,
         tenant_id=tenant_id,
         kb_ids=kb_ids,
@@ -91,9 +101,12 @@ def query_chunks(
     )
     latency_ms = int((time.perf_counter() - start) * 1000)
     return {
-        "hits": hits,
+        "hits": detailed["hits"],
         "latency_ms": latency_ms,
         "retrieval_strategy": retrieval_strategy,
+        "query_rewrite": detailed["query_rewrite"],
+        "effective_min_score": detailed["effective_min_score"],
+        "rerank_applied": detailed["rerank_applied"],
     }
 
 

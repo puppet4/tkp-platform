@@ -920,9 +920,25 @@ class WorkflowRunner:
             },
         )
         _require_keys(retrieval_data, ["hits", "latency_ms", "retrieval_strategy"], "retrieval.query.data")
+        _require_keys(
+            retrieval_data,
+            ["query_rewrite", "effective_min_score", "rerank_applied"],
+            "retrieval.query.data.enhanced",
+        )
         assert isinstance(retrieval_data["hits"], list)
         assert isinstance(retrieval_data["latency_ms"], int) and retrieval_data["latency_ms"] >= 0
         assert retrieval_data["retrieval_strategy"] in {"hybrid", "vector", "keyword"}
+        assert isinstance(retrieval_data["effective_min_score"], int)
+        assert isinstance(retrieval_data["rerank_applied"], bool)
+        assert isinstance(retrieval_data["query_rewrite"], dict)
+        _require_keys(
+            retrieval_data["query_rewrite"],
+            ["original_query", "rewritten_query", "rewrite_applied"],
+            "retrieval.query.query_rewrite",
+        )
+        assert isinstance(retrieval_data["query_rewrite"]["original_query"], str)
+        assert isinstance(retrieval_data["query_rewrite"]["rewritten_query"], str)
+        assert isinstance(retrieval_data["query_rewrite"]["rewrite_applied"], bool)
         for hit in retrieval_data["hits"]:
             _require_keys(
                 hit,
@@ -938,6 +954,9 @@ class WorkflowRunner:
                     "metadata",
                     "citation",
                     "match_type",
+                    "reason",
+                    "matched_terms",
+                    "score_breakdown",
                 ],
                 "retrieval.hit",
             )
@@ -951,6 +970,15 @@ class WorkflowRunner:
             _assert_non_empty_str(hit["snippet"], "retrieval.hit.snippet")
             assert hit["metadata"] is None or isinstance(hit["metadata"], dict)
             assert hit["match_type"] in {"vector", "keyword", "hybrid"}
+            _assert_non_empty_str(hit["reason"], "retrieval.hit.reason")
+            assert isinstance(hit["matched_terms"], list)
+            assert isinstance(hit["score_breakdown"], dict)
+            _require_keys(
+                hit["score_breakdown"],
+                ["vector_score", "keyword_score", "rerank_bonus", "final_score"],
+                "retrieval.hit.score_breakdown",
+            )
+            assert hit["score_breakdown"]["final_score"] == hit["score"]
             if hit["citation"] is not None:
                 _require_keys(
                     hit["citation"],
@@ -1774,6 +1802,10 @@ class WorkflowRunner:
                 "finished_at",
                 "error",
                 "terminal",
+                "retryable",
+                "can_retry_now",
+                "retry_in_seconds",
+                "diagnosis",
             ],
             "ingestion.job.data",
         )
@@ -1798,6 +1830,47 @@ class WorkflowRunner:
         assert job_detail["locked_by"] is None or isinstance(job_detail["locked_by"], str)
         assert job_detail["error"] is None or isinstance(job_detail["error"], str)
         assert isinstance(job_detail["terminal"], bool)
+        assert isinstance(job_detail["retryable"], bool)
+        assert isinstance(job_detail["can_retry_now"], bool)
+        assert isinstance(job_detail["retry_in_seconds"], int) and job_detail["retry_in_seconds"] >= 0
+        assert isinstance(job_detail["diagnosis"], dict)
+        _require_keys(job_detail["diagnosis"], ["category", "summary", "suggestion"], "ingestion.job.diagnosis")
+        _assert_non_empty_str(job_detail["diagnosis"]["category"], "ingestion.job.diagnosis.category")
+        _assert_non_empty_str(job_detail["diagnosis"]["summary"], "ingestion.job.diagnosis.summary")
+        _assert_non_empty_str(job_detail["diagnosis"]["suggestion"], "ingestion.job.diagnosis.suggestion")
+
+        manual_dead_letter = self.success(
+            "POST",
+            "/api/ingestion-jobs/{job_id}/dead-letter",
+            actual_path=f"/api/ingestion-jobs/{reindex_data['job_id']}/dead-letter",
+            token=self.ctx.owner_token,
+            json={"reason": "manual triage dead letter"},
+        )
+        _require_keys(manual_dead_letter, ["job_id", "status", "stage", "terminal", "error"], "ingestion.dead_letter.data")
+        assert manual_dead_letter["job_id"] == reindex_data["job_id"]
+        assert manual_dead_letter["status"] == "dead_letter"
+        assert manual_dead_letter["terminal"] is True
+        assert isinstance(manual_dead_letter["error"], str) and "manual triage dead letter" in manual_dead_letter["error"]
+
+        manual_retry = self.success(
+            "POST",
+            "/api/ingestion-jobs/{job_id}/retry",
+            actual_path=f"/api/ingestion-jobs/{reindex_data['job_id']}/retry",
+            token=self.ctx.owner_token,
+        )
+        _require_keys(manual_retry, ["job_id", "status", "stage", "terminal"], "ingestion.retry.data")
+        assert manual_retry["job_id"] == reindex_data["job_id"]
+        assert manual_retry["status"] == "queued"
+        assert manual_retry["terminal"] is False
+
+        job_detail_after_retry = self.success(
+            "GET",
+            "/api/ingestion-jobs/{job_id}",
+            actual_path=f"/api/ingestion-jobs/{reindex_data['job_id']}",
+            token=self.ctx.owner_token,
+        )
+        assert job_detail_after_retry["job_id"] == reindex_data["job_id"]
+        assert job_detail_after_retry["status"] in {"queued", "processing", "retrying", "completed"}
 
         ingestion_metrics = self.success(
             "GET",
@@ -2891,7 +2964,7 @@ def test_http_api_retrieval_should_fail_fast_when_rag_remote_unavailable(
             "with_citations": True,
         },
     )
-    assert error["code"] == "RAG_UNAVAILABLE"
+    assert error["code"] in {"RAG_UNAVAILABLE", "RAG_UPSTREAM_RETRYABLE"}
     runner._finish_current_stage()
     _log(f"[DONE] rag-remote-unavailable 完成，耗时 {runner.elapsed():.2f}s")
 
@@ -2925,7 +2998,7 @@ def test_http_api_agent_should_fail_fast_when_rag_remote_unavailable(
             "tool_policy": {},
         },
     )
-    assert error["code"] == "RAG_UNAVAILABLE"
+    assert error["code"] in {"RAG_UNAVAILABLE", "RAG_UPSTREAM_RETRYABLE"}
     runner._finish_current_stage()
     _log(f"[DONE] agent-rag-remote-unavailable 完成，耗时 {runner.elapsed():.2f}s")
 

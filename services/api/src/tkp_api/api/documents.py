@@ -2,6 +2,7 @@
 
 import hashlib
 import json
+from datetime import datetime, timezone
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, File, Form, Header, HTTPException, Path, Query, Request, UploadFile, status
@@ -14,7 +15,7 @@ from tkp_api.models.enums import DocumentStatus, IngestionJobStatus, ParseStatus
 from tkp_api.models.knowledge import ChunkEmbedding, Document, DocumentChunk, DocumentVersion, IngestionJob
 from tkp_api.utils.response import success
 from tkp_api.schemas.common import ErrorResponse, SuccessResponse
-from tkp_api.schemas.document import DocumentUpdateRequest
+from tkp_api.schemas.document import DocumentUpdateRequest, IngestionJobDeadLetterRequest
 from tkp_api.schemas.responses import (
     DocumentChunkPageData,
     DocumentData,
@@ -778,6 +779,96 @@ def delete_document(
     )
 
 
+def _build_job_diagnosis(job: IngestionJob, *, now_utc: datetime) -> dict[str, str]:
+    """生成入库任务诊断信息，便于快速排障。"""
+    if job.status == IngestionJobStatus.DEAD_LETTER:
+        return {
+            "category": "dead_letter",
+            "summary": "任务已进入死信队列，需要人工介入。",
+            "suggestion": "请先修复根因后调用重试接口重新入队。",
+        }
+
+    if job.status == IngestionJobStatus.RETRYING:
+        return {
+            "category": "retrying",
+            "summary": "任务处于自动重试等待状态。",
+            "suggestion": "可等待 next_run_at 自动重试，或手工触发重试加速恢复。",
+        }
+
+    if job.status == IngestionJobStatus.PROCESSING:
+        heartbeat_at = job.heartbeat_at
+        if heartbeat_at is not None and heartbeat_at.tzinfo is None:
+            heartbeat_at = heartbeat_at.replace(tzinfo=timezone.utc)
+        if heartbeat_at is not None and (now_utc - heartbeat_at).total_seconds() > 300:
+            return {
+                "category": "stale_processing",
+                "summary": "任务长时间未刷新心跳，疑似卡住。",
+                "suggestion": "检查 worker 进程与对象存储后，可将任务打入死信再重试。",
+            }
+        return {
+            "category": "processing",
+            "summary": "任务正在处理。",
+            "suggestion": "持续轮询任务状态，关注 stage 与 progress 是否推进。",
+        }
+
+    if job.status == IngestionJobStatus.QUEUED:
+        return {
+            "category": "queued",
+            "summary": "任务等待 worker 抢占执行。",
+            "suggestion": "检查 worker 可用性与队列积压情况。",
+        }
+
+    if job.status == IngestionJobStatus.COMPLETED:
+        return {
+            "category": "completed",
+            "summary": "任务已完成。",
+            "suggestion": "无需额外处理，可继续检索验证入库效果。",
+        }
+
+    return {
+        "category": "unknown",
+        "summary": "任务状态未识别。",
+        "suggestion": "请检查任务状态枚举与数据一致性。",
+    }
+
+
+def _serialize_ingestion_job(job: IngestionJob, *, now_utc: datetime | None = None) -> dict[str, object]:
+    """统一序列化入库任务响应结构。"""
+    current = now_utc or datetime.now(timezone.utc)
+    retryable = job.status in {IngestionJobStatus.RETRYING, IngestionJobStatus.DEAD_LETTER}
+    retry_in_seconds = 0
+    if job.next_run_at is not None:
+        next_run_at = job.next_run_at
+        if next_run_at.tzinfo is None:
+            next_run_at = next_run_at.replace(tzinfo=timezone.utc)
+        retry_in_seconds = max(0, int((next_run_at - current).total_seconds()))
+    can_retry_now = retryable and retry_in_seconds == 0
+
+    return {
+        "job_id": job.id,
+        "workspace_id": job.workspace_id,
+        "document_id": job.document_id,
+        "document_version_id": job.document_version_id,
+        "status": job.status,
+        "stage": job.stage,
+        "progress": job.progress,
+        "attempt_count": job.attempt_count,
+        "max_attempts": job.max_attempts,
+        "next_run_at": job.next_run_at,
+        "locked_at": job.locked_at,
+        "locked_by": job.locked_by,
+        "heartbeat_at": job.heartbeat_at,
+        "started_at": job.started_at,
+        "finished_at": job.finished_at,
+        "error": job.error,
+        "terminal": job.status in {IngestionJobStatus.COMPLETED, IngestionJobStatus.DEAD_LETTER},
+        "retryable": retryable,
+        "can_retry_now": can_retry_now,
+        "retry_in_seconds": retry_in_seconds,
+        "diagnosis": _build_job_diagnosis(job, now_utc=current),
+    }
+
+
 @router.get(
     "/ingestion-jobs/{job_id}",
     summary="查询入库任务",
@@ -811,25 +902,169 @@ def get_ingestion_job(
         user_id=ctx.user_id,
     )
 
-    return success(
-        request,
-        {
-            "job_id": job.id,
-            "workspace_id": job.workspace_id,
-            "document_id": job.document_id,
-            "document_version_id": job.document_version_id,
-            "status": job.status,
-            "stage": job.stage,
-            "progress": job.progress,
-            "attempt_count": job.attempt_count,
-            "max_attempts": job.max_attempts,
-            "next_run_at": job.next_run_at,
-            "locked_at": job.locked_at,
-            "locked_by": job.locked_by,
-            "heartbeat_at": job.heartbeat_at,
-            "started_at": job.started_at,
-            "finished_at": job.finished_at,
-            "error": job.error,
-            "terminal": job.status in {IngestionJobStatus.COMPLETED, IngestionJobStatus.DEAD_LETTER},
-        },
+    return success(request, _serialize_ingestion_job(job))
+
+
+@router.post(
+    "/ingestion-jobs/{job_id}/retry",
+    summary="手工重试入库任务",
+    description="将 retrying/dead_letter 任务重新入队（queued），用于故障恢复。",
+    status_code=status.HTTP_200_OK,
+    response_model=SuccessResponse[IngestionJobData],
+    responses={
+        401: {"model": ErrorResponse},
+        403: {"model": ErrorResponse},
+        404: {"model": ErrorResponse},
+        409: {"model": ErrorResponse},
+    },
+)
+def retry_ingestion_job(
+    request: Request,
+    job_id: UUID = Path(..., description="入库任务 ID。"),
+    ctx=Depends(get_request_context),
+    db: Session = Depends(get_db),
+):
+    """手工重试入库任务。"""
+    require_tenant_action(
+        db,
+        tenant_id=ctx.tenant_id,
+        tenant_role=ctx.tenant_role,
+        action=PermissionAction.DOCUMENT_WRITE,
     )
+    job = db.get(IngestionJob, job_id)
+    if not job or job.tenant_id != ctx.tenant_id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="job not found")
+
+    ensure_kb_write_access(
+        db,
+        tenant_id=ctx.tenant_id,
+        kb_id=job.kb_id,
+        user_id=ctx.user_id,
+    )
+
+    if job.status == IngestionJobStatus.PROCESSING:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="job is processing")
+    if job.status == IngestionJobStatus.COMPLETED:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="job already completed")
+
+    before = {
+        "status": job.status,
+        "stage": job.stage,
+        "attempt_count": job.attempt_count,
+        "error": job.error,
+    }
+    now_utc = datetime.now(timezone.utc)
+    job.status = IngestionJobStatus.QUEUED
+    job.stage = "queued"
+    job.progress = 0
+    job.next_run_at = now_utc
+    job.locked_at = None
+    job.locked_by = None
+    job.heartbeat_at = None
+    job.finished_at = None
+    job.error = None
+
+    doc = db.get(Document, job.document_id)
+    if doc and doc.tenant_id == ctx.tenant_id and doc.status != DocumentStatus.DELETED:
+        doc.status = DocumentStatus.PENDING
+
+    version = db.get(DocumentVersion, job.document_version_id)
+    if version and version.tenant_id == ctx.tenant_id:
+        version.parse_status = ParseStatus.PENDING
+
+    audit_log(
+        db=db,
+        request=request,
+        tenant_id=ctx.tenant_id,
+        actor_user_id=ctx.user_id,
+        action="ingestion.job.retry",
+        resource_type="ingestion_job",
+        resource_id=str(job.id),
+        before_json=before,
+        after_json={"status": job.status, "stage": job.stage},
+    )
+    db.commit()
+    db.refresh(job)
+    return success(request, _serialize_ingestion_job(job))
+
+
+@router.post(
+    "/ingestion-jobs/{job_id}/dead-letter",
+    summary="手工打入死信",
+    description="将任务标记为 dead_letter，便于人工排障后再重试。",
+    status_code=status.HTTP_200_OK,
+    response_model=SuccessResponse[IngestionJobData],
+    responses={
+        401: {"model": ErrorResponse},
+        403: {"model": ErrorResponse},
+        404: {"model": ErrorResponse},
+        409: {"model": ErrorResponse},
+    },
+)
+def dead_letter_ingestion_job(
+    payload: IngestionJobDeadLetterRequest,
+    request: Request,
+    job_id: UUID = Path(..., description="入库任务 ID。"),
+    ctx=Depends(get_request_context),
+    db: Session = Depends(get_db),
+):
+    """手工将任务置为死信状态。"""
+    require_tenant_action(
+        db,
+        tenant_id=ctx.tenant_id,
+        tenant_role=ctx.tenant_role,
+        action=PermissionAction.DOCUMENT_WRITE,
+    )
+    job = db.get(IngestionJob, job_id)
+    if not job or job.tenant_id != ctx.tenant_id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="job not found")
+
+    ensure_kb_write_access(
+        db,
+        tenant_id=ctx.tenant_id,
+        kb_id=job.kb_id,
+        user_id=ctx.user_id,
+    )
+
+    if job.status == IngestionJobStatus.COMPLETED:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="completed job cannot be dead-lettered")
+
+    reason = (payload.reason or "").strip() or "manual dead letter by operator"
+    before = {
+        "status": job.status,
+        "stage": job.stage,
+        "attempt_count": job.attempt_count,
+        "error": job.error,
+    }
+    now_utc = datetime.now(timezone.utc)
+    job.status = IngestionJobStatus.DEAD_LETTER
+    job.stage = "failed"
+    job.progress = 0
+    job.error = reason
+    job.finished_at = now_utc
+    job.heartbeat_at = now_utc
+    job.locked_at = None
+    job.locked_by = None
+
+    doc = db.get(Document, job.document_id)
+    if doc and doc.tenant_id == ctx.tenant_id and doc.status != DocumentStatus.DELETED:
+        doc.status = DocumentStatus.FAILED
+
+    version = db.get(DocumentVersion, job.document_version_id)
+    if version and version.tenant_id == ctx.tenant_id:
+        version.parse_status = ParseStatus.FAILED
+
+    audit_log(
+        db=db,
+        request=request,
+        tenant_id=ctx.tenant_id,
+        actor_user_id=ctx.user_id,
+        action="ingestion.job.dead_letter",
+        resource_type="ingestion_job",
+        resource_id=str(job.id),
+        before_json=before,
+        after_json={"status": job.status, "stage": job.stage, "error": job.error},
+    )
+    db.commit()
+    db.refresh(job)
+    return success(request, _serialize_ingestion_job(job))

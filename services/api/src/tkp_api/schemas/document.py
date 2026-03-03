@@ -21,3 +21,9 @@ class DocumentUpdateRequest(BaseModel):
 
     title: str | None = Field(default=None, min_length=1, max_length=256, description="新的文档标题。")
     metadata: dict[str, Any] | None = Field(default=None, description="新的文档元数据。")
+
+
+class IngestionJobDeadLetterRequest(BaseModel):
+    """手工死信请求体。"""
+
+    reason: str | None = Field(default=None, min_length=1, max_length=512, description="手工死信原因。")
