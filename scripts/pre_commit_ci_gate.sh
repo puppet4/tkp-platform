@@ -38,6 +38,10 @@ run_step "API smoke (sqlite)" \
   env TEST_HTTP_MODE=sqlite TKP_TEST_LOG=1 TKP_TEST_LOG_VERBOSE=1 TKP_TEST_LOG_PAYLOAD=0 \
   bash scripts/test_api.sh --suite smoke
 
+run_step "API retrieval eval quality gate (sqlite)" \
+  env TEST_HTTP_MODE=sqlite TKP_TEST_LOG=0 TKP_TEST_LOG_VERBOSE=0 TKP_TEST_LOG_PAYLOAD=0 \
+  bash scripts/test_api.sh --target services/api/tests/test_retrieval_eval_service.py --pytest-opts "-q"
+
 run_step "API permissions matrix (sqlite)" \
   env TEST_HTTP_MODE=sqlite TKP_TEST_LOG=1 TKP_TEST_LOG_VERBOSE=1 TKP_TEST_LOG_PAYLOAD=0 \
   bash scripts/test_api.sh --suite permissions

@@ -8,7 +8,7 @@ from typing import Any
 from uuid import UUID
 
 from pgvector.sqlalchemy import Vector
-from sqlalchemy import DateTime, Integer, String, Text, UniqueConstraint, func
+from sqlalchemy import Boolean, DateTime, Integer, String, Text, UniqueConstraint, func
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -233,6 +233,47 @@ class RetrievalLog(Base, UUIDPrimaryKeyMixin):
     result_chunks: Mapped[list[dict[str, Any]]] = mapped_column(JSONB, nullable=False, default=list)
     # 检索耗时毫秒数。
     latency_ms: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+class RetrievalEvalRun(Base, UUIDPrimaryKeyMixin, TimestampMixin):
+    """检索评测运行记录。"""
+
+    __tablename__ = "retrieval_eval_runs"
+
+    tenant_id: Mapped[UUID] = mapped_column(nullable=False, index=True)
+    created_by: Mapped[UUID] = mapped_column(nullable=False, index=True)
+    name: Mapped[str] = mapped_column(String(128), nullable=False, default="adhoc")
+    kb_ids: Mapped[list[str]] = mapped_column(JSONB, nullable=False, default=list)
+    top_k: Mapped[int] = mapped_column(Integer, nullable=False, default=5)
+    sample_total: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    matched_total: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    hit_at_k: Mapped[float] = mapped_column(nullable=False, default=0)
+    citation_coverage_rate: Mapped[float] = mapped_column(nullable=False, default=0)
+    avg_latency_ms: Mapped[int | None] = mapped_column(Integer)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="completed")
+    summary_json: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+
+
+class RetrievalEvalItem(Base, UUIDPrimaryKeyMixin):
+    """检索评测样本明细。"""
+
+    __tablename__ = "retrieval_eval_items"
+    __table_args__ = (UniqueConstraint("run_id", "sample_no", name="uk_retrieval_eval_item_run_no"),)
+
+    run_id: Mapped[UUID] = mapped_column(nullable=False, index=True)
+    tenant_id: Mapped[UUID] = mapped_column(nullable=False, index=True)
+    sample_no: Mapped[int] = mapped_column(Integer, nullable=False)
+    query_text: Mapped[str] = mapped_column(Text, nullable=False)
+    expected_terms: Mapped[list[str]] = mapped_column(JSONB, nullable=False, default=list)
+    matched: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    hit_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    citation_covered: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    top_hit_score: Mapped[int | None] = mapped_column(Integer)
+    latency_ms: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    result_json: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )

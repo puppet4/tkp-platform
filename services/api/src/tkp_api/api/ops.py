@@ -1,17 +1,22 @@
 """运行态运维接口。"""
 
+from uuid import UUID
+
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy.orm import Session
 
 from tkp_api.dependencies import require_tenant_roles
 from tkp_api.db.session import get_db
 from tkp_api.models.enums import TenantRole
-from tkp_api.schemas.ops import RetrievalEvalRequest
+from tkp_api.schemas.ops import RetrievalEvalRequest, RetrievalEvalRunCreateRequest
 from tkp_api.schemas.common import ErrorResponse, SuccessResponse
 from tkp_api.schemas.responses import (
     IngestionOpsAlertsData,
     IngestionOpsMetricsData,
     MVPSLOSummaryData,
+    RetrievalEvalCompareData,
+    RetrievalEvalRunData,
+    RetrievalEvalRunDetailData,
     RetrievalEvalSummaryData,
     RetrievalQualityMetricsData,
 )
@@ -22,6 +27,12 @@ from tkp_api.services.ops_metrics import (
     build_mvp_slo_summary,
     build_retrieval_eval_summary,
     build_retrieval_quality_metrics,
+)
+from tkp_api.services.retrieval_eval import (
+    compare_retrieval_eval_runs,
+    create_retrieval_eval_run,
+    get_retrieval_eval_run_detail,
+    list_retrieval_eval_runs,
 )
 from tkp_api.utils.response import success
 
@@ -179,5 +190,106 @@ def evaluate_retrieval(
         kb_ids=readable_kb_ids,
         top_k=payload.top_k,
         samples=[{"query": item.query, "expected_terms": item.expected_terms} for item in payload.samples],
+    )
+    return success(request, data)
+
+
+@router.post(
+    "/retrieval/evaluate/runs",
+    summary="创建检索评测运行记录",
+    description="执行检索评测并将结果持久化为可追踪运行记录。",
+    status_code=status.HTTP_200_OK,
+    response_model=SuccessResponse[RetrievalEvalRunDetailData],
+    responses={401: {"model": ErrorResponse}, 403: {"model": ErrorResponse}, 422: {"model": ErrorResponse}},
+)
+def create_retrieval_eval(
+    payload: RetrievalEvalRunCreateRequest,
+    request: Request,
+    ctx=Depends(require_tenant_roles(TenantRole.OWNER, TenantRole.ADMIN)),
+    db: Session = Depends(get_db),
+):
+    """创建评测运行并返回详情。"""
+    readable_kb_ids = filter_readable_kb_ids(
+        db,
+        tenant_id=ctx.tenant_id,
+        user_id=ctx.user_id,
+        kb_ids=payload.kb_ids or None,
+    )
+    if payload.kb_ids and len(readable_kb_ids) != len(set(payload.kb_ids)):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="forbidden kb scope")
+
+    data = create_retrieval_eval_run(
+        db,
+        tenant_id=ctx.tenant_id,
+        user_id=ctx.user_id,
+        name=payload.name,
+        kb_ids=readable_kb_ids,
+        top_k=payload.top_k,
+        samples=[{"query": item.query, "expected_terms": item.expected_terms} for item in payload.samples],
+    )
+    data["status"] = "completed"
+    return success(request, data)
+
+
+@router.get(
+    "/retrieval/evaluate/runs",
+    summary="查询检索评测运行列表",
+    description="按时间倒序返回评测运行记录。",
+    status_code=status.HTTP_200_OK,
+    response_model=SuccessResponse[list[RetrievalEvalRunData]],
+    responses={401: {"model": ErrorResponse}, 403: {"model": ErrorResponse}},
+)
+def get_retrieval_eval_runs(
+    request: Request,
+    limit: int = Query(default=20, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
+    ctx=Depends(require_tenant_roles(TenantRole.OWNER, TenantRole.ADMIN)),
+    db: Session = Depends(get_db),
+):
+    """分页查询评测运行。"""
+    data = list_retrieval_eval_runs(db, tenant_id=ctx.tenant_id, limit=limit, offset=offset)
+    return success(request, data)
+
+
+@router.get(
+    "/retrieval/evaluate/runs/{run_id}",
+    summary="查询检索评测运行详情",
+    description="返回单次评测运行详情及样本结果。",
+    status_code=status.HTTP_200_OK,
+    response_model=SuccessResponse[RetrievalEvalRunDetailData],
+    responses={401: {"model": ErrorResponse}, 403: {"model": ErrorResponse}, 404: {"model": ErrorResponse}},
+)
+def get_retrieval_eval_run(
+    request: Request,
+    run_id: UUID,
+    ctx=Depends(require_tenant_roles(TenantRole.OWNER, TenantRole.ADMIN)),
+    db: Session = Depends(get_db),
+):
+    """查询单次评测详情。"""
+    data = get_retrieval_eval_run_detail(db, tenant_id=ctx.tenant_id, run_id=run_id)
+    return success(request, data)
+
+
+@router.get(
+    "/retrieval/evaluate/compare",
+    summary="对比两次检索评测",
+    description="按运行 ID 对比评测结果差异。",
+    status_code=status.HTTP_200_OK,
+    response_model=SuccessResponse[RetrievalEvalCompareData],
+    responses={401: {"model": ErrorResponse}, 403: {"model": ErrorResponse}, 404: {"model": ErrorResponse}},
+)
+def compare_retrieval_eval(
+    request: Request,
+    baseline_run_id: UUID = Query(..., description="基线运行 ID。"),
+    current_run_id: UUID = Query(..., description="当前运行 ID。"),
+    ctx=Depends(require_tenant_roles(TenantRole.OWNER, TenantRole.ADMIN)),
+    db: Session = Depends(get_db),
+):
+    """执行评测结果对比。"""
+    data = compare_retrieval_eval_runs(
+        db,
+        tenant_id=ctx.tenant_id,
+        baseline_run_id=baseline_run_id,
+        current_run_id=current_run_id,
     )
     return success(request, data)

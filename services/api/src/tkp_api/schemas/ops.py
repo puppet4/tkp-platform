@@ -21,3 +21,9 @@ class RetrievalEvalRequest(BaseModel):
         max_length=100,
         description="评测样本列表。",
     )
+
+
+class RetrievalEvalRunCreateRequest(RetrievalEvalRequest):
+    """创建检索评测运行请求体。"""
+
+    name: str = Field(default="adhoc", min_length=1, max_length=128, description="评测任务名称。")

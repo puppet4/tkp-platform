@@ -2052,6 +2052,98 @@ class WorkflowRunner:
                 "ops.retrieval.evaluate.item",
             )
 
+        eval_run_baseline = self.success(
+            "POST",
+            "/api/ops/retrieval/evaluate/runs",
+            actual_path="/api/ops/retrieval/evaluate/runs",
+            token=self.ctx.owner_token,
+            json={
+                "name": "baseline",
+                "kb_ids": [self.ctx.kb1_id],
+                "top_k": 5,
+                "samples": [
+                    {"query": "退款流程是什么", "expected_terms": ["退款"]},
+                ],
+            },
+        )
+        _require_keys(
+            eval_run_baseline,
+            [
+                "run_id",
+                "name",
+                "status",
+                "sample_total",
+                "matched_total",
+                "hit_at_k",
+                "citation_coverage_rate",
+                "avg_latency_ms",
+                "created_at",
+                "results",
+            ],
+            "ops.retrieval.evaluate.run_create",
+        )
+        _assert_uuid(eval_run_baseline["run_id"], "ops.retrieval.evaluate.run_id")
+        _assert_iso_datetime(eval_run_baseline["created_at"], "ops.retrieval.evaluate.created_at")
+
+        eval_run_current = self.success(
+            "POST",
+            "/api/ops/retrieval/evaluate/runs",
+            actual_path="/api/ops/retrieval/evaluate/runs",
+            token=self.ctx.owner_token,
+            json={
+                "name": "current",
+                "kb_ids": [self.ctx.kb1_id],
+                "top_k": 5,
+                "samples": [
+                    {"query": "工单怎么提交", "expected_terms": ["工单"]},
+                ],
+            },
+        )
+        _assert_uuid(eval_run_current["run_id"], "ops.retrieval.evaluate.current_run_id")
+
+        eval_run_list = self.success(
+            "GET",
+            "/api/ops/retrieval/evaluate/runs",
+            actual_path="/api/ops/retrieval/evaluate/runs",
+            token=self.ctx.owner_token,
+        )
+        assert isinstance(eval_run_list, list) and len(eval_run_list) >= 2
+
+        eval_run_detail = self.success(
+            "GET",
+            "/api/ops/retrieval/evaluate/runs/{run_id}",
+            actual_path=f"/api/ops/retrieval/evaluate/runs/{eval_run_baseline['run_id']}",
+            token=self.ctx.owner_token,
+        )
+        assert eval_run_detail["run_id"] == eval_run_baseline["run_id"]
+        assert isinstance(eval_run_detail["results"], list)
+
+        eval_compare = self.success(
+            "GET",
+            "/api/ops/retrieval/evaluate/compare",
+            actual_path="/api/ops/retrieval/evaluate/compare",
+            token=self.ctx.owner_token,
+            params={
+                "baseline_run_id": eval_run_baseline["run_id"],
+                "current_run_id": eval_run_current["run_id"],
+            },
+        )
+        _require_keys(
+            eval_compare,
+            [
+                "tenant_id",
+                "baseline_run_id",
+                "current_run_id",
+                "delta_hit_at_k",
+                "delta_citation_coverage_rate",
+                "delta_avg_latency_ms",
+                "improved",
+                "baseline",
+                "current",
+            ],
+            "ops.retrieval.evaluate.compare",
+        )
+
         deleted_doc = self.success(
             "DELETE",
             "/api/documents/{document_id}",

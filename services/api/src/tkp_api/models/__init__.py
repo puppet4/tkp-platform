@@ -12,6 +12,8 @@ from tkp_api.models.knowledge import (
     IngestionJob,
     KBMembership,
     KnowledgeBase,
+    RetrievalEvalItem,
+    RetrievalEvalRun,
     RetrievalLog,
 )
 from tkp_api.models.permission import TenantRolePermission
@@ -30,6 +32,8 @@ __all__ = [
     "KBMembership",
     "KnowledgeBase",
     "Message",
+    "RetrievalEvalItem",
+    "RetrievalEvalRun",
     "RetrievalLog",
     "TenantRolePermission",
     "UserCredential",

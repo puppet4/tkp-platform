@@ -325,6 +325,40 @@ class RetrievalEvalSummaryData(BaseSchema):
     results: list[RetrievalEvalItemData] = Field(description="样本评测明细。")
 
 
+class RetrievalEvalRunData(BaseSchema):
+    """检索评测运行简要结构。"""
+
+    run_id: UUID = Field(description="评测运行 ID。")
+    name: str = Field(description="评测任务名称。")
+    status: str = Field(description="评测运行状态。")
+    sample_total: int = Field(description="评测样本总数。")
+    matched_total: int = Field(description="命中预期样本数。")
+    hit_at_k: float = Field(description="命中率（0-1）。")
+    citation_coverage_rate: float = Field(description="样本级引用覆盖率（0-1）。")
+    avg_latency_ms: int | None = Field(default=None, description="平均检索耗时（毫秒）。")
+    created_at: datetime = Field(description="评测创建时间。")
+
+
+class RetrievalEvalRunDetailData(RetrievalEvalRunData):
+    """检索评测运行详情结构。"""
+
+    results: list[RetrievalEvalItemData] = Field(description="样本评测明细。")
+
+
+class RetrievalEvalCompareData(BaseSchema):
+    """检索评测对比结构。"""
+
+    tenant_id: UUID = Field(description="租户 ID。")
+    baseline_run_id: UUID = Field(description="基线运行 ID。")
+    current_run_id: UUID = Field(description="当前运行 ID。")
+    delta_hit_at_k: float | None = Field(default=None, description="命中率差值（current - baseline）。")
+    delta_citation_coverage_rate: float | None = Field(default=None, description="引用覆盖率差值（current - baseline）。")
+    delta_avg_latency_ms: float | None = Field(default=None, description="平均耗时差值（current - baseline）。")
+    improved: bool = Field(description="是否整体改善。")
+    baseline: RetrievalEvalRunDetailData = Field(description="基线评测详情。")
+    current: RetrievalEvalRunDetailData = Field(description="当前评测详情。")
+
+
 class KBMembershipData(BaseSchema):
     """知识库成员新增/更新返回结构。"""
 
