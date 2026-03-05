@@ -17,6 +17,7 @@ from tkp_api.models.knowledge import (
     RetrievalLog,
 )
 from tkp_api.models.permission import TenantRolePermission
+from tkp_api.models.ops import OpsAlertWebhook, OpsIncidentTicket
 from tkp_api.models.quota import QuotaPolicy
 from tkp_api.models.tenant import Tenant, TenantMembership, User
 from tkp_api.models.workspace import Workspace, WorkspaceMembership
@@ -37,6 +38,8 @@ __all__ = [
     "RetrievalEvalRun",
     "RetrievalLog",
     "TenantRolePermission",
+    "OpsAlertWebhook",
+    "OpsIncidentTicket",
     "QuotaPolicy",
     "UserCredential",
     "Tenant",

@@ -334,6 +334,123 @@ class CostSummaryData(BaseSchema):
     estimated_total_cost: float = Field(description="窗口内估算总成本。")
 
 
+class OpsOverviewData(BaseSchema):
+    """运营后台概览结构。"""
+
+    tenant_id: UUID = Field(description="租户 ID。")
+    window_hours: int = Field(description="统计窗口小时数。")
+    generated_at: datetime = Field(description="概览生成时间。")
+    ingestion_alert_status: str = Field(description="入库告警整体状态（ok/warn/critical）。")
+    ingestion_backlog_total: int = Field(description="当前入库积压任务总数。")
+    ingestion_failure_rate: float = Field(description="窗口内入库失败率（0-1）。")
+    retrieval_zero_hit_rate: float = Field(description="窗口内检索零命中率（0-1）。")
+    estimated_total_cost: float = Field(description="窗口内估算总成本。")
+    incident_open_total: int = Field(description="未关闭工单总数。")
+    incident_critical_open_total: int = Field(description="未关闭 critical 工单总数。")
+    webhook_enabled_total: int = Field(description="已启用 webhook 数量。")
+
+
+class TenantHealthItemData(BaseSchema):
+    """单个工作空间健康项。"""
+
+    workspace_id: UUID = Field(description="工作空间 ID。")
+    workspace_name: str = Field(description="工作空间名称。")
+    workspace_status: str = Field(description="工作空间状态。")
+    document_total: int = Field(description="文档总数。")
+    document_ready: int = Field(description="可检索文档数。")
+    document_ready_ratio: float = Field(description="可检索文档占比（0-1）。")
+    dead_letter_jobs: int = Field(description="窗口内 dead-letter 任务数。")
+    retrieval_queries: int = Field(description="窗口内检索请求数。")
+    retrieval_zero_hit: int = Field(description="窗口内零命中请求数。")
+    retrieval_zero_hit_rate: float = Field(description="窗口内零命中率（0-1）。")
+    status: str = Field(description="健康状态（healthy/warn/critical）。")
+
+
+class CostLeaderboardItemData(BaseSchema):
+    """租户成本榜单项。"""
+
+    user_id: UUID = Field(description="用户 ID。")
+    display_name: str = Field(description="用户展示名。")
+    email: str = Field(description="用户邮箱。")
+    retrieval_requests: int = Field(description="窗口内检索请求数。")
+    chat_total_tokens: int = Field(description="窗口内会话总 token 数。")
+    agent_runs: int = Field(description="窗口内 agent 运行次数。")
+    agent_cost_total: float = Field(description="窗口内 agent 累计成本。")
+    estimated_total_cost: float = Field(description="窗口内估算总成本。")
+
+
+class IncidentDiagnosisItemData(BaseSchema):
+    """异常诊断项结构。"""
+
+    source_code: str = Field(description="异常来源编码。")
+    severity: str = Field(description="严重级别（info/warn/critical）。")
+    title: str = Field(description="诊断标题。")
+    summary: str = Field(description="诊断摘要。")
+    suggestion: str = Field(description="建议动作。")
+    context: dict[str, Any] = Field(default_factory=dict, description="诊断上下文。")
+
+
+class IncidentTicketData(BaseSchema):
+    """异常工单结构。"""
+
+    ticket_id: UUID = Field(description="工单 ID。")
+    tenant_id: UUID = Field(description="租户 ID。")
+    source_code: str = Field(description="异常来源编码。")
+    severity: str = Field(description="严重级别。")
+    status: str = Field(description="工单状态。")
+    title: str = Field(description="工单标题。")
+    summary: str = Field(description="工单摘要。")
+    diagnosis: dict[str, Any] = Field(default_factory=dict, description="结构化诊断详情。")
+    context: dict[str, Any] = Field(default_factory=dict, description="关联上下文。")
+    assignee_user_id: UUID | None = Field(default=None, description="处理人用户 ID。")
+    resolution_note: str | None = Field(default=None, description="处理结论。")
+    created_by: UUID | None = Field(default=None, description="工单创建人用户 ID。")
+    resolved_at: str | None = Field(default=None, description="工单关闭时间（ISO8601）。")
+    created_at: datetime = Field(description="创建时间。")
+    updated_at: datetime = Field(description="更新时间。")
+
+
+class AlertWebhookData(BaseSchema):
+    """告警 webhook 订阅结构。"""
+
+    webhook_id: UUID = Field(description="订阅 ID。")
+    tenant_id: UUID = Field(description="租户 ID。")
+    name: str = Field(description="订阅名称。")
+    url: str = Field(description="webhook 地址。")
+    enabled: bool = Field(description="是否启用。")
+    event_types: list[str] = Field(description="订阅事件类型。")
+    timeout_seconds: int = Field(description="通知超时时间（秒）。")
+    last_status_code: int | None = Field(default=None, description="最近一次通知响应码。")
+    last_error: str | None = Field(default=None, description="最近一次通知错误。")
+    last_notified_at: str | None = Field(default=None, description="最近一次通知时间（ISO8601）。")
+    created_at: datetime = Field(description="创建时间。")
+    updated_at: datetime = Field(description="更新时间。")
+
+
+class AlertDispatchResultItemData(BaseSchema):
+    """单个 webhook 分发结果。"""
+
+    webhook_id: UUID = Field(description="订阅 ID。")
+    name: str = Field(description="订阅名称。")
+    url: str = Field(description="webhook 地址。")
+    status_code: int | None = Field(default=None, description="请求响应码。")
+    delivered: bool = Field(description="是否发送成功。")
+    error: str | None = Field(default=None, description="失败原因。")
+    dry_run: bool = Field(description="是否演练模式。")
+
+
+class AlertDispatchResultData(BaseSchema):
+    """告警分发汇总结果。"""
+
+    tenant_id: UUID = Field(description="租户 ID。")
+    event_type: str = Field(description="事件类型。")
+    severity: str = Field(description="告警等级。")
+    dry_run: bool = Field(description="是否演练模式。")
+    matched_webhook_total: int = Field(description="命中的 webhook 数量。")
+    delivered_total: int = Field(description="实际发送成功数量。")
+    results: list[AlertDispatchResultItemData] = Field(description="逐 webhook 分发结果。")
+
+
 class RetrievalQualityMetricsData(BaseSchema):
     """检索质量指标结构。"""
 

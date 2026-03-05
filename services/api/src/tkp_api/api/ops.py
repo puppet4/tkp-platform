@@ -8,13 +8,27 @@ from sqlalchemy.orm import Session
 from tkp_api.dependencies import require_tenant_roles
 from tkp_api.db.session import get_db
 from tkp_api.models.enums import TenantRole
-from tkp_api.schemas.ops import QuotaPolicyUpsertRequest, RetrievalEvalRequest, RetrievalEvalRunCreateRequest
+from tkp_api.schemas.ops import (
+    AlertDispatchRequest,
+    AlertWebhookUpsertRequest,
+    IncidentTicketCreateRequest,
+    IncidentTicketUpdateRequest,
+    QuotaPolicyUpsertRequest,
+    RetrievalEvalRequest,
+    RetrievalEvalRunCreateRequest,
+)
 from tkp_api.schemas.common import ErrorResponse, SuccessResponse
 from tkp_api.schemas.responses import (
     CostSummaryData,
+    CostLeaderboardItemData,
+    AlertDispatchResultData,
+    AlertWebhookData,
+    IncidentDiagnosisItemData,
+    IncidentTicketData,
     IngestionOpsAlertsData,
     IngestionOpsMetricsData,
     MVPSLOSummaryData,
+    OpsOverviewData,
     QuotaAlertData,
     QuotaPolicyData,
     RetrievalEvalCompareData,
@@ -22,6 +36,7 @@ from tkp_api.schemas.responses import (
     RetrievalEvalRunDetailData,
     RetrievalEvalSummaryData,
     RetrievalQualityMetricsData,
+    TenantHealthItemData,
 )
 from tkp_api.services import filter_readable_kb_ids
 from tkp_api.services.ops_metrics import (
@@ -33,6 +48,18 @@ from tkp_api.services.ops_metrics import (
 )
 from tkp_api.services.cost import build_tenant_cost_summary
 from tkp_api.services.quota import list_quota_alerts, list_quota_policies, upsert_quota_policy
+from tkp_api.services.ops_center import (
+    build_cost_leaderboard,
+    build_incident_diagnosis,
+    build_ops_overview,
+    build_tenant_health,
+    create_incident_ticket,
+    dispatch_alerts,
+    list_alert_webhooks,
+    list_incident_tickets,
+    update_incident_ticket,
+    upsert_alert_webhook,
+)
 from tkp_api.services.retrieval_eval import (
     compare_retrieval_eval_runs,
     create_retrieval_eval_run,
@@ -393,3 +420,254 @@ def get_cost_summary(
         request,
         build_tenant_cost_summary(db, tenant_id=ctx.tenant_id, window_hours=window_hours),
     )
+
+
+@router.get(
+    "/overview",
+    summary="查询运营后台概览",
+    description="聚合入库健康、检索质量、工单与成本视图。",
+    status_code=status.HTTP_200_OK,
+    response_model=SuccessResponse[OpsOverviewData],
+    responses={401: {"model": ErrorResponse}, 403: {"model": ErrorResponse}},
+)
+def get_ops_overview(
+    request: Request,
+    window_hours: int = Query(default=24, ge=1, le=168, description="统计时间窗（小时）。"),
+    ctx=Depends(require_tenant_roles(TenantRole.OWNER, TenantRole.ADMIN)),
+    db: Session = Depends(get_db),
+):
+    """查询运营后台概览。"""
+    return success(
+        request,
+        build_ops_overview(db, tenant_id=ctx.tenant_id, window_hours=window_hours),
+    )
+
+
+@router.get(
+    "/tenant-health",
+    summary="查询租户健康分项",
+    description="按工作空间输出文档可用性与检索健康状态。",
+    status_code=status.HTTP_200_OK,
+    response_model=SuccessResponse[list[TenantHealthItemData]],
+    responses={401: {"model": ErrorResponse}, 403: {"model": ErrorResponse}},
+)
+def get_tenant_health(
+    request: Request,
+    window_hours: int = Query(default=24, ge=1, le=168, description="统计时间窗（小时）。"),
+    ctx=Depends(require_tenant_roles(TenantRole.OWNER, TenantRole.ADMIN)),
+    db: Session = Depends(get_db),
+):
+    """查询租户健康分项。"""
+    return success(
+        request,
+        build_tenant_health(db, tenant_id=ctx.tenant_id, window_hours=window_hours),
+    )
+
+
+@router.get(
+    "/cost/leaderboard",
+    summary="查询租户成本榜单",
+    description="按用户聚合检索、chat token 与 agent 成本。",
+    status_code=status.HTTP_200_OK,
+    response_model=SuccessResponse[list[CostLeaderboardItemData]],
+    responses={401: {"model": ErrorResponse}, 403: {"model": ErrorResponse}},
+)
+def get_cost_leaderboard(
+    request: Request,
+    window_hours: int = Query(default=24, ge=1, le=168, description="统计时间窗（小时）。"),
+    limit: int = Query(default=10, ge=1, le=100, description="返回榜单条数。"),
+    ctx=Depends(require_tenant_roles(TenantRole.OWNER, TenantRole.ADMIN)),
+    db: Session = Depends(get_db),
+):
+    """查询租户成本榜单。"""
+    return success(
+        request,
+        build_cost_leaderboard(db, tenant_id=ctx.tenant_id, window_hours=window_hours, limit=limit),
+    )
+
+
+@router.get(
+    "/incidents/diagnosis",
+    summary="查询异常诊断",
+    description="输出 dead-letter 与失败率等关键异常诊断项。",
+    status_code=status.HTTP_200_OK,
+    response_model=SuccessResponse[list[IncidentDiagnosisItemData]],
+    responses={401: {"model": ErrorResponse}, 403: {"model": ErrorResponse}},
+)
+def get_incident_diagnosis(
+    request: Request,
+    window_hours: int = Query(default=24, ge=1, le=168, description="统计时间窗（小时）。"),
+    ctx=Depends(require_tenant_roles(TenantRole.OWNER, TenantRole.ADMIN)),
+    db: Session = Depends(get_db),
+):
+    """查询异常诊断。"""
+    return success(
+        request,
+        build_incident_diagnosis(db, tenant_id=ctx.tenant_id, window_hours=window_hours),
+    )
+
+
+@router.post(
+    "/incidents/tickets",
+    summary="创建异常工单",
+    description="将诊断结果工单化，进入排障闭环。",
+    status_code=status.HTTP_200_OK,
+    response_model=SuccessResponse[IncidentTicketData],
+    responses={401: {"model": ErrorResponse}, 403: {"model": ErrorResponse}, 422: {"model": ErrorResponse}},
+)
+def post_incident_ticket(
+    payload: IncidentTicketCreateRequest,
+    request: Request,
+    ctx=Depends(require_tenant_roles(TenantRole.OWNER, TenantRole.ADMIN)),
+    db: Session = Depends(get_db),
+):
+    """创建异常工单。"""
+    data = create_incident_ticket(
+        db,
+        tenant_id=ctx.tenant_id,
+        user_id=ctx.user_id,
+        source_code=payload.source_code,
+        severity=payload.severity,
+        title=payload.title,
+        summary=payload.summary,
+        diagnosis=payload.diagnosis,
+        context=payload.context,
+    )
+    db.commit()
+    return success(request, data)
+
+
+@router.get(
+    "/incidents/tickets",
+    summary="查询异常工单列表",
+    description="按状态与严重级别筛选租户工单。",
+    status_code=status.HTTP_200_OK,
+    response_model=SuccessResponse[list[IncidentTicketData]],
+    responses={401: {"model": ErrorResponse}, 403: {"model": ErrorResponse}},
+)
+def get_incident_tickets(
+    request: Request,
+    status_filter: str | None = Query(default=None, alias="status", description="状态筛选。"),
+    severity: str | None = Query(default=None, description="严重级别筛选。"),
+    limit: int = Query(default=20, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
+    ctx=Depends(require_tenant_roles(TenantRole.OWNER, TenantRole.ADMIN)),
+    db: Session = Depends(get_db),
+):
+    """查询异常工单列表。"""
+    return success(
+        request,
+        list_incident_tickets(
+            db,
+            tenant_id=ctx.tenant_id,
+            status=status_filter,
+            severity=severity,
+            limit=limit,
+            offset=offset,
+        ),
+    )
+
+
+@router.patch(
+    "/incidents/tickets/{ticket_id}",
+    summary="更新异常工单",
+    description="更新工单状态、处理人或处理结论。",
+    status_code=status.HTTP_200_OK,
+    response_model=SuccessResponse[IncidentTicketData],
+    responses={401: {"model": ErrorResponse}, 403: {"model": ErrorResponse}, 404: {"model": ErrorResponse}},
+)
+def patch_incident_ticket(
+    ticket_id: UUID,
+    payload: IncidentTicketUpdateRequest,
+    request: Request,
+    ctx=Depends(require_tenant_roles(TenantRole.OWNER, TenantRole.ADMIN)),
+    db: Session = Depends(get_db),
+):
+    """更新异常工单。"""
+    data = update_incident_ticket(
+        db,
+        tenant_id=ctx.tenant_id,
+        ticket_id=ticket_id,
+        status=payload.status,
+        assignee_user_id=payload.assignee_user_id,
+        resolution_note=payload.resolution_note,
+    )
+    if data is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="incident ticket not found")
+    db.commit()
+    return success(request, data)
+
+
+@router.put(
+    "/alerts/webhooks",
+    summary="创建或更新告警 webhook",
+    description="按名称维护 webhook 通知通道。",
+    status_code=status.HTTP_200_OK,
+    response_model=SuccessResponse[AlertWebhookData],
+    responses={401: {"model": ErrorResponse}, 403: {"model": ErrorResponse}, 422: {"model": ErrorResponse}},
+)
+def put_alert_webhook(
+    payload: AlertWebhookUpsertRequest,
+    request: Request,
+    ctx=Depends(require_tenant_roles(TenantRole.OWNER, TenantRole.ADMIN)),
+    db: Session = Depends(get_db),
+):
+    """创建或更新告警 webhook。"""
+    data = upsert_alert_webhook(
+        db,
+        tenant_id=ctx.tenant_id,
+        name=payload.name,
+        url=payload.url,
+        secret=payload.secret,
+        enabled=payload.enabled,
+        event_types=payload.event_types,
+        timeout_seconds=payload.timeout_seconds,
+    )
+    db.commit()
+    return success(request, data)
+
+
+@router.get(
+    "/alerts/webhooks",
+    summary="查询告警 webhook 列表",
+    description="返回当前租户的 webhook 订阅配置。",
+    status_code=status.HTTP_200_OK,
+    response_model=SuccessResponse[list[AlertWebhookData]],
+    responses={401: {"model": ErrorResponse}, 403: {"model": ErrorResponse}},
+)
+def get_alert_webhooks(
+    request: Request,
+    ctx=Depends(require_tenant_roles(TenantRole.OWNER, TenantRole.ADMIN)),
+    db: Session = Depends(get_db),
+):
+    """查询告警 webhook 列表。"""
+    return success(request, list_alert_webhooks(db, tenant_id=ctx.tenant_id))
+
+
+@router.post(
+    "/alerts/dispatch",
+    summary="执行告警分发",
+    description="按事件类型匹配 webhook 并分发告警，支持 dry-run 演练。",
+    status_code=status.HTTP_200_OK,
+    response_model=SuccessResponse[AlertDispatchResultData],
+    responses={401: {"model": ErrorResponse}, 403: {"model": ErrorResponse}, 422: {"model": ErrorResponse}},
+)
+def post_alert_dispatch(
+    payload: AlertDispatchRequest,
+    request: Request,
+    ctx=Depends(require_tenant_roles(TenantRole.OWNER, TenantRole.ADMIN)),
+    db: Session = Depends(get_db),
+):
+    """执行告警分发。"""
+    data = dispatch_alerts(
+        db,
+        tenant_id=ctx.tenant_id,
+        event_type=payload.event_type,
+        severity=payload.severity,
+        title=payload.title,
+        message=payload.message,
+        attributes=payload.attributes,
+        dry_run=payload.dry_run,
+    )
+    db.commit()
+    return success(request, data)

@@ -2186,6 +2186,229 @@ class WorkflowRunner:
             "ops.cost.summary",
         )
 
+        ops_overview = self.success(
+            "GET",
+            "/api/ops/overview",
+            actual_path="/api/ops/overview",
+            token=self.ctx.owner_token,
+        )
+        _require_keys(
+            ops_overview,
+            [
+                "tenant_id",
+                "window_hours",
+                "generated_at",
+                "ingestion_alert_status",
+                "ingestion_backlog_total",
+                "ingestion_failure_rate",
+                "retrieval_zero_hit_rate",
+                "estimated_total_cost",
+                "incident_open_total",
+                "incident_critical_open_total",
+                "webhook_enabled_total",
+            ],
+            "ops.overview.data",
+        )
+        assert ops_overview["ingestion_alert_status"] in {"ok", "warn", "critical"}
+
+        tenant_health = self.success(
+            "GET",
+            "/api/ops/tenant-health",
+            actual_path="/api/ops/tenant-health",
+            token=self.ctx.owner_token,
+        )
+        assert isinstance(tenant_health, list) and len(tenant_health) >= 1
+        for item in tenant_health:
+            _require_keys(
+                item,
+                [
+                    "workspace_id",
+                    "workspace_name",
+                    "workspace_status",
+                    "document_total",
+                    "document_ready",
+                    "document_ready_ratio",
+                    "dead_letter_jobs",
+                    "retrieval_queries",
+                    "retrieval_zero_hit",
+                    "retrieval_zero_hit_rate",
+                    "status",
+                ],
+                "ops.tenant_health.item",
+            )
+            assert item["status"] in {"healthy", "warn", "critical"}
+
+        cost_leaderboard = self.success(
+            "GET",
+            "/api/ops/cost/leaderboard",
+            actual_path="/api/ops/cost/leaderboard",
+            token=self.ctx.owner_token,
+        )
+        assert isinstance(cost_leaderboard, list) and len(cost_leaderboard) >= 1
+        for item in cost_leaderboard:
+            _require_keys(
+                item,
+                [
+                    "user_id",
+                    "display_name",
+                    "email",
+                    "retrieval_requests",
+                    "chat_total_tokens",
+                    "agent_runs",
+                    "agent_cost_total",
+                    "estimated_total_cost",
+                ],
+                "ops.cost.leaderboard.item",
+            )
+
+        incident_diagnosis = self.success(
+            "GET",
+            "/api/ops/incidents/diagnosis",
+            actual_path="/api/ops/incidents/diagnosis",
+            token=self.ctx.owner_token,
+        )
+        assert isinstance(incident_diagnosis, list) and len(incident_diagnosis) >= 1
+        diagnosis_item = incident_diagnosis[0]
+        _require_keys(
+            diagnosis_item,
+            ["source_code", "severity", "title", "summary", "suggestion", "context"],
+            "ops.incident.diagnosis.item",
+        )
+
+        incident_ticket = self.success(
+            "POST",
+            "/api/ops/incidents/tickets",
+            actual_path="/api/ops/incidents/tickets",
+            token=self.ctx.owner_token,
+            json={
+                "source_code": diagnosis_item["source_code"],
+                "severity": diagnosis_item["severity"],
+                "title": diagnosis_item["title"],
+                "summary": diagnosis_item["summary"],
+                "diagnosis": {"suggestion": diagnosis_item["suggestion"]},
+                "context": diagnosis_item["context"],
+            },
+        )
+        _require_keys(
+            incident_ticket,
+            [
+                "ticket_id",
+                "tenant_id",
+                "source_code",
+                "severity",
+                "status",
+                "title",
+                "summary",
+                "diagnosis",
+                "context",
+                "assignee_user_id",
+                "resolution_note",
+                "created_by",
+                "resolved_at",
+                "created_at",
+                "updated_at",
+            ],
+            "ops.incident.ticket.create",
+        )
+        _assert_uuid(incident_ticket["ticket_id"], "ops.incident.ticket_id")
+        assert incident_ticket["status"] == "open"
+
+        incident_tickets = self.success(
+            "GET",
+            "/api/ops/incidents/tickets",
+            actual_path="/api/ops/incidents/tickets",
+            token=self.ctx.owner_token,
+        )
+        assert isinstance(incident_tickets, list) and len(incident_tickets) >= 1
+        assert any(item["ticket_id"] == incident_ticket["ticket_id"] for item in incident_tickets)
+
+        incident_ticket_resolved = self.success(
+            "PATCH",
+            "/api/ops/incidents/tickets/{ticket_id}",
+            actual_path=f"/api/ops/incidents/tickets/{incident_ticket['ticket_id']}",
+            token=self.ctx.owner_token,
+            json={
+                "status": "resolved",
+                "assignee_user_id": self.ctx.owner_user_id,
+                "resolution_note": "resolved in test",
+            },
+        )
+        assert incident_ticket_resolved["status"] == "resolved"
+        _assert_non_empty_str(incident_ticket_resolved["resolved_at"], "ops.incident.resolved_at")
+
+        webhook = self.success(
+            "PUT",
+            "/api/ops/alerts/webhooks",
+            actual_path="/api/ops/alerts/webhooks",
+            token=self.ctx.owner_token,
+            json={
+                "name": "default",
+                "url": "https://example.invalid/webhook",
+                "secret": "test-secret",
+                "enabled": True,
+                "event_types": ["ops.incident.created"],
+                "timeout_seconds": 3,
+            },
+        )
+        _require_keys(
+            webhook,
+            [
+                "webhook_id",
+                "tenant_id",
+                "name",
+                "url",
+                "enabled",
+                "event_types",
+                "timeout_seconds",
+                "last_status_code",
+                "last_error",
+                "last_notified_at",
+                "created_at",
+                "updated_at",
+            ],
+            "ops.alert.webhook",
+        )
+        assert webhook["name"] == "default"
+
+        webhook_list = self.success(
+            "GET",
+            "/api/ops/alerts/webhooks",
+            actual_path="/api/ops/alerts/webhooks",
+            token=self.ctx.owner_token,
+        )
+        assert isinstance(webhook_list, list) and len(webhook_list) >= 1
+        assert any(item["name"] == "default" for item in webhook_list)
+
+        dispatch_result = self.success(
+            "POST",
+            "/api/ops/alerts/dispatch",
+            actual_path="/api/ops/alerts/dispatch",
+            token=self.ctx.owner_token,
+            json={
+                "event_type": "ops.incident.created",
+                "severity": "warn",
+                "title": "test alert",
+                "message": "phase3 dry run",
+                "attributes": {"ticket_id": incident_ticket["ticket_id"]},
+                "dry_run": True,
+            },
+        )
+        _require_keys(
+            dispatch_result,
+            [
+                "tenant_id",
+                "event_type",
+                "severity",
+                "dry_run",
+                "matched_webhook_total",
+                "delivered_total",
+                "results",
+            ],
+            "ops.alert.dispatch",
+        )
+        assert dispatch_result["dry_run"] is True
+        assert isinstance(dispatch_result["results"], list)
+
         retrieval_eval = self.success(
             "POST",
             "/api/ops/retrieval/evaluate",

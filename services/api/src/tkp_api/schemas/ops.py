@@ -38,3 +38,44 @@ class QuotaPolicyUpsertRequest(BaseModel):
     limit_value: int = Field(ge=0, le=10_000_000, description="窗口内允许上限。")
     window_minutes: int = Field(default=1440, ge=1, le=10080, description="统计窗口分钟数。")
     enabled: bool = Field(default=True, description="是否启用策略。")
+
+
+class IncidentTicketCreateRequest(BaseModel):
+    """创建异常工单请求。"""
+
+    source_code: str = Field(min_length=1, max_length=64, description="异常来源编码。")
+    severity: str = Field(default="warn", description="严重级别（info/warn/critical）。")
+    title: str = Field(min_length=1, max_length=256, description="工单标题。")
+    summary: str = Field(min_length=1, description="异常摘要。")
+    diagnosis: dict = Field(default_factory=dict, description="结构化诊断详情。")
+    context: dict = Field(default_factory=dict, description="关联上下文。")
+
+
+class IncidentTicketUpdateRequest(BaseModel):
+    """更新异常工单请求。"""
+
+    status: str | None = Field(default=None, description="工单状态（open/acknowledged/resolved）。")
+    assignee_user_id: UUID | None = Field(default=None, description="处理人用户 ID。")
+    resolution_note: str | None = Field(default=None, max_length=4000, description="处理结论。")
+
+
+class AlertWebhookUpsertRequest(BaseModel):
+    """告警 webhook 创建/更新请求。"""
+
+    name: str = Field(min_length=1, max_length=64, description="订阅名称。")
+    url: str = Field(min_length=1, max_length=2000, description="webhook 地址。")
+    secret: str | None = Field(default=None, max_length=256, description="可选签名密钥。")
+    enabled: bool = Field(default=True, description="是否启用。")
+    event_types: list[str] = Field(default_factory=list, description="订阅事件类型，为空表示全部事件。")
+    timeout_seconds: int = Field(default=3, ge=1, le=30, description="通知超时时间（秒）。")
+
+
+class AlertDispatchRequest(BaseModel):
+    """告警分发请求。"""
+
+    event_type: str = Field(min_length=1, max_length=64, description="告警事件类型。")
+    severity: str = Field(default="warn", description="告警等级（info/warn/critical）。")
+    title: str = Field(min_length=1, max_length=256, description="告警标题。")
+    message: str = Field(min_length=1, description="告警内容。")
+    attributes: dict = Field(default_factory=dict, description="扩展属性。")
+    dry_run: bool = Field(default=True, description="是否仅演练不实际发送。")
