@@ -13,6 +13,56 @@ from tkp_api.models.enums import AgentRunStatus
 from tkp_api.services.rag_client import post_rag_json
 
 
+def normalize_agent_tool_policy(
+    tool_policy: dict[str, Any],
+    *,
+    allowed_tools: list[str],
+) -> dict[str, Any]:
+    """校验并规范化 Agent 工具策略。"""
+    allow_raw = tool_policy.get("allow", allowed_tools)
+    if allow_raw is None:
+        allow_raw = allowed_tools
+    if not isinstance(allow_raw, list):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail={
+                "code": "AGENT_TOOL_POLICY_INVALID",
+                "message": "tool_policy.allow 必须是字符串数组。",
+                "details": {"reason": "invalid_allow_list_type"},
+            },
+        )
+
+    normalized_allow: list[str] = []
+    seen: set[str] = set()
+    for item in allow_raw:
+        if not isinstance(item, str) or not item.strip():
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail={
+                    "code": "AGENT_TOOL_POLICY_INVALID",
+                    "message": "tool_policy.allow 中包含非法工具名。",
+                    "details": {"reason": "invalid_tool_name"},
+                },
+            )
+        tool = item.strip()
+        if tool not in seen:
+            normalized_allow.append(tool)
+            seen.add(tool)
+
+    forbidden = [tool for tool in normalized_allow if tool not in allowed_tools]
+    if forbidden:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail={
+                "code": "AGENT_TOOL_NOT_ALLOWED",
+                "message": "tool_policy 包含未授权工具。",
+                "details": {"forbidden_tools": forbidden, "allowed_tools": allowed_tools},
+            },
+        )
+
+    return {"allow": normalized_allow, "validated": True}
+
+
 def _local_plan(task: str, kb_ids: list[UUID], tool_policy: dict[str, Any]) -> dict[str, Any]:
     """本地兜底规划。"""
     return {

@@ -263,6 +263,44 @@ class IngestionOpsAlertsData(BaseSchema):
     rules: list[IngestionOpsAlertRuleData] = Field(description="规则级告警状态。")
 
 
+class RetrievalQualityMetricsData(BaseSchema):
+    """检索质量指标结构。"""
+
+    tenant_id: UUID = Field(description="租户 ID。")
+    window_hours: int = Field(description="统计窗口小时数。")
+    query_total: int = Field(description="窗口内检索请求总数。")
+    query_with_hits: int = Field(description="窗口内至少有一条命中的请求数。")
+    zero_hit_queries: int = Field(description="窗口内零命中请求数。")
+    zero_hit_rate: float = Field(description="窗口内零命中率（0-1）。")
+    hit_total: int = Field(description="窗口内命中切片总数。")
+    hit_with_citation: int = Field(description="窗口内带 citation 的命中切片数。")
+    citation_coverage_rate: float = Field(description="命中切片引用覆盖率（0-1）。")
+    avg_latency_ms: int | None = Field(default=None, description="窗口内平均检索耗时（毫秒）。")
+    p95_latency_ms: int | None = Field(default=None, description="窗口内检索 p95 耗时（毫秒）。")
+
+
+class MVPSLOCheckData(BaseSchema):
+    """MVP SLO 单项检查结构。"""
+
+    code: str = Field(description="检查项编码。")
+    name: str = Field(description="检查项名称。")
+    status: str = Field(description="检查状态（pass/fail）。")
+    current: int | float = Field(description="当前指标值。")
+    target: int | float = Field(description="目标阈值。")
+    operator: str = Field(description="比较操作符（<= 或 >=）。")
+
+
+class MVPSLOSummaryData(BaseSchema):
+    """MVP SLO 摘要结构。"""
+
+    tenant_id: UUID = Field(description="租户 ID。")
+    window_hours: int = Field(description="统计窗口小时数。")
+    overall_status: str = Field(description="整体状态（pass/fail）。")
+    checks: list[MVPSLOCheckData] = Field(description="SLO 检查列表。")
+    ingestion_metrics: IngestionOpsMetricsData = Field(description="入库指标快照。")
+    retrieval_quality: RetrievalQualityMetricsData = Field(description="检索质量指标快照。")
+
+
 class KBMembershipData(BaseSchema):
     """知识库成员新增/更新返回结构。"""
 

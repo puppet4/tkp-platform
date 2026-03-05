@@ -11,7 +11,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from tkp_api.models.enums import IngestionJobStatus
-from tkp_api.models.knowledge import IngestionJob
+from tkp_api.models.knowledge import IngestionJob, RetrievalLog
 
 
 def _normalize_threshold_pair(
@@ -208,4 +208,159 @@ def build_ingestion_alerts(
         "tenant_id": metrics["tenant_id"],
         "overall_status": overall_status,
         "rules": rules,
+    }
+
+
+def build_retrieval_quality_metrics(
+    db: Session,
+    *,
+    tenant_id: UUID,
+    window_hours: int = 24,
+) -> dict[str, Any]:
+    """按租户聚合检索质量指标。"""
+    now = datetime.now(timezone.utc)
+    window_from = now - timedelta(hours=window_hours)
+
+    rows = db.execute(
+        select(
+            RetrievalLog.latency_ms,
+            RetrievalLog.result_chunks,
+        ).where(
+            RetrievalLog.tenant_id == tenant_id,
+            RetrievalLog.created_at >= window_from,
+        )
+    ).all()
+
+    total_queries = len(rows)
+    query_with_hits = 0
+    latency_values: list[int] = []
+    total_hits = 0
+    cited_hits = 0
+
+    for latency_ms_raw, result_chunks_raw in rows:
+        latency_values.append(max(0, int(latency_ms_raw or 0)))
+        result_chunks = result_chunks_raw if isinstance(result_chunks_raw, list) else []
+        if result_chunks:
+            query_with_hits += 1
+        total_hits += len(result_chunks)
+        for hit in result_chunks:
+            if isinstance(hit, dict) and isinstance(hit.get("citation"), dict):
+                cited_hits += 1
+
+    zero_hit_queries = max(0, total_queries - query_with_hits)
+    zero_hit_rate = float(zero_hit_queries) / float(total_queries) if total_queries > 0 else 0.0
+    citation_coverage_rate = float(cited_hits) / float(total_hits) if total_hits > 0 else 1.0
+    avg_latency_ms = int(sum(latency_values) / len(latency_values)) if latency_values else None
+
+    return {
+        "tenant_id": str(tenant_id),
+        "window_hours": int(window_hours),
+        "query_total": total_queries,
+        "query_with_hits": query_with_hits,
+        "zero_hit_queries": zero_hit_queries,
+        "zero_hit_rate": round(zero_hit_rate, 6),
+        "hit_total": total_hits,
+        "hit_with_citation": cited_hits,
+        "citation_coverage_rate": round(citation_coverage_rate, 6),
+        "avg_latency_ms": avg_latency_ms,
+        "p95_latency_ms": _p95(latency_values),
+    }
+
+
+def _slo_status(current: float, target: float, *, mode: str) -> str:
+    """根据阈值比较结果输出状态。"""
+    if mode == "lte":
+        return "pass" if current <= target else "fail"
+    return "pass" if current >= target else "fail"
+
+
+def build_mvp_slo_summary(
+    db: Session,
+    *,
+    tenant_id: UUID,
+    window_hours: int = 24,
+    ingestion_failure_rate_target: float = 0.10,
+    ingestion_p95_latency_target_ms: int = 300000,
+    retrieval_zero_hit_rate_target: float = 0.30,
+    retrieval_p95_latency_target_ms: int = 3000,
+    retrieval_citation_coverage_target: float = 0.95,
+) -> dict[str, Any]:
+    """构建 MVP 阶段 SLO 摘要。"""
+    ingestion = build_ingestion_metrics(db, tenant_id=tenant_id, window_hours=window_hours)
+    retrieval = build_retrieval_quality_metrics(db, tenant_id=tenant_id, window_hours=window_hours)
+
+    ingestion_p95_current = float(ingestion["p95_latency_ms_last_window"] or 0)
+    retrieval_p95_current = float(retrieval["p95_latency_ms"] or 0)
+
+    checks = [
+        {
+            "code": "INGESTION_FAILURE_RATE",
+            "name": "入库窗口失败率",
+            "status": _slo_status(
+                float(ingestion["failure_rate_last_window"]),
+                float(max(0.0, ingestion_failure_rate_target)),
+                mode="lte",
+            ),
+            "current": round(float(ingestion["failure_rate_last_window"]), 6),
+            "target": round(float(max(0.0, ingestion_failure_rate_target)), 6),
+            "operator": "<=",
+        },
+        {
+            "code": "INGESTION_P95_LATENCY_MS",
+            "name": "入库P95耗时",
+            "status": _slo_status(
+                ingestion_p95_current,
+                float(max(1, ingestion_p95_latency_target_ms)),
+                mode="lte",
+            ),
+            "current": int(ingestion_p95_current),
+            "target": int(max(1, ingestion_p95_latency_target_ms)),
+            "operator": "<=",
+        },
+        {
+            "code": "RETRIEVAL_ZERO_HIT_RATE",
+            "name": "检索零命中率",
+            "status": _slo_status(
+                float(retrieval["zero_hit_rate"]),
+                float(max(0.0, retrieval_zero_hit_rate_target)),
+                mode="lte",
+            ),
+            "current": round(float(retrieval["zero_hit_rate"]), 6),
+            "target": round(float(max(0.0, retrieval_zero_hit_rate_target)), 6),
+            "operator": "<=",
+        },
+        {
+            "code": "RETRIEVAL_P95_LATENCY_MS",
+            "name": "检索P95耗时",
+            "status": _slo_status(
+                retrieval_p95_current,
+                float(max(1, retrieval_p95_latency_target_ms)),
+                mode="lte",
+            ),
+            "current": int(retrieval_p95_current),
+            "target": int(max(1, retrieval_p95_latency_target_ms)),
+            "operator": "<=",
+        },
+        {
+            "code": "RETRIEVAL_CITATION_COVERAGE",
+            "name": "检索引用覆盖率",
+            "status": _slo_status(
+                float(retrieval["citation_coverage_rate"]),
+                float(max(0.0, retrieval_citation_coverage_target)),
+                mode="gte",
+            ),
+            "current": round(float(retrieval["citation_coverage_rate"]), 6),
+            "target": round(float(max(0.0, retrieval_citation_coverage_target)), 6),
+            "operator": ">=",
+        },
+    ]
+
+    overall_status = "pass" if all(item["status"] == "pass" for item in checks) else "fail"
+    return {
+        "tenant_id": str(tenant_id),
+        "window_hours": int(window_hours),
+        "overall_status": overall_status,
+        "checks": checks,
+        "ingestion_metrics": ingestion,
+        "retrieval_quality": retrieval,
     }

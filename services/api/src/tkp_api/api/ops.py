@@ -7,8 +7,18 @@ from tkp_api.dependencies import require_tenant_roles
 from tkp_api.db.session import get_db
 from tkp_api.models.enums import TenantRole
 from tkp_api.schemas.common import ErrorResponse, SuccessResponse
-from tkp_api.schemas.responses import IngestionOpsAlertsData, IngestionOpsMetricsData
-from tkp_api.services.ops_metrics import build_ingestion_alerts, build_ingestion_metrics
+from tkp_api.schemas.responses import (
+    IngestionOpsAlertsData,
+    IngestionOpsMetricsData,
+    MVPSLOSummaryData,
+    RetrievalQualityMetricsData,
+)
+from tkp_api.services.ops_metrics import (
+    build_ingestion_alerts,
+    build_ingestion_metrics,
+    build_mvp_slo_summary,
+    build_retrieval_quality_metrics,
+)
 from tkp_api.utils.response import success
 
 router = APIRouter(prefix="/ops", tags=["ops"])
@@ -77,3 +87,59 @@ def get_ingestion_alerts(
         stale_critical=stale_critical,
     )
     return success(request, alerts)
+
+
+@router.get(
+    "/retrieval/quality",
+    summary="查询检索质量指标",
+    description="返回检索零命中率、引用覆盖率和延迟分位等质量指标。",
+    status_code=status.HTTP_200_OK,
+    response_model=SuccessResponse[RetrievalQualityMetricsData],
+    responses={401: {"model": ErrorResponse}, 403: {"model": ErrorResponse}},
+)
+def get_retrieval_quality_metrics(
+    request: Request,
+    window_hours: int = Query(default=24, ge=1, le=168, description="统计时间窗（小时）。"),
+    ctx=Depends(require_tenant_roles(TenantRole.OWNER, TenantRole.ADMIN)),
+    db: Session = Depends(get_db),
+):
+    """按租户聚合检索质量指标。"""
+    data = build_retrieval_quality_metrics(
+        db,
+        tenant_id=ctx.tenant_id,
+        window_hours=window_hours,
+    )
+    return success(request, data)
+
+
+@router.get(
+    "/slo/mvp-summary",
+    summary="查询 MVP SLO 摘要",
+    description="汇总入库与检索关键指标，并返回 MVP 阶段的达标状态。",
+    status_code=status.HTTP_200_OK,
+    response_model=SuccessResponse[MVPSLOSummaryData],
+    responses={401: {"model": ErrorResponse}, 403: {"model": ErrorResponse}},
+)
+def get_mvp_slo_summary(
+    request: Request,
+    window_hours: int = Query(default=24, ge=1, le=168, description="统计时间窗（小时）。"),
+    ingestion_failure_rate_target: float = Query(default=0.10, ge=0.0, le=1.0, description="入库失败率目标上限。"),
+    ingestion_p95_latency_target_ms: int = Query(default=300000, ge=1, le=86400000, description="入库 p95 耗时目标上限（毫秒）。"),
+    retrieval_zero_hit_rate_target: float = Query(default=0.30, ge=0.0, le=1.0, description="检索零命中率目标上限。"),
+    retrieval_p95_latency_target_ms: int = Query(default=3000, ge=1, le=600000, description="检索 p95 耗时目标上限（毫秒）。"),
+    retrieval_citation_coverage_target: float = Query(default=0.95, ge=0.0, le=1.0, description="检索引用覆盖率目标下限。"),
+    ctx=Depends(require_tenant_roles(TenantRole.OWNER, TenantRole.ADMIN)),
+    db: Session = Depends(get_db),
+):
+    """输出 MVP 阶段 SLO 达标摘要。"""
+    data = build_mvp_slo_summary(
+        db,
+        tenant_id=ctx.tenant_id,
+        window_hours=window_hours,
+        ingestion_failure_rate_target=ingestion_failure_rate_target,
+        ingestion_p95_latency_target_ms=ingestion_p95_latency_target_ms,
+        retrieval_zero_hit_rate_target=retrieval_zero_hit_rate_target,
+        retrieval_p95_latency_target_ms=retrieval_p95_latency_target_ms,
+        retrieval_citation_coverage_target=retrieval_citation_coverage_target,
+    )
+    return success(request, data)

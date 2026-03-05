@@ -98,6 +98,7 @@ Required vars for API currently:
 - `KD_RAG_CIRCUIT_BREAKER_FAIL_THRESHOLD` (可选，默认 3)
 - `KD_RAG_CIRCUIT_BREAKER_OPEN_SECONDS` (可选，默认 30)
 - `KD_INTERNAL_SERVICE_TOKEN` (建议必配，API 与 RAG 必须一致)
+- `KD_AGENT_ALLOWED_TOOLS` (可选，默认 `retrieval`，用于 Agent 工具白名单)
 
 配置治理（启动前校验）：
 - 当未配置 `KD_AUTH_JWKS_URL` 时，`KD_AUTH_JWT_SECRET` 必须至少 32 字节。
@@ -174,6 +175,8 @@ bash scripts/test_data_plane_e2e.sh
 
 - `GET /api/ops/ingestion/metrics`
 - `GET /api/ops/ingestion/alerts`
+- `GET /api/ops/retrieval/quality`
+- `GET /api/ops/slo/mvp-summary`
 
 返回维度：
 - 入库任务分状态计数（queued/processing/retrying/completed/dead_letter）

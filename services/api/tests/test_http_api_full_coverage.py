@@ -1024,6 +1024,20 @@ class WorkflowRunner:
         _assert_uuid(self.ctx.run_id, "agent.run_id")
         _assert_non_empty_str(run_data["status"], "agent.status")
 
+        forbidden_tool_error = self.expect_error(
+            "POST",
+            "/api/agent/runs",
+            token=self.ctx.owner_token,
+            expected_status=422,
+            json={
+                "conversation_id": chat_data["conversation_id"],
+                "task": "run forbidden tool task",
+                "kb_ids": [],
+                "tool_policy": {"allow": ["retrieval", "web_search"]},
+            },
+        )
+        assert forbidden_tool_error["code"] == "AGENT_TOOL_NOT_ALLOWED"
+
         run_detail = self.success(
             "GET",
             "/api/agent/runs/{run_id}",
@@ -1944,6 +1958,58 @@ class WorkflowRunner:
                 "ops.ingestion.alerts.rule",
             )
             assert rule["status"] in {"ok", "warn", "critical"}
+
+        retrieval_quality = self.success(
+            "GET",
+            "/api/ops/retrieval/quality",
+            actual_path="/api/ops/retrieval/quality",
+            token=self.ctx.owner_token,
+        )
+        _require_keys(
+            retrieval_quality,
+            [
+                "tenant_id",
+                "window_hours",
+                "query_total",
+                "query_with_hits",
+                "zero_hit_queries",
+                "zero_hit_rate",
+                "hit_total",
+                "hit_with_citation",
+                "citation_coverage_rate",
+                "avg_latency_ms",
+                "p95_latency_ms",
+            ],
+            "ops.retrieval.quality.data",
+        )
+        _assert_uuid(retrieval_quality["tenant_id"], "ops.retrieval.quality.tenant_id")
+        assert isinstance(retrieval_quality["window_hours"], int) and retrieval_quality["window_hours"] >= 1
+        assert isinstance(retrieval_quality["query_total"], int) and retrieval_quality["query_total"] >= 0
+        assert isinstance(retrieval_quality["query_with_hits"], int) and retrieval_quality["query_with_hits"] >= 0
+        assert isinstance(retrieval_quality["zero_hit_queries"], int) and retrieval_quality["zero_hit_queries"] >= 0
+        assert isinstance(retrieval_quality["zero_hit_rate"], float)
+        assert 0.0 <= retrieval_quality["zero_hit_rate"] <= 1.0
+        assert isinstance(retrieval_quality["citation_coverage_rate"], float)
+        assert 0.0 <= retrieval_quality["citation_coverage_rate"] <= 1.0
+
+        mvp_slo = self.success(
+            "GET",
+            "/api/ops/slo/mvp-summary",
+            actual_path="/api/ops/slo/mvp-summary",
+            token=self.ctx.owner_token,
+        )
+        _require_keys(
+            mvp_slo,
+            ["tenant_id", "window_hours", "overall_status", "checks", "ingestion_metrics", "retrieval_quality"],
+            "ops.slo.mvp_summary.data",
+        )
+        _assert_uuid(mvp_slo["tenant_id"], "ops.slo.mvp_summary.tenant_id")
+        assert mvp_slo["overall_status"] in {"pass", "fail"}
+        assert isinstance(mvp_slo["checks"], list) and len(mvp_slo["checks"]) >= 5
+        for check in mvp_slo["checks"]:
+            _require_keys(check, ["code", "name", "status", "current", "target", "operator"], "ops.slo.check")
+            assert check["status"] in {"pass", "fail"}
+            assert check["operator"] in {"<=", ">="}
 
         deleted_doc = self.success(
             "DELETE",

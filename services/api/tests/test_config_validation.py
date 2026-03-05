@@ -36,3 +36,8 @@ def test_api_settings_accept_valid_minio_and_rag_config():
     )
     assert cfg.storage_backend == "minio"
     assert cfg.rag_base_url == "http://127.0.0.1:8010"
+
+
+def test_api_settings_reject_empty_agent_allowed_tools():
+    with pytest.raises(ValidationError):
+        Settings(agent_allowed_tools="  ,   ")

@@ -66,6 +66,10 @@ class Settings(BaseSettings):
         default="change-me-internal-token",
         description="服务间内部调用鉴权令牌（API->RAG）。",
     )
+    agent_allowed_tools: str = Field(
+        default="retrieval",
+        description="Agent 可用工具白名单，逗号分隔。",
+    )
 
     @field_validator("auth_jwt_algorithms")
     @classmethod
@@ -80,6 +84,11 @@ class Settings(BaseSettings):
     def auth_algorithms(self) -> list[str]:
         """返回规范化后的算法数组。"""
         return [item.strip() for item in self.auth_jwt_algorithms.split(",") if item.strip()]
+
+    @property
+    def agent_allowed_tools_list(self) -> list[str]:
+        """返回规范化后的 Agent 工具白名单。"""
+        return [item.strip() for item in self.agent_allowed_tools.split(",") if item.strip()]
 
     @model_validator(mode="after")
     def validate_runtime_contract(self) -> "Settings":
@@ -107,6 +116,9 @@ class Settings(BaseSettings):
             parsed = urlparse(self.rag_base_url)
             if parsed.scheme not in {"http", "https"} or not parsed.netloc:
                 raise ValueError("KD_RAG_BASE_URL must be a valid http(s) URL")
+
+        if not self.agent_allowed_tools_list:
+            raise ValueError("KD_AGENT_ALLOWED_TOOLS must include at least one tool")
         return self
 
 

@@ -6,6 +6,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Path, Request, status
 from sqlalchemy.orm import Session
 
+from tkp_api.core.config import get_settings
 from tkp_api.dependencies import get_request_context
 from tkp_api.db.session import get_db
 from tkp_api.models.agent import AgentRun
@@ -15,6 +16,7 @@ from tkp_api.utils.response import success
 from tkp_api.schemas.agent import AgentRunCreateRequest
 from tkp_api.schemas.common import ErrorResponse, SuccessResponse
 from tkp_api.schemas.responses import AgentRunData, AgentRunDetailData
+from tkp_api.services.agent_planner import normalize_agent_tool_policy
 from tkp_api.services import PermissionAction, audit_log, build_agent_plan, require_tenant_action
 
 router = APIRouter(prefix="/agent", tags=["agent"])
@@ -49,6 +51,11 @@ def create_agent_run(
             or conversation.user_id != ctx.user_id
         ):
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="conversation not found")
+    settings = get_settings()
+    tool_policy = normalize_agent_tool_policy(
+        payload.tool_policy,
+        allowed_tools=settings.agent_allowed_tools_list,
+    )
 
     plan_data = build_agent_plan(
         db,
@@ -57,7 +64,7 @@ def create_agent_run(
         task=payload.task,
         kb_ids=payload.kb_ids,
         conversation_id=payload.conversation_id,
-        tool_policy=payload.tool_policy,
+        tool_policy=tool_policy,
     )
 
     # 任务初始化状态由规划器返回，后续由异步执行器推进状态。

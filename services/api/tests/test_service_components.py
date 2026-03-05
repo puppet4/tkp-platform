@@ -14,6 +14,7 @@ from tkp_api.models.enums import DocumentStatus, SourceType
 from tkp_api.models.knowledge import Document, DocumentChunk
 from tkp_api.services import rag_client
 from tkp_api.services import storage as storage_service
+from tkp_api.services.agent_planner import normalize_agent_tool_policy
 from tkp_api.services.rag_client import post_rag_json, reset_rag_circuit_breaker
 from tkp_api.services.retrieval_local import search_chunks
 
@@ -269,6 +270,21 @@ def test_search_chunks_supports_strategy_and_min_score():
     assert isinstance(hits[0].get("matched_terms"), list)
     assert isinstance(hits[0].get("score_breakdown"), dict)
     assert hits[0]["score_breakdown"]["final_score"] == hits[0]["score"]
+
+
+def test_normalize_agent_tool_policy_rejects_forbidden_tools():
+    with pytest.raises(HTTPException) as exc_info:
+        normalize_agent_tool_policy({"allow": ["retrieval", "web_search"]}, allowed_tools=["retrieval"])
+
+    exc = exc_info.value
+    assert exc.status_code == 422
+    assert exc.detail["code"] == "AGENT_TOOL_NOT_ALLOWED"
+
+
+def test_normalize_agent_tool_policy_defaults_to_allowlist():
+    normalized = normalize_agent_tool_policy({}, allowed_tools=["retrieval"])
+    assert normalized["allow"] == ["retrieval"]
+    assert normalized["validated"] is True
 
 
 def test_post_rag_json_forwards_internal_token(monkeypatch):
