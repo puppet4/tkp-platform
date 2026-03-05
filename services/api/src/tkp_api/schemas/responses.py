@@ -451,6 +451,81 @@ class AlertDispatchResultData(BaseSchema):
     results: list[AlertDispatchResultItemData] = Field(description="逐 webhook 分发结果。")
 
 
+class ReleaseRolloutData(BaseSchema):
+    """发布/回滚记录结构。"""
+
+    rollout_id: UUID = Field(description="发布记录 ID。")
+    tenant_id: UUID = Field(description="租户 ID。")
+    version: str = Field(description="发布版本标识。")
+    strategy: str = Field(description="发布策略。")
+    status: str = Field(description="发布状态。")
+    risk_level: str = Field(description="风险等级。")
+    canary_percent: int = Field(description="灰度比例。")
+    scope: dict[str, Any] = Field(default_factory=dict, description="发布范围定义。")
+    rollback_of: UUID | None = Field(default=None, description="若为回滚动作，指向被回滚发布 ID。")
+    approved_by: UUID | None = Field(default=None, description="审批人用户 ID。")
+    note: str | None = Field(default=None, description="发布备注。")
+    started_at: str | None = Field(default=None, description="启动时间（ISO8601）。")
+    completed_at: str | None = Field(default=None, description="完成时间（ISO8601）。")
+    created_at: datetime = Field(description="创建时间。")
+    updated_at: datetime = Field(description="更新时间。")
+
+
+class DeletionProofData(BaseSchema):
+    """删除证明结构。"""
+
+    proof_id: UUID = Field(description="删除证明 ID。")
+    tenant_id: UUID = Field(description="租户 ID。")
+    resource_type: str = Field(description="删除资源类型。")
+    resource_id: str = Field(description="删除资源标识。")
+    subject_hash: str = Field(description="删除主体 hash。")
+    signature: str = Field(description="删除证明签名。")
+    deleted_by: UUID | None = Field(default=None, description="执行删除用户 ID。")
+    deleted_at: str = Field(description="删除时间（ISO8601）。")
+    ticket_id: UUID | None = Field(default=None, description="关联工单 ID。")
+    proof_payload: dict[str, Any] = Field(default_factory=dict, description="删除证明扩展载荷。")
+    created_at: datetime = Field(description="创建时间。")
+    updated_at: datetime = Field(description="更新时间。")
+
+
+class SecurityBaselineCheckData(BaseSchema):
+    """安全基线检查项。"""
+
+    code: str = Field(description="检查项编码。")
+    name: str = Field(description="检查项名称。")
+    status: str = Field(description="检查状态（pass/warn/planned）。")
+    message: str = Field(description="检查说明。")
+
+
+class SecurityBaselineData(BaseSchema):
+    """安全基线汇总结构。"""
+
+    tenant_id: UUID = Field(description="租户 ID。")
+    overall_status: str = Field(description="整体状态（pass/warn）。")
+    checks: list[SecurityBaselineCheckData] = Field(description="检查项列表。")
+
+
+class PublicSLASLOData(BaseSchema):
+    """对外 SLA/SLO 口径结构。"""
+
+    version: str = Field(description="口径版本。")
+    service_tier: str = Field(description="服务等级。")
+    availability_sla: dict[str, Any] = Field(default_factory=dict, description="可用性 SLA。")
+    support_sla: dict[str, Any] = Field(default_factory=dict, description="支持响应 SLA。")
+    slo: list[dict[str, Any]] = Field(default_factory=list, description="核心 SLO 指标。")
+    updated_at: str = Field(description="更新时间（ISO8601）。")
+
+
+class RunbookSummaryData(BaseSchema):
+    """运行手册摘要结构。"""
+
+    version: str = Field(description="手册版本。")
+    oncall: dict[str, Any] = Field(default_factory=dict, description="值班机制。")
+    playbooks: list[dict[str, Any]] = Field(default_factory=list, description="关键排障流程。")
+    documents: list[dict[str, Any]] = Field(default_factory=list, description="配套文档索引。")
+    updated_at: str = Field(description="更新时间（ISO8601）。")
+
+
 class RetrievalQualityMetricsData(BaseSchema):
     """检索质量指标结构。"""
 

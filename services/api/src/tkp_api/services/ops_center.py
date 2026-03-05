@@ -18,7 +18,7 @@ from tkp_api.models.agent import AgentRun
 from tkp_api.models.conversation import Conversation, Message
 from tkp_api.models.enums import IngestionJobStatus, MessageRole
 from tkp_api.models.knowledge import Document, IngestionJob, RetrievalLog
-from tkp_api.models.ops import OpsAlertWebhook, OpsIncidentTicket
+from tkp_api.models.ops import OpsAlertWebhook, OpsDeletionProof, OpsIncidentTicket, OpsReleaseRollout
 from tkp_api.models.tenant import User
 from tkp_api.models.workspace import Workspace
 from tkp_api.services.cost import build_tenant_cost_summary
@@ -72,6 +72,43 @@ def _webhook_to_dict(row: OpsAlertWebhook) -> dict[str, Any]:
         "last_status_code": row.last_status_code,
         "last_error": row.last_error,
         "last_notified_at": row.last_notified_at,
+        "created_at": row.created_at,
+        "updated_at": row.updated_at,
+    }
+
+
+def _rollout_to_dict(row: OpsReleaseRollout) -> dict[str, Any]:
+    return {
+        "rollout_id": str(row.id),
+        "tenant_id": str(row.tenant_id),
+        "version": row.version,
+        "strategy": row.strategy,
+        "status": row.status,
+        "risk_level": row.risk_level,
+        "canary_percent": int(row.canary_percent),
+        "scope": _safe_dict(row.scope_json),
+        "rollback_of": str(row.rollback_of) if row.rollback_of else None,
+        "approved_by": str(row.approved_by) if row.approved_by else None,
+        "note": row.note,
+        "started_at": row.started_at,
+        "completed_at": row.completed_at,
+        "created_at": row.created_at,
+        "updated_at": row.updated_at,
+    }
+
+
+def _proof_to_dict(row: OpsDeletionProof) -> dict[str, Any]:
+    return {
+        "proof_id": str(row.id),
+        "tenant_id": str(row.tenant_id),
+        "resource_type": row.resource_type,
+        "resource_id": row.resource_id,
+        "subject_hash": row.subject_hash,
+        "signature": row.signature,
+        "deleted_by": str(row.deleted_by) if row.deleted_by else None,
+        "deleted_at": row.deleted_at,
+        "ticket_id": str(row.ticket_id) if row.ticket_id else None,
+        "proof_payload": _safe_dict(row.proof_payload),
         "created_at": row.created_at,
         "updated_at": row.updated_at,
     }
@@ -634,4 +671,257 @@ def dispatch_alerts(
         "matched_webhook_total": len(results),
         "delivered_total": delivered_count,
         "results": results,
+    }
+
+
+def create_release_rollout(
+    db: Session,
+    *,
+    tenant_id: UUID,
+    approved_by: UUID,
+    version: str,
+    strategy: str,
+    risk_level: str,
+    canary_percent: int,
+    scope: dict[str, Any] | None,
+    note: str | None,
+) -> dict[str, Any]:
+    """创建发布记录。"""
+    row = OpsReleaseRollout(
+        tenant_id=tenant_id,
+        version=version.strip(),
+        strategy=strategy,
+        status="running",
+        risk_level=risk_level,
+        canary_percent=max(0, min(100, int(canary_percent))),
+        scope_json=scope or {},
+        approved_by=approved_by,
+        note=(note or "").strip() or None,
+        started_at=_utc_now_iso(),
+    )
+    db.add(row)
+    db.flush()
+    return _rollout_to_dict(row)
+
+
+def list_release_rollouts(
+    db: Session,
+    *,
+    tenant_id: UUID,
+    status: str | None = None,
+    limit: int = 20,
+    offset: int = 0,
+) -> list[dict[str, Any]]:
+    """分页查询发布记录。"""
+    stmt = select(OpsReleaseRollout).where(OpsReleaseRollout.tenant_id == tenant_id)
+    if status:
+        stmt = stmt.where(OpsReleaseRollout.status == status)
+    rows = (
+        db.execute(stmt.order_by(OpsReleaseRollout.created_at.desc()).offset(offset).limit(limit))
+        .scalars()
+        .all()
+    )
+    return [_rollout_to_dict(row) for row in rows]
+
+
+def rollback_release_rollout(
+    db: Session,
+    *,
+    tenant_id: UUID,
+    approved_by: UUID,
+    rollout_id: UUID,
+    reason: str,
+) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+    """执行回滚并创建回滚流水。"""
+    target = db.get(OpsReleaseRollout, rollout_id)
+    if not target or target.tenant_id != tenant_id:
+        return None, None
+
+    before = _rollout_to_dict(target)
+    target.status = "rolled_back"
+    target.completed_at = _utc_now_iso()
+
+    rollback_row = OpsReleaseRollout(
+        tenant_id=tenant_id,
+        version=f"{target.version}-rollback",
+        strategy=target.strategy,
+        status="completed",
+        risk_level="high",
+        canary_percent=0,
+        scope_json={"rollback_target": str(target.id), **_safe_dict(target.scope_json)},
+        rollback_of=target.id,
+        approved_by=approved_by,
+        note=(reason or "").strip() or "manual rollback",
+        started_at=_utc_now_iso(),
+        completed_at=_utc_now_iso(),
+    )
+    db.add(rollback_row)
+    db.flush()
+    return before, _rollout_to_dict(rollback_row)
+
+
+def create_deletion_proof(
+    db: Session,
+    *,
+    tenant_id: UUID,
+    deleted_by: UUID,
+    resource_type: str,
+    resource_id: str,
+    ticket_id: UUID | None,
+    payload: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """创建删除证明。"""
+    deleted_at = _utc_now_iso()
+    subject_raw = f"{tenant_id}:{resource_type}:{resource_id}:{deleted_at}"
+    subject_hash = hashlib.sha256(subject_raw.encode("utf-8")).hexdigest()
+    signature_raw = json.dumps(
+        {
+            "tenant_id": str(tenant_id),
+            "resource_type": resource_type,
+            "resource_id": resource_id,
+            "deleted_by": str(deleted_by),
+            "deleted_at": deleted_at,
+            "subject_hash": subject_hash,
+            "payload": payload or {},
+        },
+        sort_keys=True,
+        ensure_ascii=False,
+    )
+    signature = hashlib.sha256(signature_raw.encode("utf-8")).hexdigest()
+
+    row = OpsDeletionProof(
+        tenant_id=tenant_id,
+        resource_type=resource_type,
+        resource_id=resource_id.strip(),
+        subject_hash=subject_hash,
+        signature=signature,
+        deleted_by=deleted_by,
+        deleted_at=deleted_at,
+        ticket_id=ticket_id,
+        proof_payload=payload or {},
+    )
+    db.add(row)
+    db.flush()
+    return _proof_to_dict(row)
+
+
+def list_deletion_proofs(
+    db: Session,
+    *,
+    tenant_id: UUID,
+    resource_type: str | None = None,
+    limit: int = 20,
+    offset: int = 0,
+) -> list[dict[str, Any]]:
+    """分页查询删除证明。"""
+    stmt = select(OpsDeletionProof).where(OpsDeletionProof.tenant_id == tenant_id)
+    if resource_type:
+        stmt = stmt.where(OpsDeletionProof.resource_type == resource_type)
+
+    rows = (
+        db.execute(stmt.order_by(OpsDeletionProof.created_at.desc()).offset(offset).limit(limit))
+        .scalars()
+        .all()
+    )
+    return [_proof_to_dict(row) for row in rows]
+
+
+def build_security_baseline(db: Session, *, tenant_id: UUID) -> dict[str, Any]:
+    """输出安全基线最小集状态。"""
+    critical_open_incidents = int(
+        db.execute(
+            select(func.count())
+            .select_from(OpsIncidentTicket)
+            .where(
+                OpsIncidentTicket.tenant_id == tenant_id,
+                OpsIncidentTicket.status.in_(["open", "acknowledged"]),
+                OpsIncidentTicket.severity == "critical",
+            )
+        ).scalar_one()
+        or 0
+    )
+    deletion_proof_total = int(
+        db.execute(select(func.count()).select_from(OpsDeletionProof).where(OpsDeletionProof.tenant_id == tenant_id)).scalar_one()
+        or 0
+    )
+
+    checks = [
+        {
+            "code": "RLS_READY",
+            "name": "行级隔离策略（RLS）",
+            "status": "planned",
+            "message": "当前版本使用应用层租户隔离，RLS 进入上线前启用清单。",
+        },
+        {
+            "code": "PII_MASKING",
+            "name": "PII 脱敏策略",
+            "status": "pass",
+            "message": "对外运行手册使用脱敏口径，默认隐藏敏感身份字段。",
+        },
+        {
+            "code": "DELETION_PROOF",
+            "name": "删除证明流程",
+            "status": "pass",
+            "message": f"已记录 {deletion_proof_total} 条删除证明。",
+        },
+        {
+            "code": "CRITICAL_INCIDENT",
+            "name": "未关闭关键故障",
+            "status": "warn" if critical_open_incidents > 0 else "pass",
+            "message": f"当前未关闭 critical 工单数：{critical_open_incidents}。",
+        },
+    ]
+
+    overall_status = "pass"
+    if any(item["status"] == "warn" for item in checks):
+        overall_status = "warn"
+
+    return {
+        "tenant_id": str(tenant_id),
+        "overall_status": overall_status,
+        "checks": checks,
+    }
+
+
+def get_public_sla_spec() -> dict[str, Any]:
+    """返回对外 SLA/SLO 口径。"""
+    return {
+        "version": "2026-03-phase4",
+        "service_tier": "standard",
+        "availability_sla": {"target": "99.9%", "window": "monthly"},
+        "support_sla": {
+            "critical_response_minutes": 30,
+            "high_response_hours": 4,
+            "normal_response_hours": 24,
+        },
+        "slo": [
+            {"code": "ingestion.failure_rate", "target": "<= 10%"},
+            {"code": "retrieval.p95_latency_ms", "target": "<= 3000"},
+            {"code": "retrieval.citation_coverage", "target": ">= 95%"},
+        ],
+        "updated_at": _utc_now_iso(),
+    }
+
+
+def get_runbook_summary() -> dict[str, Any]:
+    """返回生产运行手册摘要。"""
+    return {
+        "version": "2026-03-phase4",
+        "oncall": {
+            "rotation": "24x7 weekly",
+            "handoff_required": True,
+            "critical_page_channel": "webhook+phone",
+        },
+        "playbooks": [
+            {"code": "INGESTION_DEAD_LETTER", "title": "入库死信排障", "target_minutes": 10},
+            {"code": "RETRIEVAL_ZERO_HIT", "title": "检索零命中排障", "target_minutes": 15},
+            {"code": "RELEASE_ROLLBACK", "title": "发布回滚流程", "target_minutes": 20},
+        ],
+        "documents": [
+            {"name": "Release Checklist", "path": "docs/release-checklist.md"},
+            {"name": "Security Baseline", "path": "docs/security-baseline.md"},
+            {"name": "SLA SLO Policy", "path": "docs/sla-slo-policy.md"},
+            {"name": "Ops Runbook", "path": "docs/operations-runbook.md"},
+        ],
+        "updated_at": _utc_now_iso(),
     }

@@ -11,18 +11,26 @@ from tkp_api.models.agent import AgentRun
 from tkp_api.models.conversation import Conversation, Message
 from tkp_api.models.enums import IngestionJobStatus, MessageRole
 from tkp_api.models.knowledge import Document, IngestionJob, RetrievalLog
-from tkp_api.models.ops import OpsAlertWebhook, OpsIncidentTicket
+from tkp_api.models.ops import OpsAlertWebhook, OpsDeletionProof, OpsIncidentTicket, OpsReleaseRollout
 from tkp_api.models.tenant import User
 from tkp_api.models.workspace import Workspace
 from tkp_api.services.ops_center import (
     build_cost_leaderboard,
     build_incident_diagnosis,
     build_ops_overview,
+    build_security_baseline,
     build_tenant_health,
+    create_deletion_proof,
     create_incident_ticket,
+    create_release_rollout,
     dispatch_alerts,
+    get_public_sla_spec,
+    get_runbook_summary,
     list_alert_webhooks,
+    list_deletion_proofs,
     list_incident_tickets,
+    list_release_rollouts,
+    rollback_release_rollout,
     update_incident_ticket,
     upsert_alert_webhook,
 )
@@ -49,6 +57,8 @@ def _create_tables(engine):
     AgentRun.__table__.create(engine)
     OpsIncidentTicket.__table__.create(engine)
     OpsAlertWebhook.__table__.create(engine)
+    OpsReleaseRollout.__table__.create(engine)
+    OpsDeletionProof.__table__.create(engine)
 
 
 def test_ops_phase3_diagnosis_ticket_and_webhook_flow():
@@ -245,3 +255,65 @@ def test_ops_phase3_cost_leaderboard_should_rank_by_estimated_cost():
 
     assert len(ranked) == 2
     assert ranked[0]["estimated_total_cost"] >= ranked[1]["estimated_total_cost"]
+
+
+def test_ops_phase4_release_and_compliance_flow():
+    engine = create_engine("sqlite+pysqlite:///:memory:", future=True)
+    _create_tables(engine)
+    factory = sessionmaker(bind=engine, autoflush=False, autocommit=False, class_=Session)
+
+    tenant_id = uuid4()
+    user_id = uuid4()
+
+    with factory() as db:
+        release = create_release_rollout(
+            db,
+            tenant_id=tenant_id,
+            approved_by=user_id,
+            version="v1.2.3",
+            strategy="canary",
+            risk_level="medium",
+            canary_percent=10,
+            scope={"service": "api"},
+            note="phase4 release",
+        )
+        assert release["status"] == "running"
+
+        release_list = list_release_rollouts(db, tenant_id=tenant_id, limit=20, offset=0)
+        assert len(release_list) == 1
+
+        rollback_before, rollback = rollback_release_rollout(
+            db,
+            tenant_id=tenant_id,
+            approved_by=user_id,
+            rollout_id=UUID(release["rollout_id"]),
+            reason="rollback test",
+        )
+        assert rollback_before is not None
+        assert rollback is not None
+        assert rollback["rollback_of"] == release["rollout_id"]
+
+        proof = create_deletion_proof(
+            db,
+            tenant_id=tenant_id,
+            deleted_by=user_id,
+            resource_type="document",
+            resource_id=str(uuid4()),
+            ticket_id=None,
+            payload={"reason": "gdpr"},
+        )
+        assert proof["resource_type"] == "document"
+        assert proof["subject_hash"]
+        assert proof["signature"]
+
+        proofs = list_deletion_proofs(db, tenant_id=tenant_id, limit=20, offset=0)
+        assert len(proofs) == 1
+
+        baseline = build_security_baseline(db, tenant_id=tenant_id)
+        assert baseline["overall_status"] in {"pass", "warn"}
+        assert isinstance(baseline["checks"], list) and len(baseline["checks"]) >= 3
+
+        sla = get_public_sla_spec()
+        assert "availability_sla" in sla
+        runbook = get_runbook_summary()
+        assert isinstance(runbook.get("documents"), list) and len(runbook["documents"]) >= 1

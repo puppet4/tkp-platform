@@ -2409,6 +2409,161 @@ class WorkflowRunner:
         assert dispatch_result["dry_run"] is True
         assert isinstance(dispatch_result["results"], list)
 
+        release_rollout = self.success(
+            "POST",
+            "/api/ops/release/rollouts",
+            actual_path="/api/ops/release/rollouts",
+            token=self.ctx.owner_token,
+            json={
+                "version": "v1.2.3",
+                "strategy": "canary",
+                "risk_level": "medium",
+                "canary_percent": 10,
+                "scope": {"service": "api"},
+                "note": "phase4 rollout",
+            },
+        )
+        _require_keys(
+            release_rollout,
+            [
+                "rollout_id",
+                "tenant_id",
+                "version",
+                "strategy",
+                "status",
+                "risk_level",
+                "canary_percent",
+                "scope",
+                "rollback_of",
+                "approved_by",
+                "note",
+                "started_at",
+                "completed_at",
+                "created_at",
+                "updated_at",
+            ],
+            "ops.release.rollout.create",
+        )
+        _assert_uuid(release_rollout["rollout_id"], "ops.release.rollout_id")
+        assert release_rollout["status"] == "running"
+
+        release_rollouts = self.success(
+            "GET",
+            "/api/ops/release/rollouts",
+            actual_path="/api/ops/release/rollouts",
+            token=self.ctx.owner_token,
+        )
+        assert isinstance(release_rollouts, list) and len(release_rollouts) >= 1
+        assert any(item["rollout_id"] == release_rollout["rollout_id"] for item in release_rollouts)
+
+        rollback_rollout = self.success(
+            "POST",
+            "/api/ops/release/rollouts/{rollout_id}/rollback",
+            actual_path=f"/api/ops/release/rollouts/{release_rollout['rollout_id']}/rollback",
+            token=self.ctx.owner_token,
+            json={"reason": "rollback in test"},
+        )
+        _require_keys(
+            rollback_rollout,
+            [
+                "rollout_id",
+                "tenant_id",
+                "version",
+                "strategy",
+                "status",
+                "risk_level",
+                "canary_percent",
+                "scope",
+                "rollback_of",
+                "approved_by",
+                "note",
+                "started_at",
+                "completed_at",
+                "created_at",
+                "updated_at",
+            ],
+            "ops.release.rollout.rollback",
+        )
+        assert rollback_rollout["rollback_of"] == release_rollout["rollout_id"]
+
+        security_baseline = self.success(
+            "GET",
+            "/api/ops/compliance/security-baseline",
+            actual_path="/api/ops/compliance/security-baseline",
+            token=self.ctx.owner_token,
+        )
+        _require_keys(
+            security_baseline,
+            ["tenant_id", "overall_status", "checks"],
+            "ops.compliance.security_baseline",
+        )
+        assert security_baseline["overall_status"] in {"pass", "warn"}
+        assert isinstance(security_baseline["checks"], list) and len(security_baseline["checks"]) >= 3
+
+        deletion_proof = self.success(
+            "POST",
+            "/api/ops/compliance/deletion-proofs",
+            actual_path="/api/ops/compliance/deletion-proofs",
+            token=self.ctx.owner_token,
+            json={
+                "resource_type": "document",
+                "resource_id": self.ctx.document_id,
+                "ticket_id": incident_ticket["ticket_id"],
+                "payload": {"reason": "compliance cleanup"},
+            },
+        )
+        _require_keys(
+            deletion_proof,
+            [
+                "proof_id",
+                "tenant_id",
+                "resource_type",
+                "resource_id",
+                "subject_hash",
+                "signature",
+                "deleted_by",
+                "deleted_at",
+                "ticket_id",
+                "proof_payload",
+                "created_at",
+                "updated_at",
+            ],
+            "ops.compliance.deletion_proof.create",
+        )
+        _assert_uuid(deletion_proof["proof_id"], "ops.compliance.proof_id")
+        assert deletion_proof["resource_type"] == "document"
+
+        deletion_proofs = self.success(
+            "GET",
+            "/api/ops/compliance/deletion-proofs",
+            actual_path="/api/ops/compliance/deletion-proofs",
+            token=self.ctx.owner_token,
+        )
+        assert isinstance(deletion_proofs, list) and len(deletion_proofs) >= 1
+        assert any(item["proof_id"] == deletion_proof["proof_id"] for item in deletion_proofs)
+
+        public_sla = self.success(
+            "GET",
+            "/api/ops/sla/public",
+            actual_path="/api/ops/sla/public",
+            token=self.ctx.owner_token,
+        )
+        _require_keys(
+            public_sla,
+            ["version", "service_tier", "availability_sla", "support_sla", "slo", "updated_at"],
+            "ops.sla.public",
+        )
+        assert isinstance(public_sla["slo"], list) and len(public_sla["slo"]) >= 1
+
+        runbook = self.success(
+            "GET",
+            "/api/ops/runbook",
+            actual_path="/api/ops/runbook",
+            token=self.ctx.owner_token,
+        )
+        _require_keys(runbook, ["version", "oncall", "playbooks", "documents", "updated_at"], "ops.runbook")
+        assert isinstance(runbook["documents"], list) and len(runbook["documents"]) >= 1
+
         retrieval_eval = self.success(
             "POST",
             "/api/ops/retrieval/evaluate",

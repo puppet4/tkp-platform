@@ -1,5 +1,6 @@
 """运行态运维接口。"""
 
+import json
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
@@ -11,14 +12,18 @@ from tkp_api.models.enums import TenantRole
 from tkp_api.schemas.ops import (
     AlertDispatchRequest,
     AlertWebhookUpsertRequest,
+    DeletionProofCreateRequest,
     IncidentTicketCreateRequest,
     IncidentTicketUpdateRequest,
     QuotaPolicyUpsertRequest,
+    ReleaseRollbackRequest,
+    ReleaseRolloutCreateRequest,
     RetrievalEvalRequest,
     RetrievalEvalRunCreateRequest,
 )
 from tkp_api.schemas.common import ErrorResponse, SuccessResponse
 from tkp_api.schemas.responses import (
+    DeletionProofData,
     CostSummaryData,
     CostLeaderboardItemData,
     AlertDispatchResultData,
@@ -29,16 +34,20 @@ from tkp_api.schemas.responses import (
     IngestionOpsMetricsData,
     MVPSLOSummaryData,
     OpsOverviewData,
+    PublicSLASLOData,
     QuotaAlertData,
     QuotaPolicyData,
+    ReleaseRolloutData,
     RetrievalEvalCompareData,
     RetrievalEvalRunData,
     RetrievalEvalRunDetailData,
     RetrievalEvalSummaryData,
     RetrievalQualityMetricsData,
+    RunbookSummaryData,
+    SecurityBaselineData,
     TenantHealthItemData,
 )
-from tkp_api.services import filter_readable_kb_ids
+from tkp_api.services import audit_log, filter_readable_kb_ids
 from tkp_api.services.ops_metrics import (
     build_ingestion_alerts,
     build_ingestion_metrics,
@@ -52,11 +61,19 @@ from tkp_api.services.ops_center import (
     build_cost_leaderboard,
     build_incident_diagnosis,
     build_ops_overview,
+    build_security_baseline,
     build_tenant_health,
+    create_deletion_proof,
     create_incident_ticket,
+    create_release_rollout,
     dispatch_alerts,
+    get_public_sla_spec,
+    get_runbook_summary,
     list_alert_webhooks,
+    list_deletion_proofs,
     list_incident_tickets,
+    list_release_rollouts,
+    rollback_release_rollout,
     update_incident_ticket,
     upsert_alert_webhook,
 )
@@ -69,6 +86,11 @@ from tkp_api.services.retrieval_eval import (
 from tkp_api.utils.response import success
 
 router = APIRouter(prefix="/ops", tags=["ops"])
+
+
+def _json_safe(value: dict | list | str | int | float | bool | None):
+    """将响应对象转换为可落库 JSON 的结构。"""
+    return json.loads(json.dumps(value, default=str, ensure_ascii=False))
 
 
 @router.get(
@@ -671,3 +693,228 @@ def post_alert_dispatch(
     )
     db.commit()
     return success(request, data)
+
+
+@router.post(
+    "/release/rollouts",
+    summary="创建发布记录",
+    description="创建一条可审计的灰度发布记录。",
+    status_code=status.HTTP_200_OK,
+    response_model=SuccessResponse[ReleaseRolloutData],
+    responses={401: {"model": ErrorResponse}, 403: {"model": ErrorResponse}, 422: {"model": ErrorResponse}},
+)
+def post_release_rollout(
+    payload: ReleaseRolloutCreateRequest,
+    request: Request,
+    ctx=Depends(require_tenant_roles(TenantRole.OWNER, TenantRole.ADMIN)),
+    db: Session = Depends(get_db),
+):
+    """创建发布记录。"""
+    data = create_release_rollout(
+        db,
+        tenant_id=ctx.tenant_id,
+        approved_by=ctx.user_id,
+        version=payload.version,
+        strategy=payload.strategy,
+        risk_level=payload.risk_level,
+        canary_percent=payload.canary_percent,
+        scope=payload.scope,
+        note=payload.note,
+    )
+    audit_log(
+        db,
+        request=request,
+        tenant_id=ctx.tenant_id,
+        actor_user_id=ctx.user_id,
+        action="ops.release.create",
+        resource_type="ops_release_rollout",
+        resource_id=data["rollout_id"],
+        after_json=_json_safe(data),
+    )
+    db.commit()
+    return success(request, data)
+
+
+@router.get(
+    "/release/rollouts",
+    summary="查询发布记录列表",
+    description="分页查询租户发布/回滚记录。",
+    status_code=status.HTTP_200_OK,
+    response_model=SuccessResponse[list[ReleaseRolloutData]],
+    responses={401: {"model": ErrorResponse}, 403: {"model": ErrorResponse}},
+)
+def get_release_rollouts(
+    request: Request,
+    status_filter: str | None = Query(default=None, alias="status", description="发布状态筛选。"),
+    limit: int = Query(default=20, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
+    ctx=Depends(require_tenant_roles(TenantRole.OWNER, TenantRole.ADMIN)),
+    db: Session = Depends(get_db),
+):
+    """查询发布记录列表。"""
+    return success(
+        request,
+        list_release_rollouts(
+            db,
+            tenant_id=ctx.tenant_id,
+            status=status_filter,
+            limit=limit,
+            offset=offset,
+        ),
+    )
+
+
+@router.post(
+    "/release/rollouts/{rollout_id}/rollback",
+    summary="执行发布回滚",
+    description="将目标发布标记为回滚，并创建回滚流水。",
+    status_code=status.HTTP_200_OK,
+    response_model=SuccessResponse[ReleaseRolloutData],
+    responses={401: {"model": ErrorResponse}, 403: {"model": ErrorResponse}, 404: {"model": ErrorResponse}},
+)
+def post_release_rollback(
+    rollout_id: UUID,
+    payload: ReleaseRollbackRequest,
+    request: Request,
+    ctx=Depends(require_tenant_roles(TenantRole.OWNER, TenantRole.ADMIN)),
+    db: Session = Depends(get_db),
+):
+    """执行发布回滚。"""
+    before, data = rollback_release_rollout(
+        db,
+        tenant_id=ctx.tenant_id,
+        approved_by=ctx.user_id,
+        rollout_id=rollout_id,
+        reason=payload.reason,
+    )
+    if before is None or data is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="release rollout not found")
+    audit_log(
+        db,
+        request=request,
+        tenant_id=ctx.tenant_id,
+        actor_user_id=ctx.user_id,
+        action="ops.release.rollback",
+        resource_type="ops_release_rollout",
+        resource_id=str(rollout_id),
+        before_json=_json_safe(before),
+        after_json=_json_safe(data),
+    )
+    db.commit()
+    return success(request, data)
+
+
+@router.get(
+    "/compliance/security-baseline",
+    summary="查询安全基线状态",
+    description="输出 RLS/脱敏/删除证明最小合规状态。",
+    status_code=status.HTTP_200_OK,
+    response_model=SuccessResponse[SecurityBaselineData],
+    responses={401: {"model": ErrorResponse}, 403: {"model": ErrorResponse}},
+)
+def get_security_baseline(
+    request: Request,
+    ctx=Depends(require_tenant_roles(TenantRole.OWNER, TenantRole.ADMIN)),
+    db: Session = Depends(get_db),
+):
+    """查询安全基线状态。"""
+    return success(request, build_security_baseline(db, tenant_id=ctx.tenant_id))
+
+
+@router.post(
+    "/compliance/deletion-proofs",
+    summary="创建删除证明",
+    description="对删除动作生成可追溯证明记录。",
+    status_code=status.HTTP_200_OK,
+    response_model=SuccessResponse[DeletionProofData],
+    responses={401: {"model": ErrorResponse}, 403: {"model": ErrorResponse}, 422: {"model": ErrorResponse}},
+)
+def post_deletion_proof(
+    payload: DeletionProofCreateRequest,
+    request: Request,
+    ctx=Depends(require_tenant_roles(TenantRole.OWNER, TenantRole.ADMIN)),
+    db: Session = Depends(get_db),
+):
+    """创建删除证明。"""
+    data = create_deletion_proof(
+        db,
+        tenant_id=ctx.tenant_id,
+        deleted_by=ctx.user_id,
+        resource_type=payload.resource_type,
+        resource_id=payload.resource_id,
+        ticket_id=payload.ticket_id,
+        payload=payload.payload,
+    )
+    audit_log(
+        db,
+        request=request,
+        tenant_id=ctx.tenant_id,
+        actor_user_id=ctx.user_id,
+        action="ops.compliance.deletion_proof.create",
+        resource_type="ops_deletion_proof",
+        resource_id=data["proof_id"],
+        after_json=_json_safe(data),
+    )
+    db.commit()
+    return success(request, data)
+
+
+@router.get(
+    "/compliance/deletion-proofs",
+    summary="查询删除证明列表",
+    description="按租户查询删除证明记录。",
+    status_code=status.HTTP_200_OK,
+    response_model=SuccessResponse[list[DeletionProofData]],
+    responses={401: {"model": ErrorResponse}, 403: {"model": ErrorResponse}},
+)
+def get_deletion_proofs(
+    request: Request,
+    resource_type: str | None = Query(default=None, description="资源类型筛选。"),
+    limit: int = Query(default=20, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
+    ctx=Depends(require_tenant_roles(TenantRole.OWNER, TenantRole.ADMIN)),
+    db: Session = Depends(get_db),
+):
+    """查询删除证明列表。"""
+    return success(
+        request,
+        list_deletion_proofs(
+            db,
+            tenant_id=ctx.tenant_id,
+            resource_type=resource_type,
+            limit=limit,
+            offset=offset,
+        ),
+    )
+
+
+@router.get(
+    "/sla/public",
+    summary="查询对外 SLA/SLO 口径",
+    description="返回对外承诺 SLA/SLO 摘要。",
+    status_code=status.HTTP_200_OK,
+    response_model=SuccessResponse[PublicSLASLOData],
+    responses={401: {"model": ErrorResponse}, 403: {"model": ErrorResponse}},
+)
+def get_public_sla(
+    request: Request,
+    _ctx=Depends(require_tenant_roles(TenantRole.OWNER, TenantRole.ADMIN)),
+):
+    """查询对外 SLA/SLO 口径。"""
+    return success(request, get_public_sla_spec())
+
+
+@router.get(
+    "/runbook",
+    summary="查询运行手册摘要",
+    description="返回值班机制、关键排障流程与文档索引。",
+    status_code=status.HTTP_200_OK,
+    response_model=SuccessResponse[RunbookSummaryData],
+    responses={401: {"model": ErrorResponse}, 403: {"model": ErrorResponse}},
+)
+def get_runbook(
+    request: Request,
+    _ctx=Depends(require_tenant_roles(TenantRole.OWNER, TenantRole.ADMIN)),
+):
+    """查询运行手册摘要。"""
+    return success(request, get_runbook_summary())

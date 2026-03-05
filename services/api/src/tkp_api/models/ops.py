@@ -46,3 +46,38 @@ class OpsAlertWebhook(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     last_status_code: Mapped[int | None] = mapped_column(Integer)
     last_error: Mapped[str | None] = mapped_column(Text)
     last_notified_at: Mapped[str | None] = mapped_column(String(64))
+
+
+class OpsReleaseRollout(Base, UUIDPrimaryKeyMixin, TimestampMixin):
+    """发布/回滚流水。"""
+
+    __tablename__ = "ops_release_rollouts"
+
+    tenant_id: Mapped[UUID] = mapped_column(nullable=False, index=True)
+    version: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    strategy: Mapped[str] = mapped_column(String(32), nullable=False, default="canary")
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="planned")
+    risk_level: Mapped[str] = mapped_column(String(16), nullable=False, default="medium")
+    canary_percent: Mapped[int] = mapped_column(Integer, nullable=False, default=10)
+    scope_json: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    rollback_of: Mapped[UUID | None] = mapped_column(index=True)
+    approved_by: Mapped[UUID | None] = mapped_column()
+    note: Mapped[str | None] = mapped_column(Text)
+    started_at: Mapped[str | None] = mapped_column(String(64))
+    completed_at: Mapped[str | None] = mapped_column(String(64))
+
+
+class OpsDeletionProof(Base, UUIDPrimaryKeyMixin, TimestampMixin):
+    """删除证明记录。"""
+
+    __tablename__ = "ops_deletion_proofs"
+
+    tenant_id: Mapped[UUID] = mapped_column(nullable=False, index=True)
+    resource_type: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    resource_id: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
+    subject_hash: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
+    signature: Mapped[str] = mapped_column(String(128), nullable=False)
+    deleted_by: Mapped[UUID | None] = mapped_column()
+    deleted_at: Mapped[str] = mapped_column(String(64), nullable=False)
+    ticket_id: Mapped[UUID | None] = mapped_column(index=True)
+    proof_payload: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)

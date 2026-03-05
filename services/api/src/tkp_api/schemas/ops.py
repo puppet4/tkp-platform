@@ -79,3 +79,29 @@ class AlertDispatchRequest(BaseModel):
     message: str = Field(min_length=1, description="告警内容。")
     attributes: dict = Field(default_factory=dict, description="扩展属性。")
     dry_run: bool = Field(default=True, description="是否仅演练不实际发送。")
+
+
+class ReleaseRolloutCreateRequest(BaseModel):
+    """创建发布记录请求。"""
+
+    version: str = Field(min_length=1, max_length=64, description="发布版本标识。")
+    strategy: str = Field(default="canary", description="发布策略（canary/blue_green/rolling）。")
+    risk_level: str = Field(default="medium", description="变更风险等级（low/medium/high）。")
+    canary_percent: int = Field(default=10, ge=0, le=100, description="灰度比例。")
+    scope: dict = Field(default_factory=dict, description="发布范围定义。")
+    note: str | None = Field(default=None, max_length=4000, description="发布备注。")
+
+
+class ReleaseRollbackRequest(BaseModel):
+    """回滚请求。"""
+
+    reason: str = Field(min_length=1, max_length=4000, description="回滚原因。")
+
+
+class DeletionProofCreateRequest(BaseModel):
+    """创建删除证明请求。"""
+
+    resource_type: str = Field(description="删除资源类型（document/knowledge_base/workspace/tenant/user）。")
+    resource_id: str = Field(min_length=1, max_length=128, description="删除资源标识。")
+    ticket_id: UUID | None = Field(default=None, description="关联工单 ID。")
+    payload: dict = Field(default_factory=dict, description="删除证明扩展载荷。")
