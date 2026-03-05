@@ -11,6 +11,7 @@ from tkp_api.schemas.common import ErrorResponse, SuccessResponse
 from tkp_api.schemas.responses import RetrievalQueryData
 from tkp_api.schemas.retrieval import RetrievalQueryRequest
 from tkp_api.services import PermissionAction, filter_readable_kb_ids, query_chunks, require_tenant_action
+from tkp_api.services.quota import QuotaMetric, enforce_quota, resolve_workspace_scope_for_kbs
 
 router = APIRouter(prefix="/retrieval", tags=["retrieval"])
 
@@ -49,6 +50,19 @@ def retrieval_query(
     )
     if payload.kb_ids and len(readable_kb_ids) != len(set(payload.kb_ids)):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="forbidden kb scope")
+    workspace_id = resolve_workspace_scope_for_kbs(
+        db,
+        tenant_id=ctx.tenant_id,
+        kb_ids=readable_kb_ids,
+    )
+    enforce_quota(
+        db,
+        tenant_id=ctx.tenant_id,
+        metric_code=QuotaMetric.RETRIEVAL_REQUESTS.value,
+        projected_increment=1,
+        workspace_id=workspace_id,
+        actor_user_id=ctx.user_id,
+    )
 
     rag_data = query_chunks(
         db,

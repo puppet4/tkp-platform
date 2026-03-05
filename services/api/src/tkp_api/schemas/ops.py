@@ -27,3 +27,14 @@ class RetrievalEvalRunCreateRequest(RetrievalEvalRequest):
     """创建检索评测运行请求体。"""
 
     name: str = Field(default="adhoc", min_length=1, max_length=128, description="评测任务名称。")
+
+
+class QuotaPolicyUpsertRequest(BaseModel):
+    """配额策略创建/更新请求体。"""
+
+    metric_code: str = Field(min_length=1, max_length=64, description="配额指标编码。")
+    scope_type: str = Field(default="tenant", description="配额范围类型（tenant/workspace）。")
+    scope_id: UUID | None = Field(default=None, description="范围 ID。scope_type=workspace 时必填。")
+    limit_value: int = Field(ge=0, le=10_000_000, description="窗口内允许上限。")
+    window_minutes: int = Field(default=1440, ge=1, le=10080, description="统计窗口分钟数。")
+    enabled: bool = Field(default=True, description="是否启用策略。")

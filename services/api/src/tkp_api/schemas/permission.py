@@ -36,3 +36,9 @@ class PermissionTemplatePublishRequest(BaseModel):
         default=True,
         description="是否覆盖当前租户角色已有权限配置；false 表示仅填充未配置角色。",
     )
+
+
+class PolicySnapshotCreateRequest(BaseModel):
+    """策略快照创建请求。"""
+
+    note: str | None = Field(default=None, max_length=256, description="可选快照备注。")

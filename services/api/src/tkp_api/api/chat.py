@@ -17,6 +17,7 @@ from tkp_api.services import (
     generate_chat_answer,
     require_tenant_action,
 )
+from tkp_api.services.quota import QuotaMetric, enforce_quota, resolve_workspace_scope_for_kbs
 
 router = APIRouter(prefix="/chat", tags=["chat"])
 
@@ -59,6 +60,20 @@ def chat_completions(
     )
     if payload.kb_ids and len(readable_kb_ids) != len(set(payload.kb_ids)):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="forbidden kb scope")
+    workspace_id = resolve_workspace_scope_for_kbs(
+        db,
+        tenant_id=ctx.tenant_id,
+        kb_ids=readable_kb_ids,
+    )
+    estimated_tokens = max(1, min(len(payload.messages[-1].content) * 2, 4096))
+    enforce_quota(
+        db,
+        tenant_id=ctx.tenant_id,
+        metric_code=QuotaMetric.CHAT_TOKENS.value,
+        projected_increment=estimated_tokens,
+        workspace_id=workspace_id,
+        actor_user_id=ctx.user_id,
+    )
 
     conversation: Conversation | None
     if payload.conversation_id:

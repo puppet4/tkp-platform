@@ -122,6 +122,32 @@ class PermissionTemplatePublishData(BaseSchema):
     role_permissions: list[TenantRolePermissionData] = Field(description="发布后的租户角色权限映射。")
 
 
+class PermissionPolicySnapshotData(BaseSchema):
+    """权限策略快照结构。"""
+
+    snapshot_id: UUID = Field(description="策略快照 ID。")
+    template_version: str = Field(description="快照生成时使用的权限模板版本。")
+    role_permissions: list[TenantRolePermissionData] = Field(description="快照角色权限映射。")
+    note: str | None = Field(default=None, description="快照备注。")
+    created_at: datetime = Field(description="快照创建时间。")
+
+
+class PermissionPolicyCenterData(BaseSchema):
+    """策略中心统一视图结构。"""
+
+    template_version: str = Field(description="权限模板版本。")
+    catalog: list[str] = Field(description="权限目录。")
+    role_permissions: list[TenantRolePermissionData] = Field(description="租户角色权限矩阵。")
+    ui_manifest: PermissionUIManifestData = Field(description="当前角色前端权限映射。")
+
+
+class PermissionPolicyRollbackData(BaseSchema):
+    """策略回滚结果结构。"""
+
+    snapshot_id: UUID = Field(description="回滚使用的快照 ID。")
+    role_permissions: list[TenantRolePermissionData] = Field(description="回滚后角色权限矩阵。")
+
+
 class RoleUserBindingData(BaseSchema):
     """角色用户绑定结构。"""
 
@@ -261,6 +287,51 @@ class IngestionOpsAlertsData(BaseSchema):
     tenant_id: UUID = Field(description="租户 ID。")
     overall_status: str = Field(description="整体状态（ok/warn/critical）。")
     rules: list[IngestionOpsAlertRuleData] = Field(description="规则级告警状态。")
+
+
+class QuotaPolicyData(BaseSchema):
+    """配额策略结构。"""
+
+    id: UUID = Field(description="配额策略 ID。")
+    tenant_id: UUID = Field(description="租户 ID。")
+    scope_type: str = Field(description="配额范围类型（tenant/workspace）。")
+    scope_id: UUID = Field(description="配额范围 ID。")
+    metric_code: str = Field(description="配额指标编码。")
+    limit_value: int = Field(description="窗口内允许上限。")
+    window_minutes: int = Field(description="统计窗口分钟数。")
+    enabled: bool = Field(description="策略是否启用。")
+    created_at: datetime = Field(description="创建时间。")
+    updated_at: datetime = Field(description="更新时间。")
+
+
+class QuotaAlertData(BaseSchema):
+    """配额超限告警结构。"""
+
+    alert_id: UUID = Field(description="告警事件 ID。")
+    metric_code: str = Field(description="触发超限的指标编码。")
+    scope_type: str = Field(description="配额范围类型。")
+    scope_id: UUID = Field(description="配额范围 ID。")
+    limit_value: int = Field(description="策略上限。")
+    used_value: int = Field(description="触发前窗口内已使用值。")
+    projected_value: int = Field(description="触发时预测使用值。")
+    window_minutes: int = Field(description="统计窗口分钟数。")
+    created_at: datetime = Field(description="告警时间。")
+
+
+class CostSummaryData(BaseSchema):
+    """租户成本汇总结构。"""
+
+    tenant_id: UUID = Field(description="租户 ID。")
+    window_hours: int = Field(description="统计窗口小时数。")
+    retrieval_request_total: int = Field(description="窗口内检索请求总数。")
+    chat_completion_total: int = Field(description="窗口内问答完成次数。")
+    prompt_tokens_total: int = Field(description="窗口内 prompt token 总数。")
+    completion_tokens_total: int = Field(description="窗口内 completion token 总数。")
+    total_tokens: int = Field(description="窗口内总 token 数。")
+    agent_run_total: int = Field(description="窗口内 agent run 总数。")
+    agent_cost_total: float = Field(description="窗口内 agent 侧累计成本。")
+    chat_estimated_cost: float = Field(description="基于 token 的问答估算成本。")
+    estimated_total_cost: float = Field(description="窗口内估算总成本。")
 
 
 class RetrievalQualityMetricsData(BaseSchema):

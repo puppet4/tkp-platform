@@ -182,6 +182,10 @@ bash scripts/test_data_plane_e2e.sh
 - `GET /api/ops/retrieval/evaluate/runs`
 - `GET /api/ops/retrieval/evaluate/runs/{run_id}`
 - `GET /api/ops/retrieval/evaluate/compare`
+- `PUT /api/ops/quotas`
+- `GET /api/ops/quotas`
+- `GET /api/ops/quotas/alerts`
+- `GET /api/ops/cost/summary`
 
 返回维度：
 - 入库任务分状态计数（queued/processing/retrying/completed/dead_letter）

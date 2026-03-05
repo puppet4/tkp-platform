@@ -1,12 +1,15 @@
 """统一权限动作框架（数据库驱动）。"""
 
+from datetime import datetime, timedelta, timezone
 from enum import StrEnum
+from typing import Any
 from uuid import UUID
 
 from fastapi import HTTPException, status
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
+from tkp_api.models.audit import AuditLog
 from tkp_api.models.enums import KBRole, TenantRole, WorkspaceRole
 from tkp_api.models.permission import TenantRolePermission
 
@@ -413,3 +416,114 @@ def can_manage_kb_members(*, tenant_role: str, workspace_role: str | None, kb_ro
     if workspace_role in {WorkspaceRole.OWNER, WorkspaceRole.EDITOR}:
         return True
     return kb_role == KBRole.OWNER
+
+
+def policy_center_view(db: Session, *, tenant_id: UUID, tenant_role: str) -> dict[str, Any]:
+    """返回策略中心统一视图。"""
+    matrix = list_tenant_role_permission_matrix(db, tenant_id=tenant_id)
+    return {
+        "template_version": DEFAULT_PERMISSION_TEMPLATE_VERSION,
+        "catalog": permission_catalog(),
+        "role_permissions": [
+            {"role": role, "permission_codes": codes}
+            for role, codes in matrix.items()
+        ],
+        "ui_manifest": permission_ui_manifest(db, tenant_id=tenant_id, tenant_role=tenant_role),
+    }
+
+
+def _normalize_snapshot_role_permissions(value: object) -> dict[str, list[str]]:
+    if not isinstance(value, dict):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="snapshot not found")
+    result: dict[str, list[str]] = {}
+    for role in _TEMPLATE_ROLES:
+        raw_codes = value.get(role, [])
+        if isinstance(raw_codes, list):
+            result[role] = _validate_catalog_permission_codes([str(item) for item in raw_codes])
+        else:
+            result[role] = []
+    return result
+
+
+def list_policy_snapshots(
+    db: Session,
+    *,
+    tenant_id: UUID,
+    limit: int = 20,
+    window_days: int = 90,
+) -> list[dict[str, Any]]:
+    """查询策略快照列表。"""
+    since = datetime.now(timezone.utc) - timedelta(days=max(1, window_days))
+    rows = (
+        db.execute(
+            select(AuditLog)
+            .where(AuditLog.tenant_id == tenant_id)
+            .where(AuditLog.action == "permission.policy.snapshot.create")
+            .where(AuditLog.created_at >= since)
+            .order_by(AuditLog.created_at.desc())
+            .limit(max(1, min(limit, 100)))
+        )
+        .scalars()
+        .all()
+    )
+    result: list[dict[str, Any]] = []
+    for row in rows:
+        payload = row.after_json if isinstance(row.after_json, dict) else {}
+        role_permissions = _normalize_snapshot_role_permissions(payload.get("role_permissions", {}))
+        result.append(
+            {
+                "snapshot_id": UUID(str(payload.get("snapshot_id") or row.resource_id)),
+                "template_version": str(payload.get("template_version") or DEFAULT_PERMISSION_TEMPLATE_VERSION),
+                "role_permissions": [
+                    {"role": role, "permission_codes": codes}
+                    for role, codes in role_permissions.items()
+                ],
+                "note": payload.get("note"),
+                "created_at": row.created_at,
+            }
+        )
+    return result
+
+
+def get_policy_snapshot(db: Session, *, tenant_id: UUID, snapshot_id: UUID) -> dict[str, Any]:
+    """按快照 ID 读取策略快照。"""
+    row = (
+        db.execute(
+            select(AuditLog)
+            .where(AuditLog.tenant_id == tenant_id)
+            .where(AuditLog.action == "permission.policy.snapshot.create")
+            .where(AuditLog.resource_id == str(snapshot_id))
+            .limit(1)
+        )
+        .scalar_one_or_none()
+    )
+    if row is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="snapshot not found")
+    payload = row.after_json if isinstance(row.after_json, dict) else {}
+    role_permissions = _normalize_snapshot_role_permissions(payload.get("role_permissions", {}))
+    return {
+        "snapshot_id": UUID(str(payload.get("snapshot_id") or row.resource_id)),
+        "template_version": str(payload.get("template_version") or DEFAULT_PERMISSION_TEMPLATE_VERSION),
+        "role_permissions": role_permissions,
+        "note": payload.get("note"),
+        "created_at": row.created_at,
+    }
+
+
+def apply_policy_snapshot(
+    db: Session,
+    *,
+    tenant_id: UUID,
+    snapshot: dict[str, Any],
+) -> dict[str, list[str]]:
+    """应用策略快照并返回回滚后的角色权限。"""
+    role_permissions = _normalize_snapshot_role_permissions(snapshot.get("role_permissions", {}))
+    result: dict[str, list[str]] = {}
+    for role in _TEMPLATE_ROLES:
+        result[role] = set_tenant_role_actions(
+            db,
+            tenant_id=tenant_id,
+            role=role,
+            permission_codes=role_permissions.get(role, []),
+        )
+    return result

@@ -8,12 +8,15 @@ from sqlalchemy.orm import Session
 from tkp_api.dependencies import require_tenant_roles
 from tkp_api.db.session import get_db
 from tkp_api.models.enums import TenantRole
-from tkp_api.schemas.ops import RetrievalEvalRequest, RetrievalEvalRunCreateRequest
+from tkp_api.schemas.ops import QuotaPolicyUpsertRequest, RetrievalEvalRequest, RetrievalEvalRunCreateRequest
 from tkp_api.schemas.common import ErrorResponse, SuccessResponse
 from tkp_api.schemas.responses import (
+    CostSummaryData,
     IngestionOpsAlertsData,
     IngestionOpsMetricsData,
     MVPSLOSummaryData,
+    QuotaAlertData,
+    QuotaPolicyData,
     RetrievalEvalCompareData,
     RetrievalEvalRunData,
     RetrievalEvalRunDetailData,
@@ -28,6 +31,8 @@ from tkp_api.services.ops_metrics import (
     build_retrieval_eval_summary,
     build_retrieval_quality_metrics,
 )
+from tkp_api.services.cost import build_tenant_cost_summary
+from tkp_api.services.quota import list_quota_alerts, list_quota_policies, upsert_quota_policy
 from tkp_api.services.retrieval_eval import (
     compare_retrieval_eval_runs,
     create_retrieval_eval_run,
@@ -293,3 +298,98 @@ def compare_retrieval_eval(
         current_run_id=current_run_id,
     )
     return success(request, data)
+
+
+@router.put(
+    "/quotas",
+    summary="创建或更新配额策略",
+    description="配置租户/工作空间配额策略，超限时返回 QUOTA_EXCEEDED。",
+    status_code=status.HTTP_200_OK,
+    response_model=SuccessResponse[QuotaPolicyData],
+    responses={401: {"model": ErrorResponse}, 403: {"model": ErrorResponse}, 422: {"model": ErrorResponse}},
+)
+def put_quota_policy(
+    payload: QuotaPolicyUpsertRequest,
+    request: Request,
+    ctx=Depends(require_tenant_roles(TenantRole.OWNER, TenantRole.ADMIN)),
+    db: Session = Depends(get_db),
+):
+    """创建或更新配额策略。"""
+    data = upsert_quota_policy(
+        db,
+        tenant_id=ctx.tenant_id,
+        user_id=ctx.user_id,
+        metric_code=payload.metric_code,
+        scope_type=payload.scope_type,
+        scope_id=payload.scope_id,
+        limit_value=payload.limit_value,
+        window_minutes=payload.window_minutes,
+        enabled=payload.enabled,
+    )
+    db.commit()
+    return success(request, data)
+
+
+@router.get(
+    "/quotas",
+    summary="查询配额策略列表",
+    description="返回当前租户生效与未生效的配额策略。",
+    status_code=status.HTTP_200_OK,
+    response_model=SuccessResponse[list[QuotaPolicyData]],
+    responses={401: {"model": ErrorResponse}, 403: {"model": ErrorResponse}},
+)
+def get_quota_policies(
+    request: Request,
+    ctx=Depends(require_tenant_roles(TenantRole.OWNER, TenantRole.ADMIN)),
+    db: Session = Depends(get_db),
+):
+    """查询配额策略列表。"""
+    return success(request, list_quota_policies(db, tenant_id=ctx.tenant_id))
+
+
+@router.get(
+    "/quotas/alerts",
+    summary="查询配额超限告警",
+    description="返回窗口内 QUOTA_EXCEEDED 事件，便于运维系统消费。",
+    status_code=status.HTTP_200_OK,
+    response_model=SuccessResponse[list[QuotaAlertData]],
+    responses={401: {"model": ErrorResponse}, 403: {"model": ErrorResponse}},
+)
+def get_quota_alerts(
+    request: Request,
+    window_hours: int = Query(default=24, ge=1, le=168, description="告警查询时间窗（小时）。"),
+    limit: int = Query(default=20, ge=1, le=200, description="返回条数上限。"),
+    ctx=Depends(require_tenant_roles(TenantRole.OWNER, TenantRole.ADMIN)),
+    db: Session = Depends(get_db),
+):
+    """查询配额超限告警。"""
+    return success(
+        request,
+        list_quota_alerts(
+            db,
+            tenant_id=ctx.tenant_id,
+            limit=limit,
+            window_hours=window_hours,
+        ),
+    )
+
+
+@router.get(
+    "/cost/summary",
+    summary="查询租户成本汇总",
+    description="按租户汇总检索请求、chat token、agent run 与估算成本。",
+    status_code=status.HTTP_200_OK,
+    response_model=SuccessResponse[CostSummaryData],
+    responses={401: {"model": ErrorResponse}, 403: {"model": ErrorResponse}},
+)
+def get_cost_summary(
+    request: Request,
+    window_hours: int = Query(default=24, ge=1, le=168, description="统计时间窗（小时）。"),
+    ctx=Depends(require_tenant_roles(TenantRole.OWNER, TenantRole.ADMIN)),
+    db: Session = Depends(get_db),
+):
+    """查询租户成本汇总。"""
+    return success(
+        request,
+        build_tenant_cost_summary(db, tenant_id=ctx.tenant_id, window_hours=window_hours),
+    )

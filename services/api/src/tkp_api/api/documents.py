@@ -35,6 +35,7 @@ from tkp_api.services import (
     persist_upload,
     require_tenant_action,
 )
+from tkp_api.services.quota import QuotaMetric, enforce_quota
 
 router = APIRouter(tags=["documents"])
 
@@ -79,6 +80,14 @@ async def upload_document(
         tenant_id=ctx.tenant_id,
         kb_id=kb_id,
         user_id=ctx.user_id,
+    )
+    enforce_quota(
+        db,
+        tenant_id=ctx.tenant_id,
+        metric_code=QuotaMetric.DOCUMENT_UPLOADS.value,
+        projected_increment=1,
+        workspace_id=kb.workspace_id,
+        actor_user_id=ctx.user_id,
     )
 
     # 解析可选元数据 JSON，失败时返回 422，避免脏数据入库。

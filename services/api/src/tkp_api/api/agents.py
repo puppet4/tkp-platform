@@ -18,6 +18,7 @@ from tkp_api.schemas.common import ErrorResponse, SuccessResponse
 from tkp_api.schemas.responses import AgentRunData, AgentRunDetailData
 from tkp_api.services.agent_planner import normalize_agent_tool_policy
 from tkp_api.services import PermissionAction, audit_log, build_agent_plan, require_tenant_action
+from tkp_api.services.quota import QuotaMetric, enforce_quota, resolve_workspace_scope_for_kbs
 
 router = APIRouter(prefix="/agent", tags=["agent"])
 
@@ -55,6 +56,19 @@ def create_agent_run(
     tool_policy = normalize_agent_tool_policy(
         payload.tool_policy,
         allowed_tools=settings.agent_allowed_tools_list,
+    )
+    workspace_id = resolve_workspace_scope_for_kbs(
+        db,
+        tenant_id=ctx.tenant_id,
+        kb_ids=payload.kb_ids,
+    )
+    enforce_quota(
+        db,
+        tenant_id=ctx.tenant_id,
+        metric_code=QuotaMetric.AGENT_RUNS.value,
+        projected_increment=1,
+        workspace_id=workspace_id,
+        actor_user_id=ctx.user_id,
     )
 
     plan_data = build_agent_plan(

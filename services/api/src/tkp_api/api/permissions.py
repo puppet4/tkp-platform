@@ -1,6 +1,9 @@
 """权限管理接口。"""
 
-from fastapi import APIRouter, Depends, HTTPException, Path, Request, status
+from datetime import datetime, timezone
+from uuid import UUID, uuid4
+
+from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request, status
 from sqlalchemy.orm import Session
 
 from tkp_api.dependencies import get_request_context
@@ -8,9 +11,16 @@ from tkp_api.db.session import get_db
 from tkp_api.models.enums import TenantRole
 from tkp_api.utils.response import success
 from tkp_api.schemas.common import ErrorResponse, SuccessResponse
-from tkp_api.schemas.permission import PermissionTemplatePublishRequest, RolePermissionUpdateRequest
+from tkp_api.schemas.permission import (
+    PermissionTemplatePublishRequest,
+    PolicySnapshotCreateRequest,
+    RolePermissionUpdateRequest,
+)
 from tkp_api.schemas.responses import (
     PermissionCatalogData,
+    PermissionPolicyCenterData,
+    PermissionPolicyRollbackData,
+    PermissionPolicySnapshotData,
     PermissionSnapshotData,
     PermissionTemplateData,
     PermissionTemplatePublishData,
@@ -19,11 +29,15 @@ from tkp_api.schemas.responses import (
 )
 from tkp_api.services import (
     DEFAULT_PERMISSION_TEMPLATE_KEY,
+    apply_policy_snapshot,
     audit_log,
     default_permission_template,
+    get_policy_snapshot,
+    list_policy_snapshots,
     list_tenant_role_permission_matrix,
     list_tenant_actions,
     permission_catalog,
+    policy_center_view,
     permission_ui_manifest,
     publish_default_permission_template,
     reset_tenant_role_actions,
@@ -111,6 +125,28 @@ def get_permission_catalog(
     """返回权限点目录。"""
     _ensure_permission_admin(ctx.tenant_role)
     return success(request, {"permission_codes": permission_catalog()})
+
+
+@router.get(
+    "/policy-center",
+    tags=_PERMISSION_CONFIG_TAG,
+    summary="策略中心统一视图",
+    description="返回权限目录、租户角色矩阵与 UI 权限映射统一视图。",
+    status_code=status.HTTP_200_OK,
+    response_model=SuccessResponse[PermissionPolicyCenterData],
+    responses={401: {"model": ErrorResponse}, 403: {"model": ErrorResponse}, 422: {"model": ErrorResponse}},
+)
+def get_policy_center(
+    request: Request,
+    ctx=Depends(get_request_context),
+    db: Session = Depends(get_db),
+):
+    """查询策略中心统一视图。"""
+    _ensure_permission_admin(ctx.tenant_role)
+    return success(
+        request,
+        policy_center_view(db, tenant_id=ctx.tenant_id, tenant_role=ctx.tenant_role),
+    )
 
 
 @router.get(
@@ -289,3 +325,123 @@ def reset_role_permissions(
     )
     db.commit()
     return success(request, {"role": role_value, "permission_codes": current})
+
+
+@router.post(
+    "/policies/snapshots",
+    tags=_PERMISSION_CONFIG_TAG,
+    summary="创建策略快照",
+    description="保存当前租户角色权限矩阵快照，供后续回滚使用。",
+    status_code=status.HTTP_200_OK,
+    response_model=SuccessResponse[PermissionPolicySnapshotData],
+    responses={401: {"model": ErrorResponse}, 403: {"model": ErrorResponse}, 422: {"model": ErrorResponse}},
+)
+def create_policy_snapshot(
+    payload: PolicySnapshotCreateRequest,
+    request: Request,
+    ctx=Depends(get_request_context),
+    db: Session = Depends(get_db),
+):
+    """创建权限策略快照。"""
+    _ensure_permission_admin(ctx.tenant_role)
+    snapshot_id = uuid4()
+    created_at = datetime.now(timezone.utc)
+    matrix = list_tenant_role_permission_matrix(db, tenant_id=ctx.tenant_id)
+    template_version = default_permission_template()["version"]
+    role_permissions = [{"role": role, "permission_codes": codes} for role, codes in matrix.items()]
+    audit_log(
+        db=db,
+        request=request,
+        tenant_id=ctx.tenant_id,
+        actor_user_id=ctx.user_id,
+        action="permission.policy.snapshot.create",
+        resource_type="permission_policy_snapshot",
+        resource_id=str(snapshot_id),
+        after_json={
+            "snapshot_id": str(snapshot_id),
+            "template_version": template_version,
+            "role_permissions": matrix,
+            "note": payload.note,
+        },
+    )
+    db.commit()
+    return success(
+        request,
+        {
+            "snapshot_id": snapshot_id,
+            "template_version": template_version,
+            "role_permissions": role_permissions,
+            "note": payload.note,
+            "created_at": created_at,
+        },
+    )
+
+
+@router.get(
+    "/policies/snapshots",
+    tags=_PERMISSION_CONFIG_TAG,
+    summary="查询策略快照列表",
+    description="返回当前租户近期策略快照记录。",
+    status_code=status.HTTP_200_OK,
+    response_model=SuccessResponse[list[PermissionPolicySnapshotData]],
+    responses={401: {"model": ErrorResponse}, 403: {"model": ErrorResponse}},
+)
+def get_policy_snapshots(
+    request: Request,
+    limit: int = Query(default=20, ge=1, le=100),
+    window_days: int = Query(default=90, ge=1, le=365),
+    ctx=Depends(get_request_context),
+    db: Session = Depends(get_db),
+):
+    """查询策略快照列表。"""
+    _ensure_permission_admin(ctx.tenant_role)
+    data = list_policy_snapshots(
+        db,
+        tenant_id=ctx.tenant_id,
+        limit=limit,
+        window_days=window_days,
+    )
+    return success(request, data)
+
+
+@router.post(
+    "/policies/snapshots/{snapshot_id}/rollback",
+    tags=_PERMISSION_CONFIG_TAG,
+    summary="回滚到指定策略快照",
+    description="根据快照恢复租户角色权限矩阵，并记录审计日志。",
+    status_code=status.HTTP_200_OK,
+    response_model=SuccessResponse[PermissionPolicyRollbackData],
+    responses={401: {"model": ErrorResponse}, 403: {"model": ErrorResponse}, 404: {"model": ErrorResponse}},
+)
+def rollback_policy_snapshot(
+    request: Request,
+    snapshot_id: UUID = Path(..., description="策略快照 ID。"),
+    ctx=Depends(get_request_context),
+    db: Session = Depends(get_db),
+):
+    """回滚权限策略。"""
+    _ensure_permission_admin(ctx.tenant_role)
+    snapshot = get_policy_snapshot(db, tenant_id=ctx.tenant_id, snapshot_id=snapshot_id)
+    result = apply_policy_snapshot(db, tenant_id=ctx.tenant_id, snapshot=snapshot)
+    audit_log(
+        db=db,
+        request=request,
+        tenant_id=ctx.tenant_id,
+        actor_user_id=ctx.user_id,
+        action="permission.policy.snapshot.rollback",
+        resource_type="permission_policy_snapshot",
+        resource_id=str(snapshot_id),
+        after_json={
+            "snapshot_id": str(snapshot_id),
+            "role_permissions": result,
+        },
+    )
+    db.commit()
+    return success(
+        request,
+        {
+            "snapshot_id": snapshot_id,
+            "role_permissions": [{"role": role, "permission_codes": codes} for role, codes in result.items()],
+        },
+    )
+    policy_center_view,

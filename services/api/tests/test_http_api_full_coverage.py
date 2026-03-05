@@ -1237,6 +1237,34 @@ class WorkflowRunner:
         assert isinstance(roles_data, list) and len(roles_data) > 0
         viewer_role_before = _find_one(roles_data, where="roles list", role="viewer")
         self._assert_role_permission_data(viewer_role_before, role="viewer")
+        viewer_codes_before = set(viewer_role_before["permission_codes"])
+
+        policy_center = self.success(
+            "GET",
+            "/api/permissions/policy-center",
+            token=self.ctx.member_token,
+        )
+        _require_keys(
+            policy_center,
+            ["template_version", "catalog", "role_permissions", "ui_manifest"],
+            "permissions.policy_center",
+        )
+        assert isinstance(policy_center["catalog"], list) and len(policy_center["catalog"]) > 0
+        assert isinstance(policy_center["role_permissions"], list) and len(policy_center["role_permissions"]) > 0
+
+        snapshot = self.success(
+            "POST",
+            "/api/permissions/policies/snapshots",
+            token=self.ctx.member_token,
+            json={"note": "phase2 snapshot"},
+        )
+        _require_keys(
+            snapshot,
+            ["snapshot_id", "template_version", "role_permissions", "note", "created_at"],
+            "permissions.policy_snapshot.create",
+        )
+        _assert_uuid(snapshot["snapshot_id"], "permissions.policy_snapshot.snapshot_id")
+        _assert_iso_datetime(snapshot["created_at"], "permissions.policy_snapshot.created_at")
 
         updated_viewer = self.success(
             "PUT",
@@ -1250,6 +1278,29 @@ class WorkflowRunner:
             role="viewer",
             contains={"api.tenant.read", "menu.workspace"},
         )
+
+        snapshot_list = self.success(
+            "GET",
+            "/api/permissions/policies/snapshots",
+            token=self.ctx.member_token,
+        )
+        assert isinstance(snapshot_list, list) and len(snapshot_list) >= 1
+        assert any(item["snapshot_id"] == snapshot["snapshot_id"] for item in snapshot_list)
+
+        rollback_result = self.success(
+            "POST",
+            "/api/permissions/policies/snapshots/{snapshot_id}/rollback",
+            actual_path=f"/api/permissions/policies/snapshots/{snapshot['snapshot_id']}/rollback",
+            token=self.ctx.member_token,
+        )
+        _require_keys(rollback_result, ["snapshot_id", "role_permissions"], "permissions.policy_snapshot.rollback")
+        assert rollback_result["snapshot_id"] == snapshot["snapshot_id"]
+        assert isinstance(rollback_result["role_permissions"], list) and len(rollback_result["role_permissions"]) > 0
+
+        roles_after_rollback = self.success("GET", "/api/permissions/roles", token=self.ctx.member_token)
+        viewer_after_rollback = _find_one(roles_after_rollback, where="roles rollback list", role="viewer")
+        self._assert_role_permission_data(viewer_after_rollback, role="viewer")
+        assert set(viewer_after_rollback["permission_codes"]) == viewer_codes_before
 
         # 负例：不存在的权限码应触发 422。
         invalid_permission_error = self.expect_error(
@@ -2010,6 +2061,130 @@ class WorkflowRunner:
             _require_keys(check, ["code", "name", "status", "current", "target", "operator"], "ops.slo.check")
             assert check["status"] in {"pass", "fail"}
             assert check["operator"] in {"<=", ">="}
+
+        workspace_quota = self.success(
+            "PUT",
+            "/api/ops/quotas",
+            actual_path="/api/ops/quotas",
+            token=self.ctx.owner_token,
+            json={
+                "metric_code": "document.uploads",
+                "scope_type": "workspace",
+                "scope_id": self.ctx.ws1_id,
+                "limit_value": 9999,
+                "window_minutes": 60,
+                "enabled": True,
+            },
+        )
+        _require_keys(
+            workspace_quota,
+            [
+                "id",
+                "tenant_id",
+                "scope_type",
+                "scope_id",
+                "metric_code",
+                "limit_value",
+                "window_minutes",
+                "enabled",
+                "created_at",
+                "updated_at",
+            ],
+            "ops.quota.workspace",
+        )
+        assert workspace_quota["scope_type"] == "workspace"
+        assert workspace_quota["scope_id"] == self.ctx.ws1_id
+
+        tenant_quota = self.success(
+            "PUT",
+            "/api/ops/quotas",
+            actual_path="/api/ops/quotas",
+            token=self.ctx.owner_token,
+            json={
+                "metric_code": "retrieval.requests",
+                "scope_type": "tenant",
+                "limit_value": 0,
+                "window_minutes": 60,
+                "enabled": True,
+            },
+        )
+        assert tenant_quota["scope_type"] == "tenant"
+        assert tenant_quota["metric_code"] == "retrieval.requests"
+
+        quotas = self.success(
+            "GET",
+            "/api/ops/quotas",
+            actual_path="/api/ops/quotas",
+            token=self.ctx.owner_token,
+        )
+        assert isinstance(quotas, list) and len(quotas) >= 2
+
+        quota_exceeded = self.expect_error(
+            "POST",
+            "/api/retrieval/query",
+            actual_path="/api/retrieval/query",
+            token=self.ctx.owner_token,
+            expected_status=429,
+            expected_code="QUOTA_EXCEEDED",
+            json={
+                "query": "触发配额校验",
+                "kb_ids": [self.ctx.kb1_id],
+                "top_k": 3,
+                "filters": {},
+                "with_citations": True,
+                "retrieval_strategy": "hybrid",
+                "min_score": 0,
+            },
+        )
+        assert quota_exceeded["details"].get("metric_code") == "retrieval.requests"
+
+        quota_alerts = self.success(
+            "GET",
+            "/api/ops/quotas/alerts",
+            actual_path="/api/ops/quotas/alerts",
+            token=self.ctx.owner_token,
+        )
+        assert isinstance(quota_alerts, list) and len(quota_alerts) >= 1
+        assert any(item["metric_code"] == "retrieval.requests" for item in quota_alerts)
+
+        # 关闭租户检索配额，避免影响后续流程。
+        self.success(
+            "PUT",
+            "/api/ops/quotas",
+            actual_path="/api/ops/quotas",
+            token=self.ctx.owner_token,
+            json={
+                "metric_code": "retrieval.requests",
+                "scope_type": "tenant",
+                "limit_value": 0,
+                "window_minutes": 60,
+                "enabled": False,
+            },
+        )
+
+        cost_summary = self.success(
+            "GET",
+            "/api/ops/cost/summary",
+            actual_path="/api/ops/cost/summary",
+            token=self.ctx.owner_token,
+        )
+        _require_keys(
+            cost_summary,
+            [
+                "tenant_id",
+                "window_hours",
+                "retrieval_request_total",
+                "chat_completion_total",
+                "prompt_tokens_total",
+                "completion_tokens_total",
+                "total_tokens",
+                "agent_run_total",
+                "agent_cost_total",
+                "chat_estimated_cost",
+                "estimated_total_cost",
+            ],
+            "ops.cost.summary",
+        )
 
         retrieval_eval = self.success(
             "POST",
