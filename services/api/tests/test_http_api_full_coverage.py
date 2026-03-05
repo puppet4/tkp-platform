@@ -2011,6 +2011,47 @@ class WorkflowRunner:
             assert check["status"] in {"pass", "fail"}
             assert check["operator"] in {"<=", ">="}
 
+        retrieval_eval = self.success(
+            "POST",
+            "/api/ops/retrieval/evaluate",
+            actual_path="/api/ops/retrieval/evaluate",
+            token=self.ctx.owner_token,
+            json={
+                "kb_ids": [self.ctx.kb1_id],
+                "top_k": 5,
+                "samples": [
+                    {"query": "退款流程是什么", "expected_terms": ["退款"]},
+                    {"query": "工单怎么提交", "expected_terms": ["工单"]},
+                ],
+            },
+        )
+        _require_keys(
+            retrieval_eval,
+            [
+                "tenant_id",
+                "sample_total",
+                "matched_total",
+                "hit_at_k",
+                "citation_coverage_rate",
+                "avg_latency_ms",
+                "results",
+            ],
+            "ops.retrieval.evaluate.data",
+        )
+        _assert_uuid(retrieval_eval["tenant_id"], "ops.retrieval.evaluate.tenant_id")
+        assert isinstance(retrieval_eval["sample_total"], int) and retrieval_eval["sample_total"] >= 1
+        assert isinstance(retrieval_eval["matched_total"], int) and retrieval_eval["matched_total"] >= 0
+        assert isinstance(retrieval_eval["hit_at_k"], float) and 0.0 <= retrieval_eval["hit_at_k"] <= 1.0
+        assert isinstance(retrieval_eval["citation_coverage_rate"], float)
+        assert 0.0 <= retrieval_eval["citation_coverage_rate"] <= 1.0
+        assert isinstance(retrieval_eval["results"], list) and len(retrieval_eval["results"]) >= 1
+        for item in retrieval_eval["results"]:
+            _require_keys(
+                item,
+                ["query", "expected_terms", "matched", "hit_count", "citation_covered", "top_hit_score", "latency_ms"],
+                "ops.retrieval.evaluate.item",
+            )
+
         deleted_doc = self.success(
             "DELETE",
             "/api/documents/{document_id}",

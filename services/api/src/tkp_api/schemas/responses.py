@@ -301,6 +301,30 @@ class MVPSLOSummaryData(BaseSchema):
     retrieval_quality: RetrievalQualityMetricsData = Field(description="检索质量指标快照。")
 
 
+class RetrievalEvalItemData(BaseSchema):
+    """单条检索评测结果。"""
+
+    query: str = Field(description="检索问题。")
+    expected_terms: list[str] = Field(description="预期命中关键字列表。")
+    matched: bool = Field(description="是否命中预期。")
+    hit_count: int = Field(description="命中切片数。")
+    citation_covered: bool = Field(description="该样本命中是否全部具备引用信息。")
+    top_hit_score: int | None = Field(default=None, description="第一条命中分值。")
+    latency_ms: int = Field(description="检索耗时（毫秒）。")
+
+
+class RetrievalEvalSummaryData(BaseSchema):
+    """检索评测汇总结构。"""
+
+    tenant_id: UUID = Field(description="租户 ID。")
+    sample_total: int = Field(description="评测样本总数。")
+    matched_total: int = Field(description="命中预期样本数。")
+    hit_at_k: float = Field(description="命中率（0-1）。")
+    citation_coverage_rate: float = Field(description="样本级引用覆盖率（0-1）。")
+    avg_latency_ms: int | None = Field(default=None, description="平均检索耗时（毫秒）。")
+    results: list[RetrievalEvalItemData] = Field(description="样本评测明细。")
+
+
 class KBMembershipData(BaseSchema):
     """知识库成员新增/更新返回结构。"""
 

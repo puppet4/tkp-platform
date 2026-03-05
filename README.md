@@ -177,6 +177,7 @@ bash scripts/test_data_plane_e2e.sh
 - `GET /api/ops/ingestion/alerts`
 - `GET /api/ops/retrieval/quality`
 - `GET /api/ops/slo/mvp-summary`
+- `POST /api/ops/retrieval/evaluate`
 
 返回维度：
 - 入库任务分状态计数（queued/processing/retrying/completed/dead_letter）

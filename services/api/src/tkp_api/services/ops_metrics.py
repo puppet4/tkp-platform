@@ -364,3 +364,93 @@ def build_mvp_slo_summary(
         "ingestion_metrics": ingestion,
         "retrieval_quality": retrieval,
     }
+
+
+def build_retrieval_eval_summary(
+    db: Session,
+    *,
+    tenant_id: UUID,
+    kb_ids: list[UUID],
+    samples: list[dict[str, Any]],
+    top_k: int = 5,
+) -> dict[str, Any]:
+    """基于在线检索能力执行最小评测并输出汇总。"""
+    from tkp_api.services.retrieval import query_chunks
+
+    results: list[dict[str, Any]] = []
+    matched_total = 0
+    citation_covered_total = 0
+    latency_values: list[int] = []
+
+    for sample in samples:
+        query = str(sample.get("query") or "").strip()
+        if not query:
+            continue
+        expected_terms = [
+            str(term).strip() for term in (sample.get("expected_terms") or []) if isinstance(term, str) and term.strip()
+        ]
+        rag_data = query_chunks(
+            db,
+            tenant_id=tenant_id,
+            kb_ids=kb_ids,
+            query=query,
+            top_k=top_k,
+            filters={},
+            with_citations=True,
+            retrieval_strategy="hybrid",
+            min_score=0,
+        )
+        hits = rag_data["hits"]
+        latency_ms = int(rag_data["latency_ms"])
+        latency_values.append(max(0, latency_ms))
+
+        if expected_terms:
+            lowered_terms = [item.lower() for item in expected_terms]
+            matched = False
+            for hit in hits:
+                if not isinstance(hit, dict):
+                    continue
+                haystack = " ".join(
+                    [
+                        str(hit.get("snippet") or ""),
+                        str(hit.get("reason") or ""),
+                        " ".join(str(term) for term in (hit.get("matched_terms") or [])),
+                    ]
+                ).lower()
+                if any(term in haystack for term in lowered_terms):
+                    matched = True
+                    break
+        else:
+            matched = len(hits) > 0
+
+        citation_covered = (len(hits) == 0) or all(isinstance(hit.get("citation"), dict) for hit in hits if isinstance(hit, dict))
+        top_hit_score = int(hits[0].get("score") or 0) if hits and isinstance(hits[0], dict) else None
+        if matched:
+            matched_total += 1
+        if citation_covered:
+            citation_covered_total += 1
+
+        results.append(
+            {
+                "query": query,
+                "expected_terms": expected_terms,
+                "matched": matched,
+                "hit_count": len(hits),
+                "citation_covered": citation_covered,
+                "top_hit_score": top_hit_score,
+                "latency_ms": latency_ms,
+            }
+        )
+
+    sample_total = len(results)
+    return {
+        "tenant_id": str(tenant_id),
+        "sample_total": sample_total,
+        "matched_total": matched_total,
+        "hit_at_k": round(float(matched_total) / float(sample_total), 6) if sample_total > 0 else 0.0,
+        "citation_coverage_rate": (
+            round(float(citation_covered_total) / float(sample_total), 6) if sample_total > 0 else 1.0
+        ),
+        "avg_latency_ms": int(sum(latency_values) / len(latency_values)) if latency_values else None,
+        "results": results,
+    }

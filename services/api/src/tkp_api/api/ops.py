@@ -1,22 +1,26 @@
 """运行态运维接口。"""
 
-from fastapi import APIRouter, Depends, Query, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy.orm import Session
 
 from tkp_api.dependencies import require_tenant_roles
 from tkp_api.db.session import get_db
 from tkp_api.models.enums import TenantRole
+from tkp_api.schemas.ops import RetrievalEvalRequest
 from tkp_api.schemas.common import ErrorResponse, SuccessResponse
 from tkp_api.schemas.responses import (
     IngestionOpsAlertsData,
     IngestionOpsMetricsData,
     MVPSLOSummaryData,
+    RetrievalEvalSummaryData,
     RetrievalQualityMetricsData,
 )
+from tkp_api.services import filter_readable_kb_ids
 from tkp_api.services.ops_metrics import (
     build_ingestion_alerts,
     build_ingestion_metrics,
     build_mvp_slo_summary,
+    build_retrieval_eval_summary,
     build_retrieval_quality_metrics,
 )
 from tkp_api.utils.response import success
@@ -141,5 +145,39 @@ def get_mvp_slo_summary(
         retrieval_zero_hit_rate_target=retrieval_zero_hit_rate_target,
         retrieval_p95_latency_target_ms=retrieval_p95_latency_target_ms,
         retrieval_citation_coverage_target=retrieval_citation_coverage_target,
+    )
+    return success(request, data)
+
+
+@router.post(
+    "/retrieval/evaluate",
+    summary="执行检索评测",
+    description="按样本批量执行检索并返回 hit@k、引用覆盖率和耗时汇总。",
+    status_code=status.HTTP_200_OK,
+    response_model=SuccessResponse[RetrievalEvalSummaryData],
+    responses={401: {"model": ErrorResponse}, 403: {"model": ErrorResponse}, 422: {"model": ErrorResponse}},
+)
+def evaluate_retrieval(
+    payload: RetrievalEvalRequest,
+    request: Request,
+    ctx=Depends(require_tenant_roles(TenantRole.OWNER, TenantRole.ADMIN)),
+    db: Session = Depends(get_db),
+):
+    """执行最小检索评测闭环。"""
+    readable_kb_ids = filter_readable_kb_ids(
+        db,
+        tenant_id=ctx.tenant_id,
+        user_id=ctx.user_id,
+        kb_ids=payload.kb_ids or None,
+    )
+    if payload.kb_ids and len(readable_kb_ids) != len(set(payload.kb_ids)):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="forbidden kb scope")
+
+    data = build_retrieval_eval_summary(
+        db,
+        tenant_id=ctx.tenant_id,
+        kb_ids=readable_kb_ids,
+        top_k=payload.top_k,
+        samples=[{"query": item.query, "expected_terms": item.expected_terms} for item in payload.samples],
     )
     return success(request, data)
