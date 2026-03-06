@@ -1,9 +1,11 @@
 """ORM 模型导出集合。"""
 
 from tkp_api.models.agent import AgentRun
+from tkp_api.models.agent_checkpoint import AgentCheckpoint, AgentRecovery
 from tkp_api.models.auth import UserCredential
 from tkp_api.models.audit import AuditLog
 from tkp_api.models.conversation import Conversation, Message
+from tkp_api.models.feedback import FeedbackReplay, UserFeedback
 from tkp_api.models.knowledge import (
     ChunkEmbedding,
     Document,
@@ -23,6 +25,8 @@ from tkp_api.models.tenant import Tenant, TenantMembership, User
 from tkp_api.models.workspace import Workspace, WorkspaceMembership
 
 __all__ = [
+    "AgentCheckpoint",
+    "AgentRecovery",
     "AgentRun",
     "AuditLog",
     "ChunkEmbedding",
@@ -30,6 +34,7 @@ __all__ = [
     "Document",
     "DocumentChunk",
     "DocumentVersion",
+    "FeedbackReplay",
     "IngestionJob",
     "KBMembership",
     "KnowledgeBase",
@@ -44,6 +49,7 @@ __all__ = [
     "OpsReleaseRollout",
     "QuotaPolicy",
     "UserCredential",
+    "UserFeedback",
     "Tenant",
     "TenantMembership",
     "User",
