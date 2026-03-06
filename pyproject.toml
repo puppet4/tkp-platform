@@ -11,5 +11,4 @@ dependencies = [
 members = [
   "services/api",
   "services/worker",
-  "services/rag",
 ]
