@@ -78,6 +78,53 @@ class Settings(BaseSettings):
     chunk_overlap: int = Field(default=200, description="切片重叠大小。")
     embedding_batch_size: int = Field(default=100, description="向量生成批次大小。")
 
+    # Embedding Gateway 配置
+    embedding_provider: str = Field(default="openai", description="Embedding 提供者（openai/cohere/local）。")
+    embedding_fallback_provider: str | None = Field(default=None, description="降级 Embedding 提供者。")
+    embedding_cache_enabled: bool = Field(default=True, description="是否启用 Embedding 缓存。")
+    embedding_cache_ttl: int = Field(default=86400, description="Embedding 缓存过期时间（秒）。")
+    embedding_rate_limit_enabled: bool = Field(default=True, description="是否启用速率限制。")
+    embedding_rate_limit_max: int = Field(default=1000, description="速率限制：时间窗口内最大请求数。")
+    embedding_rate_limit_window: int = Field(default=60, description="速率限制：时间窗口大小（秒）。")
+    cohere_api_key: str = Field(default="", description="Cohere API 密钥。")
+    cohere_embedding_model: str = Field(default="embed-multilingual-v3.0", description="Cohere 嵌入模型。")
+    local_embedding_model: str = Field(default="sentence-transformers/all-MiniLM-L6-v2", description="本地嵌入模型。")
+
+    # Context Packing 配置
+    context_max_tokens: int = Field(default=4000, description="上下文最大 token 数。")
+    context_reserve_tokens: int = Field(default=500, description="为生成预留的 token 数。")
+    context_similarity_threshold: float = Field(default=0.85, description="去重相似度阈值（0-1）。")
+    context_prioritize_by: str = Field(default="score", description="优先级排序字段（score/recency/custom）。")
+
+    # Answer Grading 配置
+    answer_confidence_threshold: float = Field(default=0.5, description="答案置信度阈值，低于此值触发拒答。")
+    answer_min_citation_count: int = Field(default=1, description="最小引用数量。")
+    answer_enable_llm_grading: bool = Field(default=True, description="是否启用 LLM 评分。")
+    answer_grading_model: str = Field(default="gpt-4o-mini", description="用于答案评分的模型。")
+
+    # Parent-Child Chunk 配置
+    parent_child_merge_enabled: bool = Field(default=True, description="是否启用父子块合并。")
+    parent_child_max_merge_distance: int = Field(default=2, description="相邻块最大合并距离。")
+
+    # 敏感操作确认配置
+    sensitive_operation_enabled: bool = Field(default=True, description="是否启用敏感操作双重确认。")
+    sensitive_operation_confirmation_ttl: int = Field(default=300, description="确认码有效期（秒）。")
+    sensitive_operation_code_length: int = Field(default=6, description="确认码长度。")
+
+    # Query 预处理配置
+    query_language_detection_enabled: bool = Field(default=True, description="是否启用查询语言识别。")
+    query_spell_correction_enabled: bool = Field(default=True, description="是否启用查询拼写纠错。")
+    query_normalization_enabled: bool = Field(default=True, description="是否启用查询规范化。")
+
+    # Policy Score 配置
+    policy_score_enabled: bool = Field(default=True, description="是否启用策略评分。")
+    policy_recency_weight: float = Field(default=0.3, description="新鲜度权重。")
+    policy_authority_weight: float = Field(default=0.3, description="权威性权重。")
+    policy_preference_weight: float = Field(default=0.2, description="用户偏好权重。")
+    policy_business_weight: float = Field(default=0.2, description="业务规则权重。")
+    policy_relevance_weight: float = Field(default=0.7, description="相关性权重（重排序时）。")
+    policy_weight: float = Field(default=0.3, description="策略权重（重排序时）。")
+
     # 检索配置
     retrieval_top_k: int = Field(default=5, description="检索返回的最大结果数。")
     retrieval_similarity_threshold: float = Field(default=0.7, description="检索相似度阈值。")
