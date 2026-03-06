@@ -113,6 +113,10 @@ jobs:
             echo "apply: $f"
             psql -h 127.0.0.1 -p 55432 -U postgres -d tkp_api_test -v ON_ERROR_STOP=1 -f "$f"
           done
+          while IFS= read -r f; do
+            echo "apply migration: $f"
+            psql -h 127.0.0.1 -p 55432 -U postgres -d tkp_api_test -v ON_ERROR_STOP=1 -f "$f"
+          done < <(find infra/sql/migrations -maxdepth 1 -type f -name "*.sql" | sort)
 
       - name: Run API full on Postgres
         run: |
