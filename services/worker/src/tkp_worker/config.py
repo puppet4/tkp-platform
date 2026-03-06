@@ -59,6 +59,20 @@ class Settings(BaseSettings):
     chunk_size: int = Field(default=800, description="文本切片大小（字符数）。")
     chunk_overlap: int = Field(default=200, description="切片重叠大小（字符数）。")
 
+    # OCR 配置
+    ocr_enabled: bool = Field(default=False, description="是否启用 OCR 文字识别。")
+    ocr_engine: str = Field(default="tesseract", description="OCR 引擎（tesseract/paddleocr）。")
+    ocr_language: str = Field(default="eng+chi_sim", description="OCR 识别语言。")
+
+    # 图片解析配置
+    image_description_enabled: bool = Field(default=False, description="是否启用图片描述生成。")
+    image_thumbnail_enabled: bool = Field(default=True, description="是否生成缩略图。")
+    image_thumbnail_max_size: int = Field(default=300, description="缩略图最大尺寸（像素）。")
+
+    # 表格提取配置
+    table_extraction_enabled: bool = Field(default=False, description="是否启用表格提取。")
+    table_extraction_method: str = Field(default="camelot", description="表格提取方法（camelot/tabula）。")
+
     @model_validator(mode="after")
     def validate_runtime_contract(self) -> "Settings":
         """运行时关键配置校验。"""
