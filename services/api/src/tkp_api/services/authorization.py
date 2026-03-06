@@ -8,7 +8,7 @@ from uuid import UUID
 
 from fastapi import HTTPException, status
 from sqlalchemy import select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 
 from tkp_api.models.enums import DocumentStatus, KBRole, KBStatus, MembershipStatus, WorkspaceRole, WorkspaceStatus
 from tkp_api.models.knowledge import Document, KBMembership, KnowledgeBase
@@ -112,6 +112,50 @@ def get_kb_membership(db: Session, *, tenant_id: UUID, kb_id: UUID, user_id: UUI
         )
         .scalar_one_or_none()
     )
+
+
+def check_kb_access_batch(
+    db: Session,
+    *,
+    tenant_id: UUID,
+    kb_ids: list[UUID],
+    user_id: UUID,
+) -> dict[UUID, bool]:
+    """批量检查知识库访问权限。
+
+    Args:
+        db: 数据库会话
+        tenant_id: 租户ID
+        kb_ids: 知识库ID列表
+        user_id: 用户ID
+
+    Returns:
+        字典，key为知识库ID，value为是否有访问权限
+    """
+    if not kb_ids:
+        return {}
+
+    # 一次查询获取所有知识库及其工作空间成员关系
+    results = (
+        db.execute(
+            select(KnowledgeBase, WorkspaceMembership)
+            .join(WorkspaceMembership,
+                  (WorkspaceMembership.workspace_id == KnowledgeBase.workspace_id) &
+                  (WorkspaceMembership.tenant_id == KnowledgeBase.tenant_id))
+            .where(KnowledgeBase.id.in_(kb_ids))
+            .where(KnowledgeBase.tenant_id == tenant_id)
+            .where(KnowledgeBase.status != KBStatus.ARCHIVED)
+            .where(WorkspaceMembership.user_id == user_id)
+            .where(WorkspaceMembership.status == MembershipStatus.ACTIVE)
+        )
+        .all()
+    )
+
+    # 构建有权限的知识库集合
+    accessible_kb_ids = {kb.id for kb, _ in results}
+
+    # 返回所有请求的知识库的权限状态
+    return {kb_id: kb_id in accessible_kb_ids for kb_id in kb_ids}
 
 
 def ensure_kb_read_access(

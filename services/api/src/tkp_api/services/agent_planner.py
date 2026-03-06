@@ -105,7 +105,7 @@ def build_agent_plan(
             "tool_policy": tool_policy,
         },
         timeout_seconds=settings.rag_timeout_seconds,
-        internal_token=settings.internal_service_token,
+        internal_token=settings.internal_service_token.get_secret_value(),
         max_retries=settings.rag_max_retries,
         retry_backoff_seconds=settings.rag_retry_backoff_seconds,
         circuit_fail_threshold=settings.rag_circuit_breaker_fail_threshold,

@@ -80,17 +80,19 @@ def create_embedding_gateway() -> EmbeddingGateway:
 def _create_provider(provider_type: str, settings):
     """根据类型创建 Embedding 提供者。"""
     if provider_type == "openai":
-        if not settings.openai_api_key:
+        api_key = settings.openai_api_key.get_secret_value() if settings.openai_api_key else ""
+        if not api_key:
             raise ValueError("openai_api_key is required for OpenAI provider")
         return OpenAIEmbeddingProvider(
-            api_key=settings.openai_api_key,
+            api_key=api_key,
             model=settings.openai_embedding_model,
         )
     elif provider_type == "cohere":
-        if not settings.cohere_api_key:
+        api_key = settings.cohere_api_key.get_secret_value() if settings.cohere_api_key else ""
+        if not api_key:
             raise ValueError("cohere_api_key is required for Cohere provider")
         return CohereEmbeddingProvider(
-            api_key=settings.cohere_api_key,
+            api_key=api_key,
             model=settings.cohere_embedding_model,
         )
     elif provider_type == "local":

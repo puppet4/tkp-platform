@@ -89,7 +89,7 @@ def _decode_jwt(token: str) -> dict[str, Any]:
         # 未配置 JWKS 时，回退到对称密钥校验（适合本地开发/测试）。
         return jwt.decode(
             token,
-            key=settings.auth_jwt_secret,
+            key=settings.auth_jwt_secret.get_secret_value(),
             algorithms=algorithms,
             issuer=settings.auth_jwt_issuer,
             audience=settings.auth_jwt_audience,

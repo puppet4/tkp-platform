@@ -3,6 +3,7 @@
 import hashlib
 import json
 from datetime import datetime, timezone
+from pathlib import Path as FilePath
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, File, Form, Header, HTTPException, Path, Query, Request, UploadFile, status
@@ -100,8 +101,9 @@ async def upload_document(
 
     # 上传文件内容一次性读入，后续用于校验和计算与落盘。
     content = await file.read()
-    if not content:
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="file is empty")
+
+    # 验证文件安全性
+    validate_upload_file(file, content)
 
     checksum = hashlib.sha256(content).hexdigest()
     source_uri = file.filename or "upload.bin"

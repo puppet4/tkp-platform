@@ -11,10 +11,28 @@ from tkp_api.middleware.auth import get_current_user
 from tkp_api.governance.deletion import DeletionService
 from tkp_api.governance.retention import RetentionService
 from tkp_api.governance.pii import get_pii_masker
+from tkp_api.models.enums import TenantRole
 
 logger = logging.getLogger("tkp_api.api.governance")
 
 router = APIRouter(prefix="/api/governance", tags=["governance"])
+
+
+def require_admin_role(current_user: dict) -> None:
+    """检查用户是否有管理员权限。
+
+    Args:
+        current_user: 当前用户信息
+
+    Raises:
+        HTTPException: 如果用户没有管理员权限
+    """
+    tenant_role = current_user.get("tenant_role")
+    if tenant_role not in [TenantRole.OWNER.value, TenantRole.ADMIN.value]:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="需要管理员权限才能执行此操作",
+        )
 
 
 @router.post("/deletion/requests")
@@ -57,7 +75,7 @@ async def approve_deletion_request(
     db: Session = Depends(get_db),
 ):
     """批准数据删除请求（需要管理员权限）。"""
-    # TODO: 检查管理员权限
+    require_admin_role(current_user)
 
     service = DeletionService(db)
 
@@ -92,7 +110,7 @@ async def reject_deletion_request(
     db: Session = Depends(get_db),
 ):
     """拒绝数据删除请求（需要管理员权限）。"""
-    # TODO: 检查管理员权限
+    require_admin_role(current_user)
 
     service = DeletionService(db)
 
@@ -127,7 +145,7 @@ async def execute_deletion(
     db: Session = Depends(get_db),
 ):
     """执行数据删除并生成证明（需要管理员权限）。"""
-    # TODO: 检查管理员权限
+    require_admin_role(current_user)
 
     service = DeletionService(db)
 
@@ -210,7 +228,7 @@ async def cleanup_expired_data(
     db: Session = Depends(get_db),
 ):
     """清理过期数据（需要管理员权限）。"""
-    # TODO: 检查管理员权限
+    require_admin_role(current_user)
 
     service = RetentionService(db)
 

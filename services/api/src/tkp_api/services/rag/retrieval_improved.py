@@ -33,7 +33,7 @@ def _get_embedding_service():
         from tkp_api.services.rag.embeddings import create_embedding_service
         settings = get_settings()
         _embedding_service = create_embedding_service(
-            api_key=settings.openai_api_key,
+            api_key=settings.openai_api_key.get_secret_value(),
             model=settings.openai_embedding_model,
         )
     return _embedding_service
@@ -58,7 +58,7 @@ def _get_generator():
     if _generator is None:
         settings = get_settings()
         _generator = create_generator(
-            api_key=settings.openai_api_key,
+            api_key=settings.openai_api_key.get_secret_value(),
             model=settings.openai_chat_model,
             temperature=settings.openai_chat_temperature,
             max_tokens=settings.openai_chat_max_tokens,

@@ -4,7 +4,7 @@ from functools import lru_cache
 from typing import Literal
 from urllib.parse import urlparse
 
-from pydantic import Field, field_validator, model_validator
+from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -26,7 +26,7 @@ class Settings(BaseSettings):
     auth_jwt_issuer: str | None = Field(default=None, description="期望的签发方。")
     auth_jwt_audience: str | None = Field(default=None, description="期望的受众。")
     auth_jwks_url: str | None = Field(default=None, description="可选密钥集合地址。")
-    auth_jwt_secret: str = Field(
+    auth_jwt_secret: SecretStr = Field(
         default="change-me-in-prod-secret-at-least-32b",
         description="未使用密钥集合时的对称密钥。",
     )
@@ -59,14 +59,14 @@ class Settings(BaseSettings):
     rag_retry_backoff_seconds: float = Field(default=0.2, description="RAG 调用重试退避秒数。")
     rag_circuit_breaker_fail_threshold: int = Field(default=3, description="RAG 熔断失败阈值。")
     rag_circuit_breaker_open_seconds: int = Field(default=30, description="RAG 熔断打开时长（秒）。")
-    internal_service_token: str = Field(default="change-me-internal-token", description="内部服务间鉴权令牌。")
+    internal_service_token: SecretStr = Field(default="change-me-internal-token", description="内部服务间鉴权令牌。")
     agent_allowed_tools: str = Field(
         default="retrieval",
         description="Agent 可用工具白名单，逗号分隔。",
     )
 
     # OpenAI API 配置（用于内置 RAG 功能）
-    openai_api_key: str = Field(default="", description="OpenAI API 密钥。")
+    openai_api_key: SecretStr = Field(default="", description="OpenAI API 密钥。")
     openai_embedding_model: str = Field(default="text-embedding-3-small", description="OpenAI 嵌入模型。")
     openai_chat_model: str = Field(default="gpt-4o-mini", description="OpenAI 聊天模型。")
     openai_chat_temperature: float = Field(default=0.7, description="LLM 生成温度。")
@@ -86,7 +86,7 @@ class Settings(BaseSettings):
     embedding_rate_limit_enabled: bool = Field(default=True, description="是否启用速率限制。")
     embedding_rate_limit_max: int = Field(default=1000, description="速率限制：时间窗口内最大请求数。")
     embedding_rate_limit_window: int = Field(default=60, description="速率限制：时间窗口大小（秒）。")
-    cohere_api_key: str = Field(default="", description="Cohere API 密钥。")
+    cohere_api_key: SecretStr = Field(default="", description="Cohere API 密钥。")
     cohere_embedding_model: str = Field(default="embed-multilingual-v3.0", description="Cohere 嵌入模型。")
     local_embedding_model: str = Field(default="sentence-transformers/all-MiniLM-L6-v2", description="本地嵌入模型。")
 
@@ -210,7 +210,7 @@ class Settings(BaseSettings):
     @model_validator(mode="after")
     def validate_runtime_contract(self) -> "Settings":
         """运行时关键配置校验（启动前失败，避免带病运行）。"""
-        if not self.auth_jwks_url and len(self.auth_jwt_secret.encode("utf-8")) < 32:
+        if not self.auth_jwks_url and len(self.auth_jwt_secret.get_secret_value().encode("utf-8")) < 32:
             raise ValueError("KD_AUTH_JWT_SECRET must be at least 32 bytes when KD_AUTH_JWKS_URL is unset")
 
         if self.storage_backend in {"minio", "oss"}:

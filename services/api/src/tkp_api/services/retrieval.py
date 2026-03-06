@@ -28,7 +28,7 @@ def _get_hybrid_retriever():
 
         # 创建向量检索器
         embedding_service = create_embedding_service(
-            api_key=settings.openai_api_key,
+            api_key=settings.openai_api_key.get_secret_value(),
             model=settings.openai_embedding_model,
         )
         vector_retriever = create_retriever(
@@ -79,7 +79,7 @@ def _get_hybrid_retriever():
                 from tkp_api.services.rag.query_rewriter import create_query_rewriter
 
                 query_rewriter = create_query_rewriter(
-                    api_key=settings.openai_api_key,
+                    api_key=settings.openai_api_key.get_secret_value(),
                     model=settings.openai_chat_model,
                     strategy=settings.query_rewrite_strategy,
                 )

@@ -77,5 +77,5 @@ def issue_access_token(user: User, *, tenant_id: UUID | None = None) -> tuple[st
     if tenant_id is not None:
         claims["tenant_id"] = str(tenant_id)
 
-    token = jwt.encode(claims, settings.auth_jwt_secret, algorithm=settings.auth_algorithms[0])
+    token = jwt.encode(claims, settings.auth_jwt_secret.get_secret_value(), algorithm=settings.auth_algorithms[0])
     return token, int(expires_at.timestamp()), expires_at, jti

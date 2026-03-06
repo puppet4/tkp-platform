@@ -64,8 +64,17 @@ class VectorRetriever:
             logger.exception("failed to generate query embedding: %s", exc)
             return []
 
-        # 构建向量字面量
-        vector_literal = "[" + ",".join(f"{v:.6f}" for v in query_embedding) + "]"
+        # 验证向量数据类型安全
+        if not isinstance(query_embedding, (list, tuple)):
+            logger.error("invalid embedding type: %s", type(query_embedding))
+            return []
+
+        if not all(isinstance(v, (int, float)) for v in query_embedding):
+            logger.error("embedding contains non-numeric values")
+            return []
+
+        # 安全地构建向量字面量（仅包含数字）
+        vector_literal = "[" + ",".join(f"{float(v):.6f}" for v in query_embedding) + "]"
 
         # 构建 SQL 查询
         if kb_ids:
