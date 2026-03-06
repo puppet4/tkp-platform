@@ -97,10 +97,14 @@ class Settings(BaseSettings):
     context_prioritize_by: str = Field(default="score", description="优先级排序字段（score/recency/custom）。")
 
     # Answer Grading 配置
+    answer_grading_enabled: bool = Field(default=True, description="是否启用答案评分。")
     answer_confidence_threshold: float = Field(default=0.5, description="答案置信度阈值，低于此值触发拒答。")
     answer_min_citation_count: int = Field(default=1, description="最小引用数量。")
     answer_enable_llm_grading: bool = Field(default=True, description="是否启用 LLM 评分。")
     answer_grading_model: str = Field(default="gpt-4o-mini", description="用于答案评分的模型。")
+    answer_grading_retrieval_weight: float = Field(default=0.4, description="检索质量权重。")
+    answer_grading_llm_weight: float = Field(default=0.4, description="LLM 自评权重。")
+    answer_grading_citation_weight: float = Field(default=0.2, description="引用覆盖权重。")
 
     # Parent-Child Chunk 配置
     parent_child_merge_enabled: bool = Field(default=True, description="是否启用父子块合并。")

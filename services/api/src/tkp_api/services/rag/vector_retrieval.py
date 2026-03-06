@@ -97,6 +97,7 @@ class VectorRetriever:
                 dc.content,
                 dc.metadata,
                 dc.embedding_model,
+                dc.parent_chunk_id,
                 d.title AS document_title,
                 kb.name AS kb_name,
                 1 - (dc.embedding <=> CAST(:query_vector AS vector)) AS similarity
@@ -129,6 +130,7 @@ class VectorRetriever:
                     "similarity": float(row["similarity"]),
                     "metadata": row["metadata"],
                     "embedding_model": row["embedding_model"],
+                    "parent_chunk_id": str(row["parent_chunk_id"]) if row["parent_chunk_id"] else None,
                 }
             )
 

@@ -4,6 +4,7 @@
 """
 
 import logging
+import re
 from typing import Any
 
 logger = logging.getLogger("tkp_api.rag.llm_generator")
@@ -46,6 +47,7 @@ class LLMGenerator:
         context_chunks: list[dict[str, Any]],
         system_prompt: str | None = None,
         history_messages: list[dict[str, str]] | None = None,
+        include_confidence: bool = False,
     ) -> dict[str, Any]:
         """基于检索上下文生成回答。
 
@@ -54,9 +56,10 @@ class LLMGenerator:
             context_chunks: 检索到的文档块列表
             system_prompt: 可选的系统提示词
             history_messages: 历史对话消息（用于上下文记忆）
+            include_confidence: 是否要求 LLM 提供置信度评分
 
         Returns:
-            包含 answer、usage、citations 的字典
+            包含 answer、usage、citations、llm_confidence 的字典
         """
         if not query.strip():
             raise ValueError("Query cannot be empty")
@@ -83,15 +86,27 @@ class LLMGenerator:
 
         # 默认系统提示词
         if not system_prompt:
-            system_prompt = (
-                "你是一个专业的知识助手。请基于提供的文档内容回答用户问题。\n"
-                "要求：\n"
-                "1. 仅使用提供的文档内容回答，不要编造信息\n"
-                "2. 如果文档中没有相关信息，明确告知用户\n"
-                "3. 回答要准确、简洁、有条理\n"
-                "4. 在回答中引用文档编号（如[文档1]）来标注信息来源\n"
-                "5. 注意上下文，如果用户提到'上次'、'刚才'等，参考历史对话"
-            )
+            if include_confidence:
+                system_prompt = (
+                    "你是一个专业的知识助手。请基于提供的文档内容回答用户问题。\n"
+                    "要求：\n"
+                    "1. 仅使用提供的文档内容回答，不要编造信息\n"
+                    "2. 如果文档中没有相关信息，明确告知用户\n"
+                    "3. 回答要准确、简洁、有条理\n"
+                    "4. 在回答中引用文档编号（如[文档1]）来标注信息来源\n"
+                    "5. 注意上下文，如果用户提到'上次'、'刚才'等，参考历史对话\n"
+                    "6. 在回答末尾用 [CONFIDENCE: X.XX] 格式提供你对答案的置信度（0.00-1.00）"
+                )
+            else:
+                system_prompt = (
+                    "你是一个专业的知识助手。请基于提供的文档内容回答用户问题。\n"
+                    "要求：\n"
+                    "1. 仅使用提供的文档内容回答，不要编造信息\n"
+                    "2. 如果文档中没有相关信息，明确告知用户\n"
+                    "3. 回答要准确、简洁、有条理\n"
+                    "4. 在回答中引用文档编号（如[文档1]）来标注信息来源\n"
+                    "5. 注意上下文，如果用户提到'上次'、'刚才'等，参考历史对话"
+                )
 
         # 构建消息
         messages = [
@@ -126,11 +141,19 @@ class LLMGenerator:
                 "total_tokens": response.usage.total_tokens,
             }
 
+            # 提取 LLM 置信度（如果有）
+            llm_confidence = None
+            if include_confidence:
+                llm_confidence = self._extract_confidence(answer)
+                # 移除置信度标记
+                answer = self._remove_confidence_marker(answer)
+
             logger.info(
-                "generated answer: query_len=%d, answer_len=%d, tokens=%d",
+                "generated answer: query_len=%d, answer_len=%d, tokens=%d, llm_confidence=%s",
                 len(query),
                 len(answer) if answer else 0,
                 usage["total_tokens"],
+                f"{llm_confidence:.2f}" if llm_confidence is not None else "N/A",
             )
 
             return {
@@ -138,11 +161,54 @@ class LLMGenerator:
                 "usage": usage,
                 "citations": citations,
                 "model": self.model,
+                "llm_confidence": llm_confidence,
             }
 
         except Exception as exc:
             logger.exception("failed to generate answer: %s", exc)
             raise RuntimeError(f"LLM generation failed: {exc}") from exc
+
+    def _extract_confidence(self, text: str) -> float | None:
+        """从文本中提取置信度分数。
+
+        Args:
+            text: LLM 生成的文本
+
+        Returns:
+            置信度分数（0-1），如果未找到则返回 None
+        """
+        # 匹配 [CONFIDENCE: X.XX] 格式
+        pattern = r'\[CONFIDENCE:\s*([0-9]*\.?[0-9]+)\]'
+        match = re.search(pattern, text, re.IGNORECASE)
+
+        if match:
+            try:
+                confidence = float(match.group(1))
+                # 确保在 0-1 范围内
+                return max(0.0, min(1.0, confidence))
+            except ValueError:
+                logger.warning("failed to parse confidence value: %s", match.group(1))
+                return None
+
+        return None
+
+    def _remove_confidence_marker(self, text: str) -> str:
+        """从文本中移除置信度标记。
+
+        Args:
+            text: LLM 生成的文本
+
+        Returns:
+            移除置信度标记后的文本
+        """
+        # 移除 [CONFIDENCE: X.XX] 标记
+        pattern = r'\[CONFIDENCE:\s*[0-9]*\.?[0-9]+\]'
+        cleaned_text = re.sub(pattern, '', text, flags=re.IGNORECASE)
+
+        # 清理多余的空白
+        cleaned_text = cleaned_text.strip()
+
+        return cleaned_text
 
     def generate_streaming_answer(
         self,

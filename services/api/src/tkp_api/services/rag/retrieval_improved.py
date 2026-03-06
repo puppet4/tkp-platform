@@ -11,6 +11,9 @@ from sqlalchemy.orm import Session
 from tkp_api.core.config import get_settings
 from tkp_api.services.rag.vector_retrieval import create_retriever
 from tkp_api.services.rag.llm_generator import create_generator
+from tkp_api.services.query_preprocessing import QueryPreprocessor
+from tkp_api.services.parent_child_merger import ParentChildMerger
+from tkp_api.services.rag.answer_grader import create_answer_grader
 
 logger = logging.getLogger("tkp_api.rag.retrieval_improved")
 
@@ -18,6 +21,9 @@ logger = logging.getLogger("tkp_api.rag.retrieval_improved")
 _embedding_service = None
 _retriever = None
 _generator = None
+_query_preprocessor = None
+_parent_child_merger = None
+_answer_grader = None
 
 
 def _get_embedding_service():
@@ -60,6 +66,38 @@ def _get_generator():
     return _generator
 
 
+def _get_query_preprocessor():
+    """获取或创建查询预处理器单例。"""
+    global _query_preprocessor
+    if _query_preprocessor is None:
+        settings = get_settings()
+        _query_preprocessor = QueryPreprocessor(
+            enable_language_detection=settings.query_language_detection_enabled,
+            enable_spell_correction=settings.query_spell_correction_enabled,
+        )
+    return _query_preprocessor
+
+
+def _get_parent_child_merger():
+    """获取或创建父子块合并器单例。"""
+    global _parent_child_merger
+    if _parent_child_merger is None:
+        settings = get_settings()
+        _parent_child_merger = ParentChildMerger(
+            enable_merge=settings.parent_child_merge_enabled,
+            max_merge_distance=settings.parent_child_max_merge_distance,
+        )
+    return _parent_child_merger
+
+
+def _get_answer_grader():
+    """获取或创建答案评分器单例。"""
+    global _answer_grader
+    if _answer_grader is None:
+        _answer_grader = create_answer_grader()
+    return _answer_grader
+
+
 def search_chunks_improved(
     db: Session,
     *,
@@ -82,6 +120,22 @@ def search_chunks_improved(
     """
     if not query.strip():
         return []
+
+    settings = get_settings()
+    original_query = query
+
+    # Feature 1: Query Preprocessing
+    if settings.query_language_detection_enabled or settings.query_spell_correction_enabled:
+        preprocessor = _get_query_preprocessor()
+        preprocessing_result = preprocessor.preprocess(query)
+        query = preprocessing_result["processed_query"]
+
+        logger.info(
+            "query preprocessing: original='%s', processed='%s', language=%s",
+            original_query[:50],
+            query[:50],
+            preprocessing_result.get("language"),
+        )
 
     retriever = _get_retriever()
 
@@ -111,8 +165,19 @@ def search_chunks_improved(
                     "score": result["similarity"],
                     "similarity": result["similarity"],
                     "metadata": result["metadata"],
+                    "parent_chunk_id": result.get("parent_chunk_id"),
                 }
             )
+
+        # Feature 2: Parent-Child Chunk Merging
+        if settings.parent_child_merge_enabled and formatted_results:
+            merger = _get_parent_child_merger()
+            formatted_results = merger.merge_with_parents(
+                db=db,
+                chunks=formatted_results,
+                tenant_id=tenant_id,
+            )
+            logger.info("parent-child merging applied: %d chunks", len(formatted_results))
 
         logger.info("search completed: query=%s, results=%d", query[:50], len(formatted_results))
         return formatted_results
@@ -169,20 +234,59 @@ def generate_answer_improved(
 
     # 使用 LLM 生成回答
     generator = _get_generator()
+    settings = get_settings()
 
     try:
+        # 如果启用答案评分，请求 LLM 提供置信度
         result = generator.generate_answer(
             query=question,
             context_chunks=chunks,
             history_messages=history_messages,
+            include_confidence=settings.answer_grading_enabled,
         )
 
+        # Feature 3: Answer Grading
+        if settings.answer_grading_enabled:
+            grader = _get_answer_grader()
+            grading = grader.calculate_confidence(
+                query=question,
+                answer=result["answer"],
+                chunks=chunks,
+                llm_confidence=result.get("llm_confidence"),
+            )
+
+            # 如果置信度过低，返回拒答
+            if grading["rejected"]:
+                logger.warning(
+                    "answer rejected: confidence=%.2f, reason=%s",
+                    grading["confidence_score"],
+                    grading["rejection_reason"],
+                )
+                return {
+                    "answer": grading["rejection_message"],
+                    "citations": [],
+                    "usage": result["usage"],
+                    "confidence_score": grading["confidence_score"],
+                    "rejected": True,
+                    "rejection_reason": grading["rejection_reason"],
+                    "suggestions": grading["suggestions"],
+                }
+
+            # 添加置信度信息到结果
+            result["confidence_score"] = grading["confidence_score"]
+            result["confidence_breakdown"] = {
+                "retrieval_score": grading["retrieval_score"],
+                "llm_score": grading["llm_score"],
+                "citation_score": grading["citation_score"],
+            }
+
         logger.info(
-            "answer generated: question=%s, chunks=%d, history=%d, tokens=%d",
+            "answer generated: question=%s, chunks=%d, history=%d, tokens=%d, confidence=%s",
             question[:50],
             len(chunks),
             len(history_messages) if history_messages else 0,
             result["usage"]["total_tokens"],
+            f"{result.get('confidence_score', 0):.2f}" if settings.answer_grading_enabled else "N/A",
         )
 
         return result
