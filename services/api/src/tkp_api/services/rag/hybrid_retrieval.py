@@ -148,13 +148,15 @@ class HybridRetriever:
     ) -> list[dict[str, Any]]:
         """纯向量检索。"""
         try:
-            with db.connection() as conn:
-                results = self.vector_retriever.retrieve(
-                    conn,
-                    query=query,
-                    tenant_id=tenant_id,
-                    kb_ids=kb_ids,
-                )
+            # Reuse the session-managed connection and do not close it here.
+            # Closing it early can break later session commit/flush lifecycle.
+            conn = db.connection()
+            results = self.vector_retriever.retrieve(
+                conn,
+                query=query,
+                tenant_id=tenant_id,
+                kb_ids=kb_ids,
+            )
 
             # 格式化结果
             hits = []

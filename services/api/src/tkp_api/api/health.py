@@ -46,6 +46,7 @@ def ready(request: Request, db: Session = Depends(get_db)):
     summary="详细健康检查",
     description="检查所有依赖服务的健康状态。",
     status_code=status.HTTP_200_OK,
+    include_in_schema=False,
 )
 def detailed_health(request: Request, db: Session = Depends(get_db)):
     """执行详细的健康检查，包括所有依赖服务。"""

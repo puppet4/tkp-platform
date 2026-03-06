@@ -1,4 +1,6 @@
 -- 数据删除请求表
+BEGIN;
+
 CREATE TABLE IF NOT EXISTS deletion_requests (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     tenant_id UUID NOT NULL,
@@ -20,9 +22,9 @@ CREATE TABLE IF NOT EXISTS deletion_requests (
 );
 
 -- 索引
-CREATE INDEX idx_deletion_requests_tenant_id ON deletion_requests(tenant_id);
-CREATE INDEX idx_deletion_requests_status ON deletion_requests(status);
-CREATE INDEX idx_deletion_requests_resource ON deletion_requests(resource_type, resource_id);
+CREATE INDEX IF NOT EXISTS idx_deletion_requests_tenant_id ON deletion_requests(tenant_id);
+CREATE INDEX IF NOT EXISTS idx_deletion_requests_status ON deletion_requests(status);
+CREATE INDEX IF NOT EXISTS idx_deletion_requests_resource ON deletion_requests(resource_type, resource_id);
 
 -- 注释
 COMMENT ON TABLE deletion_requests IS '数据删除请求表';
@@ -37,7 +39,7 @@ COMMENT ON COLUMN deletion_requests.status IS '状态（pending/approved/rejecte
 -- 数据删除证明表
 CREATE TABLE IF NOT EXISTS deletion_proofs (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    request_id UUID NOT NULL REFERENCES deletion_requests(id),
+    request_id UUID NOT NULL,
     tenant_id UUID NOT NULL,
     resource_type VARCHAR(50) NOT NULL,
     resource_id UUID NOT NULL,
@@ -50,10 +52,10 @@ CREATE TABLE IF NOT EXISTS deletion_proofs (
 );
 
 -- 索引
-CREATE INDEX idx_deletion_proofs_tenant_id ON deletion_proofs(tenant_id);
-CREATE INDEX idx_deletion_proofs_request_id ON deletion_proofs(request_id);
-CREATE INDEX idx_deletion_proofs_resource ON deletion_proofs(resource_type, resource_id);
-CREATE INDEX idx_deletion_proofs_proof_hash ON deletion_proofs(proof_hash);
+CREATE INDEX IF NOT EXISTS idx_deletion_proofs_tenant_id ON deletion_proofs(tenant_id);
+CREATE INDEX IF NOT EXISTS idx_deletion_proofs_request_id ON deletion_proofs(request_id);
+CREATE INDEX IF NOT EXISTS idx_deletion_proofs_resource ON deletion_proofs(resource_type, resource_id);
+CREATE INDEX IF NOT EXISTS idx_deletion_proofs_proof_hash ON deletion_proofs(proof_hash);
 
 -- 注释
 COMMENT ON TABLE deletion_proofs IS '数据删除证明表';
@@ -67,3 +69,5 @@ COMMENT ON COLUMN deletion_proofs.deleted_by IS '执行删除的用户 ID';
 COMMENT ON COLUMN deletion_proofs.data_hash IS '删除数据的哈希值';
 COMMENT ON COLUMN deletion_proofs.proof_hash IS '证明的哈希值（用于验证完整性）';
 COMMENT ON COLUMN deletion_proofs.metadata IS '额外元数据';
+
+COMMIT;

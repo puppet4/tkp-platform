@@ -86,13 +86,13 @@ def search_chunks_improved(
     retriever = _get_retriever()
 
     try:
-        with db.connection() as conn:
-            results = retriever.retrieve(
-                conn,
-                query=query,
-                tenant_id=tenant_id,
-                kb_ids=kb_ids,
-            )
+        conn = db.connection()
+        results = retriever.retrieve(
+            conn,
+            query=query,
+            tenant_id=tenant_id,
+            kb_ids=kb_ids,
+        )
 
         # 格式化为统一的返回格式
         formatted_results = []
