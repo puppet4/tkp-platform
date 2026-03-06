@@ -74,6 +74,61 @@ class Settings(BaseSettings):
     # 检索配置
     retrieval_top_k: int = Field(default=5, description="检索返回的最大结果数。")
     retrieval_similarity_threshold: float = Field(default=0.7, description="检索相似度阈值。")
+    retrieval_default_strategy: str = Field(default="hybrid", description="默认检索策略（vector/fulltext/hybrid）。")
+    retrieval_vector_weight: float = Field(default=0.5, description="混合检索中向量检索的权重。")
+    retrieval_fulltext_weight: float = Field(default=0.5, description="混合检索中全文检索的权重。")
+    retrieval_enable_rerank: bool = Field(default=False, description="是否启用重排序。")
+    retrieval_enable_query_rewrite: bool = Field(default=False, description="是否启用查询改写。")
+
+    # Elasticsearch 配置（用于全文检索）
+    elasticsearch_enabled: bool = Field(default=False, description="是否启用 Elasticsearch。")
+    elasticsearch_hosts: str = Field(default="http://localhost:9200", description="Elasticsearch 节点地址，逗号分隔。")
+    elasticsearch_api_key: str = Field(default="", description="Elasticsearch API Key。")
+    elasticsearch_username: str = Field(default="", description="Elasticsearch 用户名。")
+    elasticsearch_password: str = Field(default="", description="Elasticsearch 密码。")
+    elasticsearch_index_name: str = Field(default="tkp_chunks", description="Elasticsearch 索引名称。")
+    elasticsearch_verify_certs: bool = Field(default=True, description="是否验证 SSL 证书。")
+
+    # 重排序配置
+    rerank_provider: str = Field(default="cohere", description="重排序提供商（cohere/jina/cross-encoder）。")
+    rerank_api_key: str = Field(default="", description="重排序 API 密钥。")
+    rerank_model: str = Field(default="", description="重排序模型名称。")
+    rerank_top_n: int = Field(default=5, description="重排序返回的最大结果数。")
+
+    # 查询改写配置
+    query_rewrite_strategy: str = Field(default="expansion", description="查询改写策略（expansion/multi_query/synonym）。")
+
+    # 可观测性配置
+    observability_enabled: bool = Field(default=False, description="是否启用可观测性功能。")
+    observability_service_name: str = Field(default="tkp-api", description="服务名称（用于追踪和指标）。")
+    observability_service_version: str = Field(default="1.0.0", description="服务版本。")
+    observability_otlp_endpoint: str = Field(default="", description="OTLP 导出端点（如 http://localhost:4317）。")
+    observability_enable_traces: bool = Field(default=True, description="是否启用分布式追踪。")
+    observability_enable_metrics: bool = Field(default=True, description="是否启用指标收集。")
+    observability_enable_logs: bool = Field(default=False, description="是否启用日志导出。")
+    observability_log_format: str = Field(default="json", description="日志格式（json/text）。")
+    observability_log_level: str = Field(default="INFO", description="日志级别。")
+
+    # 数据治理配置
+    governance_enable_rls: bool = Field(default=False, description="是否启用 Row Level Security。")
+    governance_enable_pii_detection: bool = Field(default=True, description="是否启用 PII 检测。")
+    governance_enable_pii_masking: bool = Field(default=True, description="是否启用 PII 脱敏。")
+    governance_deletion_require_approval: bool = Field(default=True, description="数据删除是否需要审批。")
+    governance_retention_enabled: bool = Field(default=False, description="是否启用数据保留策略。")
+
+    # Agent 高级功能配置
+    agent_enable_sandbox: bool = Field(default=True, description="是否启用 Agent 沙箱。")
+    agent_enable_guardrail: bool = Field(default=True, description="是否启用 Agent Guardrail。")
+    agent_sandbox_timeout: int = Field(default=30, description="沙箱执行超时时间（秒）。")
+    agent_sandbox_max_memory_mb: int = Field(default=512, description="沙箱最大内存限制（MB）。")
+    agent_max_iterations: int = Field(default=10, description="Agent 最大迭代次数。")
+    agent_rate_limit_per_minute: int = Field(default=60, description="Agent 每分钟最大调用次数。")
+
+    # Kafka 配置
+    kafka_enabled: bool = Field(default=False, description="是否启用 Kafka。")
+    kafka_bootstrap_servers: str = Field(default="localhost:9092", description="Kafka 服务器地址，逗号分隔。")
+    kafka_client_id: str = Field(default="tkp-api", description="Kafka 客户端 ID。")
+    kafka_consumer_group_id: str = Field(default="tkp-api-group", description="Kafka 消费者组 ID。")
 
     @field_validator("auth_jwt_algorithms")
     @classmethod

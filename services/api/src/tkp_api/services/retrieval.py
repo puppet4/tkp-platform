@@ -1,4 +1,4 @@
-"""RAG 服务封装（使用本地 RAG 模块）。"""
+"""RAG 服务封装（使用本地 RAG 模块，支持混合检索）。"""
 
 from __future__ import annotations
 
@@ -11,6 +11,94 @@ from sqlalchemy.orm import Session
 
 from tkp_api.core.config import get_settings
 from tkp_api.services.rag import search_chunks_improved, generate_answer_improved
+
+# 全局混合检索器实例（延迟初始化）
+_hybrid_retriever = None
+
+
+def _get_hybrid_retriever():
+    """获取或创建混合检索器单例。"""
+    global _hybrid_retriever
+    if _hybrid_retriever is None:
+        from tkp_api.services.rag.vector_retrieval import create_retriever
+        from tkp_api.services.rag.embeddings import create_embedding_service
+        from tkp_api.services.rag.hybrid_retrieval import create_hybrid_retriever
+
+        settings = get_settings()
+
+        # 创建向量检索器
+        embedding_service = create_embedding_service(
+            api_key=settings.openai_api_key,
+            model=settings.openai_embedding_model,
+        )
+        vector_retriever = create_retriever(
+            embedding_service=embedding_service,
+            top_k=settings.retrieval_top_k,
+            similarity_threshold=settings.retrieval_similarity_threshold,
+        )
+
+        # 创建 Elasticsearch 客户端（如果启用）
+        elasticsearch_client = None
+        if settings.elasticsearch_enabled:
+            try:
+                from tkp_api.services.rag.elasticsearch_client import create_elasticsearch_client
+
+                elasticsearch_client = create_elasticsearch_client(
+                    hosts=settings.elasticsearch_hosts.split(","),
+                    api_key=settings.elasticsearch_api_key or None,
+                    username=settings.elasticsearch_username or None,
+                    password=settings.elasticsearch_password or None,
+                    verify_certs=settings.elasticsearch_verify_certs,
+                )
+            except Exception as exc:
+                import logging
+
+                logging.warning("failed to initialize elasticsearch: %s", exc)
+
+        # 创建重排序器（如果启用）
+        reranker = None
+        if settings.retrieval_enable_rerank and settings.rerank_api_key:
+            try:
+                from tkp_api.services.rag.reranker import create_reranker
+
+                reranker = create_reranker(
+                    provider=settings.rerank_provider,
+                    api_key=settings.rerank_api_key,
+                    model=settings.rerank_model or None,
+                    top_n=settings.rerank_top_n,
+                )
+            except Exception as exc:
+                import logging
+
+                logging.warning("failed to initialize reranker: %s", exc)
+
+        # 创建查询改写器（如果启用）
+        query_rewriter = None
+        if settings.retrieval_enable_query_rewrite:
+            try:
+                from tkp_api.services.rag.query_rewriter import create_query_rewriter
+
+                query_rewriter = create_query_rewriter(
+                    api_key=settings.openai_api_key,
+                    model=settings.openai_chat_model,
+                    strategy=settings.query_rewrite_strategy,
+                )
+            except Exception as exc:
+                import logging
+
+                logging.warning("failed to initialize query rewriter: %s", exc)
+
+        # 创建混合检索器
+        _hybrid_retriever = create_hybrid_retriever(
+            vector_retriever=vector_retriever,
+            elasticsearch_client=elasticsearch_client,
+            reranker=reranker,
+            query_rewriter=query_rewriter,
+            vector_weight=settings.retrieval_vector_weight,
+            fulltext_weight=settings.retrieval_fulltext_weight,
+        )
+
+    return _hybrid_retriever
 
 
 def _compose_answer(question: str, hits: list[dict[str, object]]) -> str:
@@ -33,32 +121,66 @@ def query_chunks(
     retrieval_strategy: str = "hybrid",
     min_score: int = 0,
 ) -> dict[str, Any]:
-    """查询检索结果（使用本地 RAG 模块）。"""
+    """查询检索结果（支持混合检索）。"""
     start = time.perf_counter()
+    settings = get_settings()
 
-    # 使用本地 RAG 模块进行检索
-    hits = search_chunks_improved(
-        db,
-        tenant_id=tenant_id,
-        kb_ids=kb_ids,
-        query=query,
-        top_k=top_k,
-    )
+    # 使用配置的默认策略（如果未指定）
+    if retrieval_strategy == "hybrid" and not settings.elasticsearch_enabled:
+        retrieval_strategy = "vector"
 
-    latency_ms = int((time.perf_counter() - start) * 1000)
+    # 使用混合检索器
+    try:
+        hybrid_retriever = _get_hybrid_retriever()
+        result = hybrid_retriever.retrieve(
+            db,
+            query=query,
+            tenant_id=tenant_id,
+            kb_ids=kb_ids,
+            top_k=top_k,
+            strategy=retrieval_strategy,
+            enable_rerank=settings.retrieval_enable_rerank,
+            enable_query_rewrite=settings.retrieval_enable_query_rewrite,
+        )
 
-    return {
-        "hits": hits,
-        "latency_ms": latency_ms,
-        "retrieval_strategy": "vector",
-        "query_rewrite": {
-            "original_query": query,
-            "rewritten_query": query,
-            "rewrite_applied": False,
-        },
-        "effective_min_score": min_score,
-        "rerank_applied": False,
-    }
+        latency_ms = int((time.perf_counter() - start) * 1000)
+
+        return {
+            "hits": result["hits"],
+            "latency_ms": latency_ms,
+            "retrieval_strategy": result["strategy"],
+            "query_rewrite": result["query_rewrite"],
+            "effective_min_score": min_score,
+            "rerank_applied": result["rerank_applied"],
+        }
+    except Exception as exc:
+        import logging
+
+        logging.exception("hybrid retrieval failed, fallback to simple vector search: %s", exc)
+
+        # 回退到简单向量检索
+        hits = search_chunks_improved(
+            db,
+            tenant_id=tenant_id,
+            kb_ids=kb_ids,
+            query=query,
+            top_k=top_k,
+        )
+
+        latency_ms = int((time.perf_counter() - start) * 1000)
+
+        return {
+            "hits": hits,
+            "latency_ms": latency_ms,
+            "retrieval_strategy": "vector",
+            "query_rewrite": {
+                "original_query": query,
+                "rewritten_query": query,
+                "rewrite_applied": False,
+            },
+            "effective_min_score": min_score,
+            "rerank_applied": False,
+        }
 
 
 def generate_chat_answer(

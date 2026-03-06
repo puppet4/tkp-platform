@@ -39,3 +39,33 @@ def ready(request: Request, db: Session = Depends(get_db)):
     # 仅执行最小查询，避免探针请求给数据库带来额外压力。
     db.execute(text("select 1"))
     return success(request, {"status": "ready"})
+
+
+@router.get(
+    "/detailed",
+    summary="详细健康检查",
+    description="检查所有依赖服务的健康状态。",
+    status_code=status.HTTP_200_OK,
+)
+def detailed_health(request: Request, db: Session = Depends(get_db)):
+    """执行详细的健康检查，包括所有依赖服务。"""
+    try:
+        from tkp_api.observability.health import get_health_checker
+
+        checker = get_health_checker()
+        result = checker.check_readiness()
+
+        # 如果有任何服务不健康，返回 503
+        if result["status"] != "healthy":
+            return success(request, result, status_code=status.HTTP_503_SERVICE_UNAVAILABLE)
+
+        return success(request, result)
+    except Exception as exc:
+        return success(
+            request,
+            {
+                "status": "unhealthy",
+                "error": str(exc),
+            },
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+        )
