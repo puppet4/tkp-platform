@@ -129,6 +129,7 @@ def generate_answer_improved(
     kb_ids: list[UUID] | None,
     question: str,
     top_k: int = 5,
+    history_messages: list[dict[str, str]] | None = None,
 ) -> dict[str, Any]:
     """改进的问答生成接口。
 
@@ -138,6 +139,7 @@ def generate_answer_improved(
         kb_ids: 知识库ID列表
         question: 用户问题
         top_k: 检索结果数量
+        history_messages: 历史对话消息（用于上下文记忆）
 
     Returns:
         包含 answer、citations、usage 的字典
@@ -172,12 +174,14 @@ def generate_answer_improved(
         result = generator.generate_answer(
             query=question,
             context_chunks=chunks,
+            history_messages=history_messages,
         )
 
         logger.info(
-            "answer generated: question=%s, chunks=%d, tokens=%d",
+            "answer generated: question=%s, chunks=%d, history=%d, tokens=%d",
             question[:50],
             len(chunks),
+            len(history_messages) if history_messages else 0,
             result["usage"]["total_tokens"],
         )
 

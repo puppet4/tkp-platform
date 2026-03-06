@@ -45,6 +45,7 @@ class LLMGenerator:
         query: str,
         context_chunks: list[dict[str, Any]],
         system_prompt: str | None = None,
+        history_messages: list[dict[str, str]] | None = None,
     ) -> dict[str, Any]:
         """基于检索上下文生成回答。
 
@@ -52,6 +53,7 @@ class LLMGenerator:
             query: 用户查询
             context_chunks: 检索到的文档块列表
             system_prompt: 可选的系统提示词
+            history_messages: 历史对话消息（用于上下文记忆）
 
         Returns:
             包含 answer、usage、citations 的字典
@@ -87,17 +89,27 @@ class LLMGenerator:
                 "1. 仅使用提供的文档内容回答，不要编造信息\n"
                 "2. 如果文档中没有相关信息，明确告知用户\n"
                 "3. 回答要准确、简洁、有条理\n"
-                "4. 在回答中引用文档编号（如[文档1]）来标注信息来源"
+                "4. 在回答中引用文档编号（如[文档1]）来标注信息来源\n"
+                "5. 注意上下文，如果用户提到'上次'、'刚才'等，参考历史对话"
             )
 
         # 构建消息
         messages = [
             {"role": "system", "content": system_prompt},
-            {
-                "role": "user",
-                "content": f"参考文档：\n\n{context_text}\n\n用户问题：{query}",
-            },
         ]
+
+        # 添加历史对话（短期记忆）
+        if history_messages:
+            # 限制历史消息数量，避免超出上下文窗口
+            max_history = 10  # 最多保留最近 10 轮对话
+            recent_history = history_messages[-max_history * 2:] if len(history_messages) > max_history * 2 else history_messages
+            messages.extend(recent_history)
+
+        # 添加当前问题和检索上下文
+        messages.append({
+            "role": "user",
+            "content": f"参考文档：\n\n{context_text}\n\n用户问题：{query}",
+        })
 
         try:
             response = self.client.chat.completions.create(

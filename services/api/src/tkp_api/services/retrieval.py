@@ -190,8 +190,21 @@ def generate_chat_answer(
     kb_ids: list[UUID],
     question: str,
     top_k: int = 6,
+    context_messages: list[dict[str, str]] | None = None,
 ) -> dict[str, Any]:
-    """生成问答回复（使用本地 RAG 模块）。"""
+    """生成问答回复（使用本地 RAG 模块）。
+
+    Args:
+        db: 数据库会话
+        tenant_id: 租户ID
+        kb_ids: 知识库ID列表
+        question: 用户问题
+        top_k: 检索结果数量
+        context_messages: 历史对话消息（用于上下文记忆）
+
+    Returns:
+        包含 answer、citations、usage 的字典
+    """
     # 使用本地 RAG 模块生成答案
     result = generate_answer_improved(
         db,
@@ -199,5 +212,6 @@ def generate_chat_answer(
         kb_ids=kb_ids,
         question=question,
         top_k=top_k,
+        history_messages=context_messages,
     )
     return result
