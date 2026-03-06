@@ -17,6 +17,7 @@ from tkp_rag.schemas.internal import (
 )
 from tkp_rag.services.agent import build_plan
 from tkp_rag.services.retrieval import generate_answer, search_chunks_detailed
+from tkp_rag.services.retrieval_improved import generate_answer_improved, search_chunks_improved
 
 router = APIRouter(prefix="/internal", tags=["internal-rag"], dependencies=[Depends(require_internal_token)])
 
@@ -29,26 +30,51 @@ router = APIRouter(prefix="/internal", tags=["internal-rag"], dependencies=[Depe
 )
 def retrieval_query(payload: RetrievalQueryInternalRequest, db: Session = Depends(get_db)):
     start = time.perf_counter()
-    retrieval = search_chunks_detailed(
-        db,
-        tenant_id=payload.tenant_id,
-        kb_ids=payload.kb_ids,
-        query=payload.query,
-        top_k=payload.top_k,
-        filters=payload.filters,
-        with_citations=payload.with_citations,
-        retrieval_strategy=payload.retrieval_strategy,
-        min_score=payload.min_score,
-    )
-    latency_ms = int((time.perf_counter() - start) * 1000)
-    return {
-        "hits": retrieval["hits"],
-        "latency_ms": latency_ms,
-        "retrieval_strategy": payload.retrieval_strategy,
-        "query_rewrite": retrieval["query_rewrite"],
-        "effective_min_score": retrieval["effective_min_score"],
-        "rerank_applied": retrieval["rerank_applied"],
-    }
+
+    # 优先使用改进的向量检索
+    try:
+        hits = search_chunks_improved(
+            db,
+            tenant_id=payload.tenant_id,
+            kb_ids=payload.kb_ids,
+            query=payload.query,
+            top_k=payload.top_k,
+        )
+        latency_ms = int((time.perf_counter() - start) * 1000)
+        return {
+            "hits": hits,
+            "latency_ms": latency_ms,
+            "retrieval_strategy": "vector",
+            "query_rewrite": payload.query,
+            "effective_min_score": 0,
+            "rerank_applied": False,
+        }
+    except Exception as exc:
+        # 回退到原有实现
+        import logging
+        logger = logging.getLogger("tkp_rag.api")
+        logger.warning("improved retrieval failed, falling back: %s", exc)
+
+        retrieval = search_chunks_detailed(
+            db,
+            tenant_id=payload.tenant_id,
+            kb_ids=payload.kb_ids,
+            query=payload.query,
+            top_k=payload.top_k,
+            filters=payload.filters,
+            with_citations=payload.with_citations,
+            retrieval_strategy=payload.retrieval_strategy,
+            min_score=payload.min_score,
+        )
+        latency_ms = int((time.perf_counter() - start) * 1000)
+        return {
+            "hits": retrieval["hits"],
+            "latency_ms": latency_ms,
+            "retrieval_strategy": payload.retrieval_strategy,
+            "query_rewrite": retrieval["query_rewrite"],
+            "effective_min_score": retrieval["effective_min_score"],
+            "rerank_applied": retrieval["rerank_applied"],
+        }
 
 
 @router.post(
@@ -59,22 +85,45 @@ def retrieval_query(payload: RetrievalQueryInternalRequest, db: Session = Depend
 )
 def chat_generate(payload: ChatGenerateInternalRequest, db: Session = Depends(get_db)):
     start = time.perf_counter()
-    result = generate_answer(
-        db,
-        tenant_id=payload.tenant_id,
-        kb_ids=payload.kb_ids,
-        question=payload.question,
-        top_k=payload.top_k,
-        filters=payload.filters,
-        with_citations=payload.with_citations,
-    )
-    latency_ms = int((time.perf_counter() - start) * 1000)
-    return {
-        "answer": result["answer"],
-        "citations": result["citations"],
-        "usage": result["usage"],
-        "latency_ms": latency_ms,
-    }
+
+    # 优先使用改进的 LLM 生成
+    try:
+        result = generate_answer_improved(
+            db,
+            tenant_id=payload.tenant_id,
+            kb_ids=payload.kb_ids,
+            question=payload.question,
+            top_k=payload.top_k,
+        )
+        latency_ms = int((time.perf_counter() - start) * 1000)
+        return {
+            "answer": result["answer"],
+            "citations": result["citations"],
+            "usage": result["usage"],
+            "latency_ms": latency_ms,
+        }
+    except Exception as exc:
+        # 回退到原有实现
+        import logging
+        logger = logging.getLogger("tkp_rag.api")
+        logger.warning("improved generation failed, falling back: %s", exc)
+
+        result = generate_answer(
+            db,
+            tenant_id=payload.tenant_id,
+            kb_ids=payload.kb_ids,
+            question=payload.question,
+            top_k=payload.top_k,
+            filters=payload.filters,
+            with_citations=payload.with_citations,
+        )
+        latency_ms = int((time.perf_counter() - start) * 1000)
+        return {
+            "answer": result["answer"],
+            "citations": result["citations"],
+            "usage": result["usage"],
+            "latency_ms": latency_ms,
+        }
 
 
 @router.post(

@@ -1,4 +1,4 @@
-"""RAG 客户端封装（API -> RAG 服务）。"""
+"""RAG 服务封装（使用本地 RAG 模块）。"""
 
 from __future__ import annotations
 
@@ -10,8 +10,7 @@ from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
 
 from tkp_api.core.config import get_settings
-from tkp_api.services.rag_client import post_rag_json
-from tkp_api.services.retrieval_local import search_chunks, search_chunks_detailed
+from tkp_api.services.rag import search_chunks_improved, generate_answer_improved
 
 
 def _compose_answer(question: str, hits: list[dict[str, object]]) -> str:
@@ -34,79 +33,31 @@ def query_chunks(
     retrieval_strategy: str = "hybrid",
     min_score: int = 0,
 ) -> dict[str, Any]:
-    """查询检索结果。"""
-    settings = get_settings()
-    normalized_filters = filters or {}
-
-    if settings.rag_base_url:
-        remote_data = post_rag_json(
-            settings.rag_base_url,
-            "/internal/retrieval/query",
-            payload={
-                "tenant_id": str(tenant_id),
-                "kb_ids": [str(kb_id) for kb_id in kb_ids],
-                "query": query,
-                "top_k": top_k,
-                "filters": normalized_filters,
-                "with_citations": with_citations,
-                "retrieval_strategy": retrieval_strategy,
-                "min_score": min_score,
-            },
-            timeout_seconds=settings.rag_timeout_seconds,
-            internal_token=settings.internal_service_token,
-            max_retries=settings.rag_max_retries,
-            retry_backoff_seconds=settings.rag_retry_backoff_seconds,
-            circuit_fail_threshold=settings.rag_circuit_breaker_fail_threshold,
-            circuit_open_seconds=settings.rag_circuit_breaker_open_seconds,
-        )
-        hits = remote_data.get("hits", [])
-        latency_ms = int(remote_data.get("latency_ms") or 0)
-        effective_strategy = str(remote_data.get("retrieval_strategy") or retrieval_strategy)
-        query_rewrite = remote_data.get("query_rewrite") or {
-            "original_query": query,
-            "rewritten_query": query,
-            "rewrite_applied": False,
-        }
-        effective_min_score = int(remote_data.get("effective_min_score") or max(0, min(1000, int(min_score))))
-        rerank_applied = bool(remote_data.get("rerank_applied", False))
-        if not isinstance(hits, list):
-            raise HTTPException(
-                status_code=status.HTTP_502_BAD_GATEWAY,
-                detail={
-                    "code": "RAG_UPSTREAM_INVALID_RESPONSE",
-                    "message": "检索服务返回结构缺少 hits 数组。",
-                    "details": {"reason": "invalid_hits", "path": "/internal/retrieval/query"},
-                },
-            )
-        return {
-            "hits": hits,
-            "latency_ms": latency_ms,
-            "retrieval_strategy": effective_strategy,
-            "query_rewrite": query_rewrite,
-            "effective_min_score": effective_min_score,
-            "rerank_applied": rerank_applied,
-        }
-
+    """查询检索结果（使用本地 RAG 模块）。"""
     start = time.perf_counter()
-    detailed = search_chunks_detailed(
+
+    # 使用本地 RAG 模块进行检索
+    hits = search_chunks_improved(
         db,
         tenant_id=tenant_id,
         kb_ids=kb_ids,
         query=query,
         top_k=top_k,
-        filters=normalized_filters,
-        with_citations=with_citations,
-        retrieval_strategy=retrieval_strategy,
-        min_score=min_score,
     )
+
     latency_ms = int((time.perf_counter() - start) * 1000)
+
     return {
-        "hits": detailed["hits"],
+        "hits": hits,
         "latency_ms": latency_ms,
-        "retrieval_strategy": retrieval_strategy,
-        "query_rewrite": detailed["query_rewrite"],
-        "effective_min_score": detailed["effective_min_score"],
-        "rerank_applied": detailed["rerank_applied"],
+        "retrieval_strategy": "vector",
+        "query_rewrite": {
+            "original_query": query,
+            "rewritten_query": query,
+            "rewrite_applied": False,
+        },
+        "effective_min_score": min_score,
+        "rerank_applied": False,
     }
 
 
@@ -118,68 +69,13 @@ def generate_chat_answer(
     question: str,
     top_k: int = 6,
 ) -> dict[str, Any]:
-    """生成问答回复（检索 + 回答组装）。"""
-    settings = get_settings()
-
-    if settings.rag_base_url:
-        remote_data = post_rag_json(
-            settings.rag_base_url,
-            "/internal/chat/generate",
-            payload={
-                "tenant_id": str(tenant_id),
-                "kb_ids": [str(kb_id) for kb_id in kb_ids],
-                "question": question,
-                "top_k": top_k,
-                "filters": {},
-                "with_citations": True,
-            },
-            timeout_seconds=settings.rag_timeout_seconds,
-            internal_token=settings.internal_service_token,
-            max_retries=settings.rag_max_retries,
-            retry_backoff_seconds=settings.rag_retry_backoff_seconds,
-            circuit_fail_threshold=settings.rag_circuit_breaker_fail_threshold,
-            circuit_open_seconds=settings.rag_circuit_breaker_open_seconds,
-        )
-        answer = str(remote_data.get("answer") or "")
-        citations = remote_data.get("citations", [])
-        usage = remote_data.get("usage", {})
-        if not isinstance(citations, list) or not isinstance(usage, dict):
-            raise HTTPException(
-                status_code=status.HTTP_502_BAD_GATEWAY,
-                detail={
-                    "code": "RAG_UPSTREAM_INVALID_RESPONSE",
-                    "message": "检索服务返回结构不完整。",
-                    "details": {"reason": "invalid_chat_payload", "path": "/internal/chat/generate"},
-                },
-            )
-        return {"answer": answer, "citations": citations, "usage": usage}
-
-    hits = search_chunks(
+    """生成问答回复（使用本地 RAG 模块）。"""
+    # 使用本地 RAG 模块生成答案
+    result = generate_answer_improved(
         db,
         tenant_id=tenant_id,
         kb_ids=kb_ids,
-        query=question,
+        question=question,
         top_k=top_k,
-        filters={},
-        with_citations=True,
     )
-    answer_text = _compose_answer(question, hits)
-    prompt_tokens = max(1, len(question.split()))
-    completion_tokens = max(1, len(answer_text.split()))
-    citations = [
-        {
-            "document_id": hit["document_id"],
-            "chunk_id": hit["chunk_id"],
-            "document_version_id": hit["document_version_id"],
-        }
-        for hit in hits
-    ]
-    return {
-        "answer": answer_text,
-        "citations": citations,
-        "usage": {
-            "prompt_tokens": prompt_tokens,
-            "completion_tokens": completion_tokens,
-            "total_tokens": prompt_tokens + completion_tokens,
-        },
-    }
+    return result

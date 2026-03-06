@@ -9,6 +9,13 @@ dependencies = [
     "pydantic-settings>=2.11.0",
     "psycopg[binary]>=3.2.9",
     "sqlalchemy>=2.0.43",
+    "openai>=1.54.0",
+    "pgvector>=0.4.1",
+    "pypdf2>=3.0.1",
+    "python-docx>=1.1.0",
+    "python-pptx>=1.0.2",
+    "pillow>=10.0.0",
+    "tiktoken>=0.7.0",
 ]
 
 [build-system]

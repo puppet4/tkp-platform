@@ -1,25 +1,25 @@
-"""入库工作进程。
+"""改进的入库工作进程 - 集成真实文档解析和 OpenAI embeddings。
 
-主流程:
-1) 抢占一条待处理任务(queued/retrying)
-2) 读取文档版本 object_key
-3) 解析 + 切片 + 回写 document_chunks
-4) 成功则 completed，失败则 retrying/dead_letter
+主要改进:
+1. 支持 PDF、Word、PowerPoint 等多种格式解析
+2. 使用 OpenAI embeddings API 生成真实向量
+3. 智能文本切片，保持段落完整性
+4. 将向量存储到 document_chunks.embedding 列
 """
 
 import json
-import hashlib
 import logging
-import math
 import time
 from datetime import datetime, timezone
-from pathlib import Path
 from typing import Any
-from uuid import UUID, uuid4
+from uuid import UUID
 
 from sqlalchemy import create_engine, text
 
 from tkp_worker.config import get_settings
+from tkp_worker.parsers import default_parser_registry
+from tkp_worker.chunker import create_chunker
+from tkp_worker.embeddings import create_embedding_service
 
 logger = logging.getLogger("tkp_worker")
 
@@ -37,36 +37,7 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def _build_minio_client(*, endpoint: str, access_key: str, secret_key: str, secure: bool, region: str | None = None):
-    """构建 MinIO 客户端（延迟导入）。"""
-    try:
-        from minio import Minio
-    except ModuleNotFoundError as exc:
-        raise RuntimeError("minio backend requires package 'minio'") from exc
-    return Minio(
-        endpoint,
-        access_key=access_key,
-        secret_key=secret_key,
-        secure=secure,
-        region=region,
-    )
-
-
-def _build_oss_bucket(*, endpoint: str, access_key: str, secret_key: str, bucket_name: str, secure: bool):
-    """构建阿里云 OSS Bucket 客户端（延迟导入）。"""
-    try:
-        import oss2
-    except ModuleNotFoundError as exc:
-        raise RuntimeError("oss backend requires package 'oss2'") from exc
-
-    endpoint_url = endpoint
-    if not endpoint_url.startswith("http://") and not endpoint_url.startswith("https://"):
-        endpoint_url = f"https://{endpoint_url}" if secure else f"http://{endpoint_url}"
-    auth = oss2.Auth(access_key, secret_key)
-    return oss2.Bucket(auth, endpoint_url, bucket_name)
-
-
-def _read_object_bytes(
+def _read_object_bytes_from_storage(
     *,
     backend: str,
     storage_root: str,
@@ -78,7 +49,9 @@ def _read_object_bytes(
     secure: bool = False,
     region: str | None = None,
 ) -> bytes:
-    """按后端配置读取对象字节。"""
+    """从存储后端读取对象字节。"""
+    from pathlib import Path
+
     if backend == "local":
         path = Path(storage_root).joinpath(object_key)
         if not path.exists():
@@ -88,13 +61,12 @@ def _read_object_bytes(
     if backend == "minio":
         if not endpoint or not access_key or not secret_key:
             raise RuntimeError("minio backend requires endpoint/access_key/secret_key")
-        client = _build_minio_client(
-            endpoint=endpoint,
-            access_key=access_key,
-            secret_key=secret_key,
-            secure=secure,
-            region=region,
-        )
+        try:
+            from minio import Minio
+        except ImportError as exc:
+            raise RuntimeError("minio backend requires 'minio' package") from exc
+
+        client = Minio(endpoint, access_key=access_key, secret_key=secret_key, secure=secure, region=region)
         obj = client.get_object(bucket_name, object_key)
         try:
             return obj.read()
@@ -105,108 +77,24 @@ def _read_object_bytes(
     if backend == "oss":
         if not endpoint or not access_key or not secret_key:
             raise RuntimeError("oss backend requires endpoint/access_key/secret_key")
-        bucket = _build_oss_bucket(
-            endpoint=endpoint,
-            access_key=access_key,
-            secret_key=secret_key,
-            bucket_name=bucket_name,
-            secure=secure,
-        )
+        try:
+            import oss2
+        except ImportError as exc:
+            raise RuntimeError("oss backend requires 'oss2' package") from exc
+
+        endpoint_url = endpoint
+        if not endpoint_url.startswith("http://") and not endpoint_url.startswith("https://"):
+            endpoint_url = f"https://{endpoint_url}" if secure else f"http://{endpoint_url}"
+        auth = oss2.Auth(access_key, secret_key)
+        bucket = oss2.Bucket(auth, endpoint_url, bucket_name)
         return bucket.get_object(object_key).read()
 
-    raise RuntimeError(f"unsupported storage backend: {backend}")
+    raise ValueError(f"unsupported storage backend: {backend}")
 
 
-def _read_text_from_object(
-    *,
-    backend: str,
-    storage_root: str,
-    object_key: str,
-    parser_type: str | None,
-    bucket_name: str,
-    endpoint: str | None = None,
-    access_key: str | None = None,
-    secret_key: str | None = None,
-    secure: bool = False,
-    region: str | None = None,
-) -> str:
-    """按对象键读取文件并执行基础解析。"""
-    payload = _read_object_bytes(
-        backend=backend,
-        storage_root=storage_root,
-        object_key=object_key,
-        bucket_name=bucket_name,
-        endpoint=endpoint,
-        access_key=access_key,
-        secret_key=secret_key,
-        secure=secure,
-        region=region,
-    )
-
-    parser = parser_type or "generic"
-    if parser in {"markdown", "generic"}:
-        return payload.decode("utf-8", errors="ignore")
-    if parser == "pdf":
-        raise RuntimeError("pdf parser not configured")
-    if parser == "image":
-        raise RuntimeError("image parser/ocr not configured")
-    return payload.decode("utf-8", errors="ignore")
-
-
-def _chunk_text(content: str, chunk_size: int = 900, overlap: int = 120) -> list[str]:
-    """将文本切分为重叠块。"""
-    text_content = content.strip()
-    if not text_content:
-        return []
-
-    chunks: list[str] = []
-    start = 0
-    total = len(text_content)
-    while start < total:
-        end = min(total, start + chunk_size)
-        chunk = text_content[start:end].strip()
-        if chunk:
-            chunks.append(chunk)
-        if end >= total:
-            break
-        # 通过 overlap 保留上下文连续性，提升检索质量。
-        start = max(0, end - overlap)
-    return chunks
-
-
-def _embed_text(content: str, *, dim: int = 1536) -> list[float]:
-    """使用确定性哈希算法生成向量（用于本地/开发检索回路）。"""
-    normalized = " ".join(content.strip().lower().split())
-    if not normalized:
-        return [0.0] * dim
-
-    base_tokens = [token for token in normalized.split(" ") if token]
-    if len(base_tokens) < 8:
-        compact = normalized.replace(" ", "")
-        # 对无空格文本（如中文）追加字符切片，提升可区分性。
-        base_tokens.extend(compact[i : i + 2] for i in range(max(0, len(compact) - 1)))
-    if not base_tokens:
-        base_tokens = [normalized]
-
-    vector = [0.0] * dim
-    for pos, token in enumerate(base_tokens[:1024], start=1):
-        digest = hashlib.sha256(token.encode("utf-8")).digest()
-        weight = 1.0 / math.sqrt(pos)
-        for offset in (0, 4, 8, 12, 16, 20):
-            idx = int.from_bytes(digest[offset : offset + 2], "big") % dim
-            sign = -1.0 if (digest[offset + 2] & 1) else 1.0
-            magnitude = 0.2 + (digest[offset + 3] / 255.0)
-            vector[idx] += sign * magnitude * weight
-
-    norm = math.sqrt(sum(value * value for value in vector))
-    if norm <= 0:
-        return [0.0] * dim
-    return [value / norm for value in vector]
-
-
-def _vector_to_pg_literal(vector: list[float]) -> str:
-    """将向量转为 pgvector 字面量字符串。"""
-    return "[" + ",".join(f"{value:.6f}" for value in vector) + "]"
+def _extract_filename_from_key(object_key: str) -> str:
+    """从对象键中提取文件名。"""
+    return object_key.split("/")[-1] if "/" in object_key else object_key
 
 
 def _normalize_metadata(raw: object) -> dict[str, object]:
@@ -224,12 +112,7 @@ def _normalize_metadata(raw: object) -> dict[str, object]:
 
 
 def _claim_next_job(conn, worker_id: str, lock_timeout_seconds: int) -> dict[str, Any] | None:
-    """抢占下一条可执行任务。
-
-    关键点：
-    1. `FOR UPDATE SKIP LOCKED` 避免并发工作进程重复领取同一任务。
-    2. 允许抢占超时锁，处理工作进程异常退出场景。
-    """
+    """抢占下一条可执行任务。"""
     stmt = text(
         """
         WITH candidate AS (
@@ -280,7 +163,7 @@ def _claim_next_job(conn, worker_id: str, lock_timeout_seconds: int) -> dict[str
 
 
 def _touch_heartbeat(conn, job_id: UUID, worker_id: str) -> None:
-    """刷新任务心跳，标记工作进程仍在处理。"""
+    """刷新任务心跳。"""
     conn.execute(
         text(
             """
@@ -328,11 +211,12 @@ def _mark_failure(
     error_message: str,
 ) -> None:
     """按重试策略处理失败任务。"""
+    import math
+
     should_retry = attempt_count < max_attempts
     delay = min(base_seconds * (2 ** max(0, attempt_count - 1)), max_seconds)
 
     if should_retry:
-        # 可重试失败：回退到 retrying 并设置下次执行时间。
         conn.execute(
             text(
                 """
@@ -355,52 +239,31 @@ def _mark_failure(
                 "delay_seconds": delay,
             },
         )
-
-        # 将版本与文档状态恢复为 pending，等待重试重新处理。
+        logger.warning("job will retry: id=%s, attempt=%d/%d, delay=%ds", job_id, attempt_count, max_attempts, delay)
+    else:
         conn.execute(
             text(
                 """
-                UPDATE document_versions
-                SET parse_status = 'pending'
-                WHERE id = :document_version_id
+                UPDATE ingestion_jobs
+                SET status = 'dead_letter',
+                    stage = 'failed',
+                    progress = 0,
+                    error = :error_message,
+                    finished_at = now(),
+                    heartbeat_at = now(),
+                    locked_at = NULL,
+                    locked_by = NULL,
+                    updated_at = now()
+                WHERE id = :job_id
                 """
             ),
-            {"document_version_id": str(document_version_id)},
+            {
+                "job_id": str(job_id),
+                "error_message": error_message,
+            },
         )
-        conn.execute(
-            text(
-                """
-                UPDATE documents
-                SET status = 'pending', updated_at = now()
-                WHERE id = :document_id
-                """
-            ),
-            {"document_id": str(document_id)},
-        )
-        return
+        logger.error("job moved to dead_letter: id=%s, attempts=%d", job_id, attempt_count)
 
-    # 超过最大重试：进入死信队列，等待人工排查。
-    conn.execute(
-        text(
-            """
-            UPDATE ingestion_jobs
-            SET status = 'dead_letter',
-                stage = 'failed',
-                progress = 0,
-                error = :error_message,
-                finished_at = now(),
-                heartbeat_at = now(),
-                locked_at = NULL,
-                locked_by = NULL,
-                updated_at = now()
-            WHERE id = :job_id
-            """
-        ),
-        {
-            "job_id": str(job_id),
-            "error_message": error_message,
-        },
-    )
     conn.execute(
         text(
             """
@@ -423,30 +286,26 @@ def _mark_failure(
     )
 
 
-def _process_job(
+def _process_job_with_real_embeddings(
     conn,
     job: dict[str, Any],
     *,
-    storage_backend: str,
-    storage_root: str,
-    storage_bucket: str,
-    storage_endpoint: str | None,
-    storage_access_key: str | None,
-    storage_secret_key: str | None,
-    storage_secure: bool,
-    storage_region: str | None,
+    settings,
+    embedding_service,
+    chunker,
     worker_id: str,
 ) -> None:
-    """执行单条入库任务。"""
+    """执行单条入库任务 - 使用真实的文档解析和 OpenAI embeddings。"""
     job_id: UUID = job["id"]
     document_id: UUID = job["document_id"]
     document_version_id: UUID = job["document_version_id"]
 
-    # 通过版本表反查对象键与解析器类型。
+    # 查询文档版本信息
     row = conn.execute(
         text(
             """
-            SELECT d.tenant_id, d.workspace_id, d.kb_id, d.metadata AS document_metadata, dv.object_key, dv.parser_type
+            SELECT d.tenant_id, d.workspace_id, d.kb_id, d.metadata AS document_metadata,
+                   dv.object_key, dv.filename
             FROM document_versions dv
             JOIN documents d ON d.id = dv.document_id
             WHERE dv.id = :document_version_id
@@ -454,6 +313,7 @@ def _process_job(
         ),
         {"document_version_id": str(document_version_id)},
     ).mappings().first()
+
     if not row:
         raise RuntimeError(f"document version not found: {document_version_id}")
 
@@ -462,12 +322,12 @@ def _process_job(
     kb_id: UUID = row["kb_id"]
     document_metadata = _normalize_metadata(row["document_metadata"])
     object_key: str | None = row["object_key"]
-    parser_type: str | None = row["parser_type"]
+    filename: str | None = row["filename"]
 
     if not object_key:
         raise RuntimeError("document version object_key is empty")
 
-    # 先更新文档状态，便于前台展示“处理中”。
+    # 更新文档状态为处理中
     conn.execute(
         text(
             """
@@ -479,20 +339,23 @@ def _process_job(
         {"document_id": str(document_id)},
     )
 
+    # Step 1: 读取文件
     _touch_heartbeat(conn, job_id, worker_id)
-    content = _read_text_from_object(
-        backend=storage_backend,
-        storage_root=storage_root,
+    logger.info("reading object: job_id=%s, object_key=%s", job_id, object_key)
+
+    file_bytes = _read_object_bytes_from_storage(
+        backend=settings.storage_backend,
+        storage_root=settings.storage_root,
         object_key=object_key,
-        parser_type=parser_type,
-        bucket_name=storage_bucket,
-        endpoint=storage_endpoint,
-        access_key=storage_access_key,
-        secret_key=storage_secret_key,
-        secure=storage_secure,
-        region=storage_region,
+        bucket_name=settings.storage_bucket,
+        endpoint=settings.storage_endpoint,
+        access_key=settings.storage_access_key,
+        secret_key=settings.storage_secret_key,
+        secure=settings.storage_secure,
+        region=settings.storage_region,
     )
 
+    # Step 2: 解析文档
     conn.execute(
         text(
             """
@@ -504,33 +367,56 @@ def _process_job(
         {"job_id": str(job_id)},
     )
 
-    conn.execute(
-        text(
-            """
-            UPDATE document_versions
-            SET parse_status = 'pending'
-            WHERE id = :document_version_id
-            """
-        ),
-        {"document_version_id": str(document_version_id)},
-    )
+    actual_filename = filename or _extract_filename_from_key(object_key)
+    logger.info("parsing document: job_id=%s, filename=%s, size=%d bytes", job_id, actual_filename, len(file_bytes))
 
-    chunks = _chunk_text(content)
-    if not chunks:
-        raise RuntimeError("document has no parseable content")
+    try:
+        text_content = default_parser_registry.parse(file_bytes, actual_filename)
+    except Exception as exc:
+        raise RuntimeError(f"Document parsing failed for {actual_filename}: {exc}") from exc
 
+    if not text_content.strip():
+        raise RuntimeError("Document has no extractable text content")
+
+    logger.info("parsed document: job_id=%s, text_length=%d chars", job_id, len(text_content))
+
+    # Step 3: 文本切片
     conn.execute(
         text(
             """
             UPDATE ingestion_jobs
-            SET stage = 'chunking', progress = 55, heartbeat_at = now(), updated_at = now()
+            SET stage = 'chunking', progress = 40, heartbeat_at = now(), updated_at = now()
             WHERE id = :job_id
             """
         ),
         {"job_id": str(job_id)},
     )
 
-    # 重跑时先清理同版本旧切片，保证幂等覆盖。
+    chunks = chunker.chunk_text(text_content)
+    if not chunks:
+        raise RuntimeError("Document chunking produced no chunks")
+
+    logger.info("chunked document: job_id=%s, chunks=%d", job_id, len(chunks))
+
+    # Step 4: 生成向量
+    conn.execute(
+        text(
+            """
+            UPDATE ingestion_jobs
+            SET stage = 'embedding', progress = 60, heartbeat_at = now(), updated_at = now()
+            WHERE id = :job_id
+            """
+        ),
+        {"job_id": str(job_id)},
+    )
+
+    logger.info("generating embeddings: job_id=%s, chunks=%d", job_id, len(chunks))
+    embeddings = embedding_service.embed_batch(chunks)
+
+    if len(embeddings) != len(chunks):
+        raise RuntimeError(f"Embedding count mismatch: got {len(embeddings)}, expected {len(chunks)}")
+
+    # Step 5: 清理旧数据（幂等性）
     conn.execute(
         text(
             """
@@ -547,6 +433,20 @@ def _process_job(
         {"document_version_id": str(document_version_id)},
     )
 
+    # Step 6: 插入切片和向量
+    conn.execute(
+        text(
+            """
+            UPDATE ingestion_jobs
+            SET stage = 'indexing', progress = 80, heartbeat_at = now(), updated_at = now()
+            WHERE id = :job_id
+            """
+        ),
+        {"job_id": str(job_id)},
+    )
+
+    from uuid import uuid4
+
     insert_stmt = text(
         """
         INSERT INTO document_chunks (
@@ -557,11 +457,12 @@ def _process_job(
             document_id,
             document_version_id,
             chunk_no,
-            parent_chunk_id,
-            title_path,
             content,
             token_count,
             metadata,
+            embedding,
+            embedding_model,
+            embedded_at,
             created_at
         ) VALUES (
             :id,
@@ -571,120 +472,70 @@ def _process_job(
             :document_id,
             :document_version_id,
             :chunk_no,
-            NULL,
-            NULL,
             :content,
             :token_count,
             CAST(:metadata AS jsonb),
-            now()
-        )
-        """
-    )
-
-    embedding_model = (
-        conn.execute(
-            text(
-                """
-                SELECT embedding_model
-                FROM knowledge_bases
-                WHERE id = :kb_id
-                LIMIT 1
-                """
-            ),
-            {"kb_id": str(kb_id)},
-        ).scalar_one_or_none()
-        or "local-hash-1536"
-    )
-
-    conn.execute(
-        text(
-            """
-            UPDATE ingestion_jobs
-            SET stage = 'embedding', progress = 75, heartbeat_at = now(), updated_at = now()
-            WHERE id = :job_id
-            """
-        ),
-        {"job_id": str(job_id)},
-    )
-    embedding_insert_stmt = text(
-        """
-        INSERT INTO chunk_embeddings (
-            chunk_id,
-            tenant_id,
-            kb_id,
-            embedding_model,
-            vector,
-            created_at
-        ) VALUES (
-            :chunk_id,
-            :tenant_id,
-            :kb_id,
+            :embedding::vector,
             :embedding_model,
-            CAST(:vector AS vector),
+            now(),
             now()
         )
         """
     )
 
-    for i, chunk in enumerate(chunks, start=1):
-        chunk_id = str(uuid4())
+    for idx, (chunk_text, embedding_vector) in enumerate(zip(chunks, embeddings)):
+        token_count = embedding_service.count_tokens(chunk_text)
+        chunk_metadata = {
+            "source": "worker",
+            "filename": actual_filename,
+            "chunk_index": idx,
+            "total_chunks": len(chunks),
+        }
+
+        # 将向量转换为 pgvector 格式
+        vector_str = "[" + ",".join(str(v) for v in embedding_vector) + "]"
+
         conn.execute(
             insert_stmt,
             {
-                "id": chunk_id,
+                "id": str(uuid4()),
                 "tenant_id": str(tenant_id),
                 "workspace_id": str(workspace_id),
                 "kb_id": str(kb_id),
                 "document_id": str(document_id),
                 "document_version_id": str(document_version_id),
-                "chunk_no": i,
-                "content": chunk,
-                "token_count": len(chunk.split()),
-                "metadata": json.dumps(document_metadata, ensure_ascii=False),
-            },
-        )
-        conn.execute(
-            embedding_insert_stmt,
-            {
-                "chunk_id": chunk_id,
-                "tenant_id": str(tenant_id),
-                "kb_id": str(kb_id),
-                "embedding_model": embedding_model,
-                "vector": _vector_to_pg_literal(_embed_text(chunk)),
+                "chunk_no": idx,
+                "content": chunk_text,
+                "token_count": token_count,
+                "metadata": json.dumps(chunk_metadata),
+                "embedding": vector_str,
+                "embedding_model": settings.openai_embedding_model,
             },
         )
 
-    conn.execute(
-        text(
-            """
-            UPDATE ingestion_jobs
-            SET stage = 'indexing', progress = 90, heartbeat_at = now(), updated_at = now()
-            WHERE id = :job_id
-            """
-        ),
-        {"job_id": str(job_id)},
-    )
+    logger.info("inserted chunks: job_id=%s, count=%d", job_id, len(chunks))
 
-    # 切片写入成功后，刷新版本与文档状态。
+    # Step 7: 更新文档状态
     conn.execute(
         text(
             """
             UPDATE document_versions
-            SET parse_status = 'success'
+            SET parse_status = 'completed', chunk_count = :chunk_count
             WHERE id = :document_version_id
             """
         ),
-        {"document_version_id": str(document_version_id)},
+        {"document_version_id": str(document_version_id), "chunk_count": len(chunks)},
     )
+
     conn.execute(
         text(
             """
             UPDATE documents
-            SET status = 'ready', updated_at = now()
+            SET status = 'ready', chunk_count = :chunk_count, updated_at = now()
             WHERE id = :document_id
             """
         ),
-        {"document_id": str(document_id)},
+        {"document_id": str(document_id), "chunk_count": len(chunks)},
     )
 
 
@@ -692,63 +543,64 @@ def main() -> None:
     """工作进程主循环。"""
     _setup_logging()
     settings = get_settings()
-    engine = create_engine(settings.database_url, future=True, pool_pre_ping=True)
 
-    logger.info("worker started worker_id=%s at=%s", settings.worker_id, _now_iso())
+    logger.info("starting worker: id=%s", settings.worker_id)
+    logger.info("database: %s", settings.database_url.split("@")[-1] if "@" in settings.database_url else "***")
+    logger.info("storage: backend=%s, bucket=%s", settings.storage_backend, settings.storage_bucket)
+    logger.info("embedding: model=%s, dimensions=%d", settings.openai_embedding_model, settings.openai_embedding_dimensions)
+
+    engine = create_engine(settings.database_url, pool_pre_ping=True)
+
+    # 初始化服务
+    embedding_service = create_embedding_service(
+        api_key=settings.openai_api_key,
+        model=settings.openai_embedding_model,
+    )
+    chunker = create_chunker(
+        chunk_size=settings.chunk_size,
+        chunk_overlap=settings.chunk_overlap,
+    )
+
+    logger.info("worker ready, polling for jobs...")
 
     while True:
-        claimed: dict[str, Any] | None = None
+        claimed = None
         try:
             with engine.begin() as conn:
-                claimed = _claim_next_job(
-                    conn,
-                    worker_id=settings.worker_id,
-                    lock_timeout_seconds=settings.worker_lock_timeout_seconds,
-                )
+                claimed = _claim_next_job(conn, settings.worker_id, settings.worker_lock_timeout_seconds)
 
             if not claimed:
-                # 没有可执行任务时短暂休眠，降低数据库轮询压力。
                 time.sleep(settings.worker_poll_interval_seconds)
                 continue
 
-            logger.info(
-                "claimed job id=%s document_id=%s version_id=%s attempt=%s/%s",
-                claimed["id"],
-                claimed["document_id"],
-                claimed["document_version_id"],
-                claimed["attempt_count"],
-                claimed["max_attempts"],
-            )
+            logger.info("claimed job: id=%s, document_id=%s", claimed["id"], claimed["document_id"])
 
             with engine.begin() as conn:
-                _process_job(
+                _process_job_with_real_embeddings(
                     conn,
                     claimed,
-                    storage_backend=settings.storage_backend,
-                    storage_root=settings.storage_root,
-                    storage_bucket=settings.storage_bucket,
-                    storage_endpoint=settings.storage_endpoint,
-                    storage_access_key=settings.storage_access_key,
-                    storage_secret_key=settings.storage_secret_key,
-                    storage_secure=settings.storage_secure,
-                    storage_region=settings.storage_region,
+                    settings=settings,
+                    embedding_service=embedding_service,
+                    chunker=chunker,
                     worker_id=settings.worker_id,
                 )
                 _mark_success(conn, claimed["id"])
 
-            logger.info("completed job id=%s", claimed["id"])
+            logger.info("completed job: id=%s", claimed["id"])
+
         except KeyboardInterrupt:
-            logger.info("worker stopped")
+            logger.info("worker stopped by user")
             return
+
         except Exception as exc:
             if not claimed:
-                # 抢占前出现异常，记录后进入下一轮轮询。
                 logger.exception("worker loop error without claimed job")
                 time.sleep(settings.worker_poll_interval_seconds)
                 continue
 
             err = str(exc)[:2000]
-            logger.exception("job failed id=%s error=%s", claimed["id"], err)
+            logger.exception("job failed: id=%s, error=%s", claimed["id"], err)
+
             with engine.begin() as conn:
                 _mark_failure(
                     conn,

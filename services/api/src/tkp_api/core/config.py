@@ -53,23 +53,27 @@ class Settings(BaseSettings):
     ingestion_default_max_attempts: int = Field(default=5, description="入库任务默认最大重试次数。")
     ingestion_retry_base_seconds: int = Field(default=15, description="重试退避基准秒数。")
     ingestion_retry_max_seconds: int = Field(default=1800, description="重试退避最大秒数。")
-    rag_base_url: str | None = Field(
-        default=None,
-        description="RAG 服务基础地址；为空时 API 使用本地检索实现。",
-    )
-    rag_timeout_seconds: float = Field(default=8.0, description="API 调用 RAG 服务的超时时间（秒）。")
-    rag_max_retries: int = Field(default=1, description="RAG 调用最大重试次数（不含首次请求）。")
-    rag_retry_backoff_seconds: float = Field(default=0.2, description="RAG 重试退避基准秒数。")
-    rag_circuit_breaker_fail_threshold: int = Field(default=3, description="连续失败达到阈值后开启熔断。")
-    rag_circuit_breaker_open_seconds: int = Field(default=30, description="熔断开启持续时长（秒）。")
-    internal_service_token: str = Field(
-        default="change-me-internal-token",
-        description="服务间内部调用鉴权令牌（API->RAG）。",
-    )
     agent_allowed_tools: str = Field(
         default="retrieval",
         description="Agent 可用工具白名单，逗号分隔。",
     )
+
+    # OpenAI API 配置（用于内置 RAG 功能）
+    openai_api_key: str = Field(default="", description="OpenAI API 密钥。")
+    openai_embedding_model: str = Field(default="text-embedding-3-small", description="OpenAI 嵌入模型。")
+    openai_chat_model: str = Field(default="gpt-4o-mini", description="OpenAI 聊天模型。")
+    openai_chat_temperature: float = Field(default=0.7, description="LLM 生成温度。")
+    openai_chat_max_tokens: int = Field(default=2000, description="LLM 最大生成 token 数。")
+    openai_embedding_dimensions: int = Field(default=1536, description="向量维度。")
+
+    # 文本切片配置
+    chunk_size: int = Field(default=800, description="文本切片大小。")
+    chunk_overlap: int = Field(default=200, description="切片重叠大小。")
+    embedding_batch_size: int = Field(default=100, description="向量生成批次大小。")
+
+    # 检索配置
+    retrieval_top_k: int = Field(default=5, description="检索返回的最大结果数。")
+    retrieval_similarity_threshold: float = Field(default=0.7, description="检索相似度阈值。")
 
     @field_validator("auth_jwt_algorithms")
     @classmethod
@@ -108,14 +112,6 @@ class Settings(BaseSettings):
                 missing.append("KD_STORAGE_BUCKET")
             if missing:
                 raise ValueError(f"storage backend '{self.storage_backend}' requires: {', '.join(missing)}")
-
-        if not self.internal_service_token.strip():
-            raise ValueError("KD_INTERNAL_SERVICE_TOKEN must not be blank")
-
-        if self.rag_base_url:
-            parsed = urlparse(self.rag_base_url)
-            if parsed.scheme not in {"http", "https"} or not parsed.netloc:
-                raise ValueError("KD_RAG_BASE_URL must be a valid http(s) URL")
 
         if not self.agent_allowed_tools_list:
             raise ValueError("KD_AGENT_ALLOWED_TOOLS must include at least one tool")

@@ -37,6 +37,28 @@ class Settings(BaseSettings):
     ingestion_retry_base_seconds: int = Field(default=15, description="重试退避基准秒数。")
     ingestion_retry_max_seconds: int = Field(default=1800, description="重试退避最大秒数。")
 
+    # OpenAI 配置
+    openai_api_key: str = Field(
+        default="",
+        description="OpenAI API 密钥，用于生成文本向量。",
+    )
+    openai_embedding_model: str = Field(
+        default="text-embedding-3-small",
+        description="OpenAI 嵌入模型名称。",
+    )
+    openai_embedding_dimensions: int = Field(
+        default=1536,
+        description="嵌入向量维度。",
+    )
+    embedding_batch_size: int = Field(
+        default=100,
+        description="批量生成向量时的批次大小。",
+    )
+
+    # 文本切片配置
+    chunk_size: int = Field(default=800, description="文本切片大小（字符数）。")
+    chunk_overlap: int = Field(default=200, description="切片重叠大小（字符数）。")
+
     @model_validator(mode="after")
     def validate_runtime_contract(self) -> "Settings":
         """运行时关键配置校验。"""
@@ -52,6 +74,13 @@ class Settings(BaseSettings):
                 missing.append("KD_STORAGE_BUCKET")
             if missing:
                 raise ValueError(f"storage backend '{self.storage_backend}' requires: {', '.join(missing)}")
+
+        if not self.openai_api_key or self.openai_api_key.strip() == "":
+            raise ValueError("KD_OPENAI_API_KEY is required for embedding generation")
+
+        if self.chunk_overlap >= self.chunk_size:
+            raise ValueError("chunk_overlap must be less than chunk_size")
+
         return self
 
 
