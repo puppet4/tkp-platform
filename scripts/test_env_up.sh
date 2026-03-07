@@ -107,7 +107,7 @@ if [[ "$DB_EXISTS" != "1" ]]; then
 fi
 
 for f in \
-  "$ROOT_DIR/infra/sql/init_all.sql"
+  "$ROOT_DIR/sql/init_all.sql"
 do
   echo "apply: ${f##*/}"
   podman exec -i "$TEST_PG_CONTAINER" \

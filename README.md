@@ -62,7 +62,7 @@ docker-compose ps
 
 ```bash
 # 使用统一的初始化脚本
-psql "$KD_DATABASE_URL" -f infra/sql/init_all.sql
+psql "$KD_DATABASE_URL" -f sql/init_all.sql
 ```
 
 ### 5. 同步 Elasticsearch 索引（可选）
@@ -173,7 +173,7 @@ KD_OBSERVABILITY_LOG_LEVEL=INFO
 
 ```bash
 # 执行 RLS 配置脚本
-psql "$KD_DATABASE_URL" -f infra/sql/migrations/20260307_100000_enable_rls.sql
+psql "$KD_DATABASE_URL" -f sql/migrations/20260307_100000_enable_rls.sql
 
 # 在应用配置中启用
 KD_GOVERNANCE_ENABLE_RLS=true
@@ -198,7 +198,7 @@ KD_GOVERNANCE_ENABLE_PII_MASKING=true
 
 ```bash
 # 创建删除请求表
-psql "$KD_DATABASE_URL" -f infra/sql/migrations/20260307_110000_add_deletion_tables.sql
+psql "$KD_DATABASE_URL" -f sql/migrations/20260307_110000_add_deletion_tables.sql
 
 # 配置删除审批
 KD_GOVERNANCE_DELETION_REQUIRE_APPROVAL=true
@@ -417,7 +417,7 @@ docs/
 
 ### Database initialization (SQL only)
 
-数据库结构通过 `infra/sql` 维护，不使用代码自动建表。
+数据库结构通过 `sql` 维护，不使用代码自动建表。
 
 治理检查（本地/CI 通用）：
 
@@ -429,7 +429,7 @@ bash scripts/check_sql_governance.sh
 - 禁止 `create_all` / `metadata.create_all` 之类代码建表。
 - 禁止代码式 schema 同步脚本（如 `create_all.py`、`sync_comments.py`）。
 - 禁止 SQL 中出现外键定义（`FOREIGN KEY` / `REFERENCES`）。
-- 禁止直接修改基线 SQL（`infra/sql/000~040`），结构变更走 `infra/sql/migrations/*.sql`。
+- 禁止直接修改基线 SQL（`sql/000~040`），结构变更走 `sql/migrations/*.sql`。
 
 ### Environment
 

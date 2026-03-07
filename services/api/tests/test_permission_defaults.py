@@ -21,7 +21,7 @@ def test_default_role_actions_include_retrieval_chat_agent():
 
 def test_sql_permission_seed_covers_runtime_catalog():
     repo_root = Path(__file__).resolve().parents[3]
-    sql_file = repo_root / "infra/sql/init_all.sql"
+    sql_file = repo_root / "sql/init_all.sql"
 
     sql_codes: set[str] = set()
     code_pattern = re.compile(r"'((?:api|menu|button|feature)\.[a-z0-9_.]+)'")

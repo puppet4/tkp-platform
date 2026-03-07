@@ -12,6 +12,6 @@ podman exec "$TEST_PG_CONTAINER" createdb -U "$TEST_DB_USER" -T template0 "$TEST
 
 echo "apply: init_all.sql"
 podman exec -i "$TEST_PG_CONTAINER" \
-  psql -U "$TEST_DB_USER" -d "$TEST_DB_NAME" -v ON_ERROR_STOP=1 < "$ROOT_DIR/infra/sql/init_all.sql"
+  psql -U "$TEST_DB_USER" -d "$TEST_DB_NAME" -v ON_ERROR_STOP=1 < "$ROOT_DIR/sql/init_all.sql"
 
 echo "database reset done: $TEST_DB_NAME"

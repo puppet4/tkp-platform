@@ -15,10 +15,10 @@ search() {
 }
 
 required_sql_files=(
-  "infra/sql/init_all.sql"
+  "sql/init_all.sql"
 )
-migration_dir="infra/sql/archive/migrations"
-baseline_lock_file="infra/sql/baseline.lock"
+migration_dir="sql/archive/migrations"
+baseline_lock_file="sql/baseline.lock"
 
 echo "[1/10] check required SQL files"
 for f in "${required_sql_files[@]}"; do
@@ -26,7 +26,7 @@ for f in "${required_sql_files[@]}"; do
 done
 
 echo "[2/10] check SQL scripts are FK-free"
-sql_files="$(find infra/sql -type f -name "*.sql" | sort)"
+sql_files="$(find sql -type f -name "*.sql" | sort)"
 if [[ -n "$sql_files" ]] && search "(FOREIGN[[:space:]]+KEY|REFERENCES[[:space:]])" $sql_files; then
   echo "foreign key clauses are forbidden by team policy"
   exit 1
@@ -46,11 +46,11 @@ if find services -type f \( -name "*create_all*.py" -o -name "*sync_comments*.py
 fi
 
 echo "[5/10] check SQL naming convention in table DDL"
-if ! search "CONSTRAINT[[:space:]]+uk_" infra/sql/init_all.sql >/dev/null; then
+if ! search "CONSTRAINT[[:space:]]+uk_" sql/init_all.sql >/dev/null; then
   echo "expected uk_ unique constraints not found"
   exit 1
 fi
-if ! search "CONSTRAINT[[:space:]]+ck_" infra/sql/init_all.sql >/dev/null; then
+if ! search "CONSTRAINT[[:space:]]+ck_" sql/init_all.sql >/dev/null; then
   echo "expected ck_ check constraints not found"
   exit 1
 fi
@@ -77,7 +77,7 @@ if ! awk '
     }
   }
   END { exit failed }
-' infra/sql/init_all.sql; then
+' sql/init_all.sql; then
   exit 1
 fi
 
@@ -123,28 +123,14 @@ done < "$baseline_lock_file"
 echo "[9/10] check table/column comments coverage"
 # 注释已整合到 init_all.sql 中，跳过此检查
 echo "  skipped (comments integrated into init_all.sql)"
-  in_table {
-    line = $0
-    sub(/^[[:space:]]+/, "", line)
-    if (line == "" || line ~ /^CONSTRAINT[[:space:]]/) {
-      next
-    }
-    split(line, parts, /[[:space:]]+/)
-    column_name = parts[1]
-    sub(/,$/, "", column_name)
-    if (column_name != "") {
-      print table_name "." column_name
-    }
-  }
-' infra/sql/010_tables.sql)
 
 echo "[10/10] check test env SQL replay includes migrations"
-if ! search "infra/sql/migrations" scripts/test_env_up.sh >/dev/null; then
-  echo "scripts/test_env_up.sh must apply infra/sql/migrations/*.sql"
+if ! search "sql/migrations" scripts/test_env_up.sh >/dev/null; then
+  echo "scripts/test_env_up.sh must apply sql/migrations/*.sql"
   exit 1
 fi
-if ! search "infra/sql/migrations" scripts/test_env_reset_db.sh >/dev/null; then
-  echo "scripts/test_env_reset_db.sh must apply infra/sql/migrations/*.sql"
+if ! search "sql/migrations" scripts/test_env_reset_db.sh >/dev/null; then
+  echo "scripts/test_env_reset_db.sh must apply sql/migrations/*.sql"
   exit 1
 fi
 

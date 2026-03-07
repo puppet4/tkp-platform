@@ -18,12 +18,6 @@
       "extraPaths": [
         "services/worker/src"
       ]
-    },
-    {
-      "root": "services/rag",
-      "extraPaths": [
-        "services/rag/src"
-      ]
     }
   ]
 }
