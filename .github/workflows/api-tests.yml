@@ -103,20 +103,8 @@ jobs:
           PGPASSWORD: postgres
         run: |
           set -euo pipefail
-          for f in \
-            infra/sql/000_extensions.sql \
-            infra/sql/010_tables.sql \
-            infra/sql/020_indexes.sql \
-            infra/sql/030_comments.sql \
-            infra/sql/040_seed_permissions.sql
-          do
-            echo "apply: $f"
-            psql -h 127.0.0.1 -p 55432 -U postgres -d tkp_api_test -v ON_ERROR_STOP=1 -f "$f"
-          done
-          while IFS= read -r f; do
-            echo "apply migration: $f"
-            psql -h 127.0.0.1 -p 55432 -U postgres -d tkp_api_test -v ON_ERROR_STOP=1 -f "$f"
-          done < <(find infra/sql/migrations -maxdepth 1 -type f -name "*.sql" | sort)
+          echo "apply: infra/sql/init_all.sql"
+          psql -h 127.0.0.1 -p 55432 -U postgres -d tkp_api_test -v ON_ERROR_STOP=1 -f infra/sql/init_all.sql
 
       - name: Run API full on Postgres
         run: |

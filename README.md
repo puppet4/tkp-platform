@@ -61,13 +61,8 @@ docker-compose ps
 ### 4. 初始化数据库
 
 ```bash
-# 执行 SQL 脚本
-psql "$KD_DATABASE_URL" -f infra/sql/000_extensions.sql
-psql "$KD_DATABASE_URL" -f infra/sql/010_tables.sql
-psql "$KD_DATABASE_URL" -f infra/sql/020_indexes.sql
-psql "$KD_DATABASE_URL" -f infra/sql/030_comments.sql
-psql "$KD_DATABASE_URL" -f infra/sql/040_seed_permissions.sql
-psql "$KD_DATABASE_URL" -f infra/sql/migrations/20260306_200000_add_vector_embedding_column.sql
+# 使用统一的初始化脚本
+psql "$KD_DATABASE_URL" -f infra/sql/init_all.sql
 ```
 
 ### 5. 同步 Elasticsearch 索引（可选）

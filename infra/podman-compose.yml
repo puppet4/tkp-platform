@@ -58,19 +58,9 @@ services:
       - |
         set -euo pipefail
         export PGPASSWORD="${POSTGRES_PASSWORD}"
-        for f in \
-          infra/sql/000_extensions.sql \
-          infra/sql/010_tables.sql \
-          infra/sql/020_indexes.sql \
-          infra/sql/030_comments.sql \
-          infra/sql/040_seed_permissions.sql
-        do
-          psql -h postgres -U "${POSTGRES_USER}" -d "${POSTGRES_DB}" -v ON_ERROR_STOP=1 < "$$f"
-        done
-
-        while IFS= read -r f; do
-          psql -h postgres -U "${POSTGRES_USER}" -d "${POSTGRES_DB}" -v ON_ERROR_STOP=1 < "$$f"
-        done < <(find infra/sql/migrations -maxdepth 1 -type f -name '*.sql' | sort)
+        echo "Applying init_all.sql..."
+        psql -h postgres -U "${POSTGRES_USER}" -d "${POSTGRES_DB}" -v ON_ERROR_STOP=1 < infra/sql/init_all.sql
+        echo "Database initialization complete!"
 
   rag:
     image: ghcr.io/astral-sh/uv:python3.12-bookworm

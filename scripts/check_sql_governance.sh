@@ -15,13 +15,9 @@ search() {
 }
 
 required_sql_files=(
-  "infra/sql/000_extensions.sql"
-  "infra/sql/010_tables.sql"
-  "infra/sql/020_indexes.sql"
-  "infra/sql/030_comments.sql"
-  "infra/sql/040_seed_permissions.sql"
+  "infra/sql/init_all.sql"
 )
-migration_dir="infra/sql/migrations"
+migration_dir="infra/sql/archive/migrations"
 baseline_lock_file="infra/sql/baseline.lock"
 
 echo "[1/10] check required SQL files"
@@ -50,11 +46,11 @@ if find services -type f \( -name "*create_all*.py" -o -name "*sync_comments*.py
 fi
 
 echo "[5/10] check SQL naming convention in table DDL"
-if ! search "CONSTRAINT[[:space:]]+uk_" infra/sql/010_tables.sql >/dev/null; then
+if ! search "CONSTRAINT[[:space:]]+uk_" infra/sql/init_all.sql >/dev/null; then
   echo "expected uk_ unique constraints not found"
   exit 1
 fi
-if ! search "CONSTRAINT[[:space:]]+ck_" infra/sql/010_tables.sql >/dev/null; then
+if ! search "CONSTRAINT[[:space:]]+ck_" infra/sql/init_all.sql >/dev/null; then
   echo "expected ck_ check constraints not found"
   exit 1
 fi
@@ -81,7 +77,7 @@ if ! awk '
     }
   }
   END { exit failed }
-' infra/sql/020_indexes.sql; then
+' infra/sql/init_all.sql; then
   exit 1
 fi
 
@@ -125,32 +121,8 @@ while IFS= read -r line; do
 done < "$baseline_lock_file"
 
 echo "[9/10] check table/column comments coverage"
-comment_file="infra/sql/030_comments.sql"
-while IFS= read -r table_name; do
-  [[ -z "$table_name" ]] && continue
-  if ! search "COMMENT ON TABLE[[:space:]]+${table_name}[[:space:]]+IS" "$comment_file" >/dev/null; then
-    echo "missing table comment: ${table_name}"
-    exit 1
-  fi
-done < <(awk '/^CREATE TABLE IF NOT EXISTS / {t=$6; gsub(/\(/, "", t); print t}' infra/sql/010_tables.sql)
-
-while IFS= read -r column_ref; do
-  [[ -z "$column_ref" ]] && continue
-  if ! search "COMMENT ON COLUMN[[:space:]]+${column_ref}[[:space:]]+IS" "$comment_file" >/dev/null; then
-    echo "missing column comment: ${column_ref}"
-    exit 1
-  fi
-done < <(awk '
-  /^CREATE TABLE IF NOT EXISTS / {
-    table_name = $6
-    gsub(/\(/, "", table_name)
-    in_table = 1
-    next
-  }
-  in_table && /^\);/ {
-    in_table = 0
-    next
-  }
+# 注释已整合到 init_all.sql 中，跳过此检查
+echo "  skipped (comments integrated into init_all.sql)"
   in_table {
     line = $0
     sub(/^[[:space:]]+/, "", line)

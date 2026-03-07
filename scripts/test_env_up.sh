@@ -107,22 +107,12 @@ if [[ "$DB_EXISTS" != "1" ]]; then
 fi
 
 for f in \
-  "$ROOT_DIR/infra/sql/000_extensions.sql" \
-  "$ROOT_DIR/infra/sql/010_tables.sql" \
-  "$ROOT_DIR/infra/sql/020_indexes.sql" \
-  "$ROOT_DIR/infra/sql/030_comments.sql" \
-  "$ROOT_DIR/infra/sql/040_seed_permissions.sql"
+  "$ROOT_DIR/infra/sql/init_all.sql"
 do
   echo "apply: ${f##*/}"
   podman exec -i "$TEST_PG_CONTAINER" \
     psql -U "$TEST_DB_USER" -d "$TEST_DB_NAME" -v ON_ERROR_STOP=1 < "$f"
 done
-
-while IFS= read -r f; do
-  echo "apply migration: ${f##*/}"
-  podman exec -i "$TEST_PG_CONTAINER" \
-    psql -U "$TEST_DB_USER" -d "$TEST_DB_NAME" -v ON_ERROR_STOP=1 < "$f"
-done < <(find "$ROOT_DIR/infra/sql/migrations" -maxdepth 1 -type f -name "*.sql" | sort)
 
 echo
 echo "test environment is ready:"
