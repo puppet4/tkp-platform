@@ -18,6 +18,7 @@ class Settings(BaseSettings):
     app_debug: bool = Field(default=True, description="是否开启调试模式。")
     app_log_level: str = Field(default="INFO", description="日志级别。")
     api_prefix: str = Field(default="/api", description="统一接口前缀。")
+    rate_limit_default: str = Field(default="100/minute", description="默认限流策略。")
 
     # CORS 配置
     cors_origins: list[str] = Field(
@@ -30,6 +31,10 @@ class Settings(BaseSettings):
         default="postgresql+psycopg://postgres:postgres@localhost:5432/tkp_api",
         description="数据库连接地址。",
     )
+    database_pool_size: int = Field(default=20, description="数据库连接池大小。")
+    database_max_overflow: int = Field(default=10, description="数据库连接池最大溢出数。")
+    database_pool_timeout: int = Field(default=30, description="获取连接超时时间（秒）。")
+    database_pool_recycle: int = Field(default=3600, description="连接回收时间（秒）。")
 
     auth_jwt_algorithms: str = Field(default="HS256", description="令牌签名算法列表，逗号分隔。")
     auth_jwt_issuer: str | None = Field(default=None, description="期望的签发方。")
@@ -76,11 +81,14 @@ class Settings(BaseSettings):
 
     # OpenAI API 配置（用于内置 RAG 功能）
     openai_api_key: SecretStr = Field(default="", description="OpenAI API 密钥。")
+    openai_api_base: str | None = Field(default=None, description="OpenAI API 基础 URL（可选，用于代理）。")
     openai_embedding_model: str = Field(default="text-embedding-3-small", description="OpenAI 嵌入模型。")
     openai_chat_model: str = Field(default="gpt-4o-mini", description="OpenAI 聊天模型。")
     openai_chat_temperature: float = Field(default=0.7, description="LLM 生成温度。")
     openai_chat_max_tokens: int = Field(default=2000, description="LLM 最大生成 token 数。")
     openai_embedding_dimensions: int = Field(default=1536, description="向量维度。")
+    openai_embedding_batch_size: int = Field(default=100, description="OpenAI 嵌入批次大小。")
+    openai_embedding_timeout: float = Field(default=30.0, description="OpenAI 嵌入超时（秒）。")
 
     # 文本切片配置
     chunk_size: int = Field(default=800, description="文本切片大小。")
@@ -146,6 +154,9 @@ class Settings(BaseSettings):
     retrieval_fulltext_weight: float = Field(default=0.5, description="混合检索中全文检索的权重。")
     retrieval_enable_rerank: bool = Field(default=False, description="是否启用重排序。")
     retrieval_enable_query_rewrite: bool = Field(default=False, description="是否启用查询改写。")
+    retrieval_cache_enabled: bool = Field(default=True, description="是否启用检索缓存。")
+    retrieval_cache_ttl_seconds: int = Field(default=3600, description="检索缓存 TTL（秒）。")
+    retrieval_cache_prefix: str = Field(default="retrieval:cache:", description="检索缓存键前缀。")
 
     # Elasticsearch 配置（用于全文检索）
     elasticsearch_enabled: bool = Field(default=False, description="是否启用 Elasticsearch。")
@@ -241,6 +252,28 @@ class Settings(BaseSettings):
         if not self.auth_jwks_url and len(self.auth_jwt_secret.get_secret_value().encode("utf-8")) < 32:
             raise ValueError("KD_AUTH_JWT_SECRET must be at least 32 bytes when KD_AUTH_JWKS_URL is unset")
 
+        # 生产环境安全检查：禁止使用默认密钥
+        if self.app_env in {"prod", "production"}:
+            secret_value = self.auth_jwt_secret.get_secret_value()
+            if "change-me" in secret_value.lower() or "please-change" in secret_value.lower():
+                raise ValueError(
+                    "Production environment detected: KD_AUTH_JWT_SECRET must not contain default values. "
+                    "Please set a strong random secret key."
+                )
+
+            internal_token = self.internal_service_token.get_secret_value()
+            if "change-me" in internal_token.lower():
+                raise ValueError(
+                    "Production environment detected: KD_INTERNAL_SERVICE_TOKEN must not contain default values. "
+                    "Please set a strong random token."
+                )
+
+            openai_key = self.openai_api_key.get_secret_value()
+            if not openai_key or openai_key.startswith("sk-your-"):
+                raise ValueError(
+                    "Production environment detected: KD_OPENAI_API_KEY must be configured with a valid API key."
+                )
+
         if self.storage_backend in {"minio", "oss"}:
             missing: list[str] = []
             if not self.storage_endpoint:
@@ -263,3 +296,9 @@ class Settings(BaseSettings):
 def get_settings() -> Settings:
     """返回缓存后的配置单例。"""
     return Settings()
+
+
+def clear_settings_cache() -> None:
+    """清除配置缓存（用于测试）。"""
+    get_settings.cache_clear()
+

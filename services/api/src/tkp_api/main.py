@@ -3,11 +3,15 @@
 from fastapi import FastAPI
 
 from tkp_api.core.config import get_settings
+from tkp_api.core.logging_config import setup_logging
 from tkp_api.exceptions import register_exception_handlers
 from tkp_api.middlewares import register_middlewares
 from tkp_api.api.router import api_router
 
 settings = get_settings()
+
+# 配置日志（在创建应用之前）
+setup_logging()
 
 
 def create_app() -> FastAPI:
@@ -33,6 +37,9 @@ def create_app() -> FastAPI:
             {"name": "knowledge_bases", "description": "知识库与知识库成员管理。"},
             {"name": "documents", "description": "文档上传、版本管理与入库任务查询。"},
             {"name": "ops", "description": "运行态可观测指标与运维辅助接口。"},
+            {"name": "feedback", "description": "用户反馈收集与回放分析接口。"},
+            {"name": "governance", "description": "数据治理（删除请求、保留策略、PII 脱敏）。"},
+            {"name": "metrics", "description": "Prometheus 指标导出接口。"},
             {"name": "retrieval", "description": "授权范围内的检索接口。"},
             {"name": "chat", "description": "带检索引用的问答接口。"},
             {"name": "agent", "description": "智能体运行创建、查询与取消。"},
@@ -42,6 +49,54 @@ def create_app() -> FastAPI:
     register_middlewares(app)
     register_exception_handlers(app)
     app.include_router(api_router, prefix=settings.api_prefix)
+
+    # 应用启动：预热连接池
+    @app.on_event("startup")
+    async def startup_event():
+        """应用启动时预热连接池。"""
+        import logging
+        from sqlalchemy import text
+        from tkp_api.db.session import engine
+
+        logger = logging.getLogger(__name__)
+        logger.info("Application starting up...")
+
+        # 预热数据库连接池
+        try:
+            with engine.connect() as conn:
+                conn.execute(text("SELECT 1"))
+            logger.info("Database connection pool warmed up successfully")
+        except Exception as e:
+            logger.error(f"Failed to warm up database connection pool: {e}")
+
+        logger.info("Application startup complete")
+
+    # 优雅关闭：清理资源
+    @app.on_event("shutdown")
+    async def shutdown_event():
+        """应用关闭时清理资源。"""
+        import logging
+        from tkp_api.db.session import engine
+
+        logger = logging.getLogger(__name__)
+        logger.info("Application shutting down, cleaning up resources...")
+
+        # 关闭数据库连接池
+        engine.dispose()
+        logger.info("Database connection pool disposed")
+
+        # 关闭 Redis 连接（如果有）
+        try:
+            from tkp_api.services.embedding_service import get_embedding_service
+            embedding_service = get_embedding_service()
+            if embedding_service._redis_client:
+                embedding_service._redis_client.close()
+                logger.info("Redis connection closed")
+        except Exception as e:
+            logger.warning(f"Failed to close Redis connection: {e}")
+
+        logger.info("Application shutdown complete")
+
     return app
 
 

@@ -4,6 +4,7 @@ import hashlib
 import json
 import math
 import re
+import threading
 from uuid import UUID
 
 from sqlalchemy import bindparam, or_, select, text
@@ -11,6 +12,10 @@ from sqlalchemy.orm import Session
 
 from tkp_api.models.enums import DocumentStatus
 from tkp_api.models.knowledge import Document, DocumentChunk
+from tkp_api.services.embedding_service import get_embedding_service
+
+# 全局嵌入服务实例（线程安全）
+_embedding_service_lock = threading.Lock()
 
 _DEFAULT_MIN_SCORE_BY_STRATEGY: dict[str, int] = {
     "hybrid": 120,
@@ -27,32 +32,17 @@ _WORD_RE = re.compile(r"[a-z0-9_]+")
 
 
 def _embed_text(content: str, *, dim: int = 1536) -> list[float]:
-    """使用确定性哈希算法生成文本向量。"""
-    normalized = " ".join(content.strip().lower().split())
-    if not normalized:
-        return [0.0] * dim
+    """使用真实的 OpenAI Embeddings API 生成文本向量。
 
-    base_tokens = [token for token in normalized.split(" ") if token]
-    if len(base_tokens) < 8:
-        compact = normalized.replace(" ", "")
-        base_tokens.extend(compact[i : i + 2] for i in range(max(0, len(compact) - 1)))
-    if not base_tokens:
-        base_tokens = [normalized]
+    Args:
+        content: 待嵌入的文本
+        dim: 向量维度（保留参数以兼容旧代码，实际由配置决定）
 
-    vector = [0.0] * dim
-    for pos, token in enumerate(base_tokens[:1024], start=1):
-        digest = hashlib.sha256(token.encode("utf-8")).digest()
-        weight = 1.0 / math.sqrt(pos)
-        for offset in (0, 4, 8, 12, 16, 20):
-            idx = int.from_bytes(digest[offset : offset + 2], "big") % dim
-            sign = -1.0 if (digest[offset + 2] & 1) else 1.0
-            magnitude = 0.2 + (digest[offset + 3] / 255.0)
-            vector[idx] += sign * magnitude * weight
-
-    norm = math.sqrt(sum(value * value for value in vector))
-    if norm <= 0:
-        return [0.0] * dim
-    return [value / norm for value in vector]
+    Returns:
+        语义向量
+    """
+    embedding_service = get_embedding_service()
+    return embedding_service.embed_text(content)
 
 
 def _vector_to_pg_literal(vector: list[float]) -> str:

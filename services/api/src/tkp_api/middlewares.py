@@ -1,33 +1,63 @@
 """应用中间件注册。"""
 
 import json
+import logging
 from time import perf_counter
 import uuid
 
 from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
-from slowapi import Limiter, _rate_limit_exceeded_handler
-from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
+from slowapi.middleware import SlowAPIMiddleware
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from tkp_api.core.config import get_settings
+from tkp_api.core.rate_limit import limiter
+from tkp_api.core.rate_limit_handler import _rate_limit_exceeded_handler
+from tkp_api.middleware.transaction import TransactionMiddleware
+from tkp_api.middleware.request_size_limit import RequestSizeLimitMiddleware
 from tkp_api.utils.masking import default_masker
 
+logger = logging.getLogger(__name__)
 settings = get_settings()
-
-# 创建限流器
-limiter = Limiter(key_func=get_remote_address, default_limits=["100/minute"])
 
 
 async def request_id_middleware(request: Request, call_next):
     """注入请求追踪 ID，并通过响应头返回。"""
     request.state.request_id = str(uuid.uuid4())
     request.state.request_started_at = perf_counter()
+
+    logger.info(
+        f"Request started: {request.method} {request.url.path}",
+        extra={
+            "request_id": request.state.request_id,
+            "method": request.method,
+            "path": request.url.path,
+        }
+    )
+
     response = await call_next(request)
     response.headers["X-Request-Id"] = request.state.request_id
     elapsed = perf_counter() - request.state.request_started_at
-    response.headers["X-Process-Time-Ms"] = str(round(elapsed * 1000, 2))
+    elapsed_ms = round(elapsed * 1000, 2)
+    response.headers["X-Process-Time-Ms"] = str(elapsed_ms)
+
+    # 慢请求告警（超过 1 秒）
+    log_level = logging.WARNING if elapsed_ms > 1000 else logging.INFO
+    logger.log(
+        log_level,
+        f"Request completed: {request.method} {request.url.path} - {response.status_code}"
+        + (f" [SLOW REQUEST]" if elapsed_ms > 1000 else ""),
+        extra={
+            "request_id": request.state.request_id,
+            "method": request.method,
+            "path": request.url.path,
+            "status_code": response.status_code,
+            "duration_ms": elapsed_ms,
+            "slow_request": elapsed_ms > 1000,
+        }
+    )
+
     return response
 
 
@@ -90,13 +120,21 @@ def register_middlewares(app: FastAPI) -> None:
         expose_headers=["X-Request-Id", "X-Process-Time-Ms"],
     )
 
-    # 2. 敏感数据脱敏中间件
+    # 2. 请求大小限制中间件（安全防护）
+    app.add_middleware(RequestSizeLimitMiddleware, max_size=10 * 1024 * 1024)
+
+    # 3. 事务管理中间件（在业务逻辑之前）
+    app.add_middleware(TransactionMiddleware)
+
+    # 4. 敏感数据脱敏中间件
     if not settings.app_debug:  # 仅在生产环境启用
         app.add_middleware(SensitiveDataMaskingMiddleware)
 
-    # 3. 请求 ID 和计时中间件
+    # 5. 请求 ID 和计时中间件
     app.middleware("http")(request_id_middleware)
 
-    # 4. API 限流
-    app.state.limiter = limiter
-    app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+    # 6. API 限流（生产环境启用，避免本地/测试因外部存储不可用导致阻断）
+    if settings.app_env in {"prod", "production"}:
+        app.state.limiter = limiter
+        app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+        app.add_middleware(SlowAPIMiddleware)
