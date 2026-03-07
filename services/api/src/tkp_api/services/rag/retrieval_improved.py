@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import logging
+import threading
+from functools import lru_cache
 from typing import Any
 from uuid import UUID
 
@@ -17,85 +19,147 @@ from tkp_api.services.rag.answer_grader import create_answer_grader
 
 logger = logging.getLogger("tkp_api.rag.retrieval_improved")
 
-# 全局服务实例（延迟初始化）
-_embedding_service = None
-_retriever = None
-_generator = None
-_query_preprocessor = None
-_parent_child_merger = None
-_answer_grader = None
+
+# 线程安全的服务单例管理器
+class RAGServicesSingleton:
+    """线程安全的 RAG 服务单例管理器。"""
+
+    _embedding_service = None
+    _retriever = None
+    _generator = None
+    _query_preprocessor = None
+    _parent_child_merger = None
+    _answer_grader = None
+    _lock = threading.Lock()
+
+    @classmethod
+    def get_embedding_service(cls):
+        """获取 embedding 服务单例（线程安全）。"""
+        if cls._embedding_service is None:
+            with cls._lock:
+                if cls._embedding_service is None:
+                    from tkp_api.services.rag.embeddings import create_embedding_service
+                    settings = get_settings()
+                    cls._embedding_service = create_embedding_service(
+                        api_key=settings.openai_api_key.get_secret_value(),
+                        model=settings.openai_embedding_model,
+                    )
+        return cls._embedding_service
+
+    @classmethod
+    def get_retriever(cls):
+        """获取检索器单例（线程安全）。"""
+        if cls._retriever is None:
+            with cls._lock:
+                if cls._retriever is None:
+                    settings = get_settings()
+                    cls._retriever = create_retriever(
+                        embedding_service=cls.get_embedding_service(),
+                        top_k=settings.retrieval_top_k,
+                        similarity_threshold=settings.retrieval_similarity_threshold,
+                    )
+        return cls._retriever
+
+    @classmethod
+    def get_generator(cls):
+        """获取生成器单例（线程安全）。"""
+        if cls._generator is None:
+            with cls._lock:
+                if cls._generator is None:
+                    settings = get_settings()
+                    cls._generator = create_generator(
+                        api_key=settings.openai_api_key.get_secret_value(),
+                        model=settings.openai_chat_model,
+                        temperature=settings.openai_chat_temperature,
+                        max_tokens=settings.openai_chat_max_tokens,
+                    )
+        return cls._generator
+
+    @classmethod
+    def get_query_preprocessor(cls):
+        """获取查询预处理器单例（线程安全）。"""
+        if cls._query_preprocessor is None:
+            with cls._lock:
+                if cls._query_preprocessor is None:
+                    settings = get_settings()
+                    cls._query_preprocessor = QueryPreprocessor(
+                        enable_language_detection=settings.query_language_detection_enabled,
+                        enable_spell_correction=settings.query_spell_correction_enabled,
+                    )
+        return cls._query_preprocessor
+
+    @classmethod
+    def get_parent_child_merger(cls):
+        """获取父子块合并器单例（线程安全）。"""
+        if cls._parent_child_merger is None:
+            with cls._lock:
+                if cls._parent_child_merger is None:
+                    settings = get_settings()
+                    cls._parent_child_merger = ParentChildMerger(
+                        max_merge_distance=settings.parent_child_max_merge_distance,
+                    )
+        return cls._parent_child_merger
+
+    @classmethod
+    def get_answer_grader(cls):
+        """获取答案评分器单例（线程安全）。"""
+        if cls._answer_grader is None:
+            with cls._lock:
+                if cls._answer_grader is None:
+                    settings = get_settings()
+                    cls._answer_grader = create_answer_grader(
+                        api_key=settings.openai_api_key.get_secret_value(),
+                        model=settings.answer_grading_model,
+                        confidence_threshold=settings.answer_confidence_threshold,
+                    )
+        return cls._answer_grader
+
+    @classmethod
+    def reset_all(cls) -> None:
+        """重置所有单例实例（主要用于测试）。"""
+        with cls._lock:
+            cls._embedding_service = None
+            cls._retriever = None
+            cls._generator = None
+            cls._query_preprocessor = None
+            cls._parent_child_merger = None
+            cls._answer_grader = None
 
 
+@lru_cache(maxsize=1)
 def _get_embedding_service():
-    """获取或创建 embedding 服务单例。"""
-    global _embedding_service
-    if _embedding_service is None:
-        from tkp_api.services.rag.embeddings import create_embedding_service
-        settings = get_settings()
-        _embedding_service = create_embedding_service(
-            api_key=settings.openai_api_key.get_secret_value(),
-            model=settings.openai_embedding_model,
-        )
-    return _embedding_service
+    """获取 embedding 服务单例。"""
+    return RAGServicesSingleton.get_embedding_service()
 
 
+@lru_cache(maxsize=1)
 def _get_retriever():
-    """获取或创建检索器单例。"""
-    global _retriever
-    if _retriever is None:
-        settings = get_settings()
-        _retriever = create_retriever(
-            embedding_service=_get_embedding_service(),
-            top_k=settings.retrieval_top_k,
-            similarity_threshold=settings.retrieval_similarity_threshold,
-        )
-    return _retriever
+    """获取检索器单例。"""
+    return RAGServicesSingleton.get_retriever()
 
 
+@lru_cache(maxsize=1)
 def _get_generator():
-    """获取或创建生成器单例。"""
-    global _generator
-    if _generator is None:
-        settings = get_settings()
-        _generator = create_generator(
-            api_key=settings.openai_api_key.get_secret_value(),
-            model=settings.openai_chat_model,
-            temperature=settings.openai_chat_temperature,
-            max_tokens=settings.openai_chat_max_tokens,
-        )
-    return _generator
+    """获取生成器单例。"""
+    return RAGServicesSingleton.get_generator()
 
 
+@lru_cache(maxsize=1)
 def _get_query_preprocessor():
-    """获取或创建查询预处理器单例。"""
-    global _query_preprocessor
-    if _query_preprocessor is None:
-        settings = get_settings()
-        _query_preprocessor = QueryPreprocessor(
-            enable_language_detection=settings.query_language_detection_enabled,
-            enable_spell_correction=settings.query_spell_correction_enabled,
-        )
-    return _query_preprocessor
+    """获取查询预处理器单例。"""
+    return RAGServicesSingleton.get_query_preprocessor()
 
 
+@lru_cache(maxsize=1)
 def _get_parent_child_merger():
-    """获取或创建父子块合并器单例。"""
-    global _parent_child_merger
-    if _parent_child_merger is None:
-        settings = get_settings()
-        _parent_child_merger = ParentChildMerger(
-            enable_merge=settings.parent_child_merge_enabled,
-            max_merge_distance=settings.parent_child_max_merge_distance,
-        )
-    return _parent_child_merger
+    """获取父子块合并器单例。"""
+    return RAGServicesSingleton.get_parent_child_merger()
 
 
+@lru_cache(maxsize=1)
 def _get_answer_grader():
-    """获取或创建答案评分器单例。"""
-    global _answer_grader
-    if _answer_grader is None:
-        _answer_grader = create_answer_grader()
-    return _answer_grader
+    """获取答案评分器单例。"""
+    return RAGServicesSingleton.get_answer_grader()
 
 
 def search_chunks_improved(

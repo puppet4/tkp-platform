@@ -17,6 +17,7 @@ def init_telemetry(
     enable_traces: bool = True,
     enable_metrics: bool = True,
     enable_logs: bool = False,
+    metric_export_interval_ms: int = 60000,
 ) -> dict[str, Any]:
     """初始化 OpenTelemetry。
 
@@ -27,6 +28,7 @@ def init_telemetry(
         enable_traces: 是否启用追踪
         enable_metrics: 是否启用指标
         enable_logs: 是否启用日志
+        metric_export_interval_ms: 指标导出间隔（毫秒）
 
     Returns:
         包含 tracer_provider、meter_provider 的字典
@@ -87,11 +89,11 @@ def init_telemetry(
 
             metric_exporter = ConsoleMetricExporter()
 
-        metric_reader = PeriodicExportingMetricReader(metric_exporter, export_interval_millis=60000)
+        metric_reader = PeriodicExportingMetricReader(metric_exporter, export_interval_millis=metric_export_interval_ms)
         meter_provider = MeterProvider(resource=resource, metric_readers=[metric_reader])
         metrics.set_meter_provider(meter_provider)
         result["meter_provider"] = meter_provider
-        logger.info("OpenTelemetry metrics initialized: endpoint=%s", otlp_endpoint or "console")
+        logger.info("OpenTelemetry metrics initialized: endpoint=%s, interval=%dms", otlp_endpoint or "console", metric_export_interval_ms)
 
     return result
 

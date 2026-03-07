@@ -16,7 +16,16 @@ class Settings(BaseSettings):
     app_name: str = Field(default="Tenant Knowledge Platform", description="应用名称。")
     app_env: str = Field(default="dev", description="运行环境标识。")
     app_debug: bool = Field(default=True, description="是否开启调试模式。")
+    app_log_level: str = Field(default="INFO", description="日志级别。")
     api_prefix: str = Field(default="/api", description="统一接口前缀。")
+
+    # CORS 配置
+    cors_origins: list[str] = Field(
+        default=["http://localhost:3000", "http://localhost:5173"],
+        description="允许的跨域来源列表。",
+    )
+    cors_allow_credentials: bool = Field(default=True, description="是否允许携带凭证。")
+
     database_url: str = Field(
         default="postgresql+psycopg://postgres:postgres@localhost:5432/tkp_api",
         description="数据库连接地址。",
@@ -187,6 +196,14 @@ class Settings(BaseSettings):
     kafka_bootstrap_servers: str = Field(default="localhost:9092", description="Kafka 服务器地址，逗号分隔。")
     kafka_client_id: str = Field(default="tkp-api", description="Kafka 客户端 ID。")
     kafka_consumer_group_id: str = Field(default="tkp-api-group", description="Kafka 消费者组 ID。")
+
+    # 可观测性配置
+    telemetry_enabled: bool = Field(default=False, description="是否启用 OpenTelemetry。")
+    telemetry_otlp_endpoint: str | None = Field(default=None, description="OTLP 导出端点（如 http://jaeger:4317）。")
+    telemetry_enable_traces: bool = Field(default=True, description="是否启用追踪。")
+    telemetry_enable_metrics: bool = Field(default=True, description="是否启用指标。")
+    telemetry_metric_export_interval_ms: int = Field(default=60000, description="指标导出间隔（毫秒）。")
+    app_log_level: str = Field(default="INFO", description="应用日志级别。")
 
     @field_validator("auth_jwt_algorithms")
     @classmethod

@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import threading
 import time
+from functools import lru_cache
 from typing import Any
 from uuid import UUID
 
@@ -12,14 +14,27 @@ from sqlalchemy.orm import Session
 from tkp_api.core.config import get_settings
 from tkp_api.services.rag import search_chunks_improved, generate_answer_improved
 
-# 全局混合检索器实例（延迟初始化）
-_hybrid_retriever = None
 
+# 线程安全的单例实现
+class HybridRetrieverSingleton:
+    """线程安全的混合检索器单例。"""
 
-def _get_hybrid_retriever():
-    """获取或创建混合检索器单例。"""
-    global _hybrid_retriever
-    if _hybrid_retriever is None:
+    _instance = None
+    _lock = threading.Lock()
+
+    @classmethod
+    def get_instance(cls):
+        """获取混合检索器单例实例（线程安全）。"""
+        if cls._instance is None:
+            with cls._lock:
+                # 双重检查锁定
+                if cls._instance is None:
+                    cls._instance = cls._create_retriever()
+        return cls._instance
+
+    @classmethod
+    def _create_retriever(cls):
+        """创建混合检索器实例。"""
         from tkp_api.services.rag.vector_retrieval import create_retriever
         from tkp_api.services.rag.embeddings import create_embedding_service
         from tkp_api.services.rag.hybrid_retrieval import create_hybrid_retriever
@@ -89,7 +104,7 @@ def _get_hybrid_retriever():
                 logging.warning("failed to initialize query rewriter: %s", exc)
 
         # 创建混合检索器
-        _hybrid_retriever = create_hybrid_retriever(
+        return create_hybrid_retriever(
             vector_retriever=vector_retriever,
             elasticsearch_client=elasticsearch_client,
             reranker=reranker,
@@ -98,7 +113,17 @@ def _get_hybrid_retriever():
             fulltext_weight=settings.retrieval_fulltext_weight,
         )
 
-    return _hybrid_retriever
+    @classmethod
+    def reset_instance(cls) -> None:
+        """重置单例实例（主要用于测试）。"""
+        with cls._lock:
+            cls._instance = None
+
+
+@lru_cache(maxsize=1)
+def _get_hybrid_retriever():
+    """获取混合检索器单例（使用 lru_cache 确保单例）。"""
+    return HybridRetrieverSingleton.get_instance()
 
 
 def _compose_answer(question: str, hits: list[dict[str, object]]) -> str:

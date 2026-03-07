@@ -1,6 +1,8 @@
 """Embedding Gateway 工厂函数。"""
 
 import logging
+import threading
+from functools import lru_cache
 
 from tkp_api.core.config import get_settings
 from tkp_api.services.embedding_gateway import (
@@ -101,13 +103,39 @@ def _create_provider(provider_type: str, settings):
         raise ValueError(f"unsupported embedding provider: {provider_type}")
 
 
-# 全局单例
-_gateway_instance: EmbeddingGateway | None = None
+# 线程安全的单例实现
+class EmbeddingGatewaySingleton:
+    """线程安全的 Embedding Gateway 单例。"""
+
+    _instance: EmbeddingGateway | None = None
+    _lock = threading.Lock()
+
+    @classmethod
+    def get_instance(cls) -> EmbeddingGateway:
+        """获取 Embedding Gateway 单例实例（线程安全）。"""
+        if cls._instance is None:
+            with cls._lock:
+                # 双重检查锁定
+                if cls._instance is None:
+                    cls._instance = create_embedding_gateway()
+                    logger.info("embedding gateway singleton created")
+        return cls._instance
+
+    @classmethod
+    def reset_instance(cls) -> None:
+        """重置单例实例（主要用于测试）。"""
+        with cls._lock:
+            cls._instance = None
+            logger.info("embedding gateway singleton reset")
 
 
+@lru_cache(maxsize=1)
 def get_embedding_gateway() -> EmbeddingGateway:
-    """获取全局 Embedding Gateway 实例。"""
-    global _gateway_instance
-    if _gateway_instance is None:
-        _gateway_instance = create_embedding_gateway()
-    return _gateway_instance
+    """获取 Embedding Gateway 实例（使用 lru_cache 确保单例）。
+
+    这个函数使用 @lru_cache 装饰器，确保：
+    1. 线程安全
+    2. 只创建一次实例
+    3. 可以通过 get_embedding_gateway.cache_clear() 清除缓存（用于测试）
+    """
+    return EmbeddingGatewaySingleton.get_instance()

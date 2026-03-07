@@ -49,6 +49,24 @@ class ElasticsearchClient:
         )
         logger.info("initialized elasticsearch client: hosts=%s", hosts)
 
+    def __enter__(self):
+        """上下文管理器入口。"""
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        """上下文管理器退出，确保资源释放。"""
+        self.close()
+        return False
+
+    def close(self):
+        """关闭客户端连接。"""
+        try:
+            if hasattr(self, 'client') and self.client:
+                self.client.close()
+                logger.info("elasticsearch client closed")
+        except Exception as exc:
+            logger.warning("error closing elasticsearch client: %s", exc)
+
     def create_index(self, index_name: str, mappings: dict[str, Any]) -> bool:
         """创建索引。
 
@@ -59,7 +77,10 @@ class ElasticsearchClient:
         Returns:
             是否创建成功
         """
+        global ConnectionError, TransportError
         try:
+            from elasticsearch import ConnectionError, TransportError
+
             if self.client.indices.exists(index=index_name):
                 logger.info("index already exists: %s", index_name)
                 return True
@@ -70,8 +91,14 @@ class ElasticsearchClient:
             )
             logger.info("created index: %s", index_name)
             return True
+        except ConnectionError as exc:
+            logger.error("elasticsearch connection failed for index %s: %s", index_name, exc)
+            return False
+        except TransportError as exc:
+            logger.error("elasticsearch transport error for index %s: %s", index_name, exc)
+            return False
         except Exception as exc:
-            logger.exception("failed to create index %s: %s", index_name, exc)
+            logger.exception("unexpected error creating index %s: %s", index_name, exc)
             return False
 
     def index_document(
@@ -92,14 +119,25 @@ class ElasticsearchClient:
             是否索引成功
         """
         try:
+            from elasticsearch import ConnectionError, TransportError
+
             self.client.index(
                 index=index_name,
                 id=doc_id,
                 document=document,
             )
             return True
+        except ConnectionError as exc:
+            logger.error("elasticsearch connection failed for document %s: %s", doc_id, exc)
+            return False
+        except TransportError as exc:
+            logger.error("elasticsearch transport error for document %s: %s", doc_id, exc)
+            return False
+        except (KeyError, ValueError) as exc:
+            logger.error("invalid document format for %s: %s", doc_id, exc)
+            return False
         except Exception as exc:
-            logger.exception("failed to index document %s: %s", doc_id, exc)
+            logger.exception("unexpected error indexing document %s: %s", doc_id, exc)
             return False
 
     def bulk_index(
@@ -118,7 +156,8 @@ class ElasticsearchClient:
             (成功数, 失败数)
         """
         try:
-            from elasticsearch.helpers import bulk
+            from elasticsearch import ConnectionError, TransportError
+            from elasticsearch.helpers import bulk, BulkIndexError
 
             actions = [
                 {
@@ -132,8 +171,22 @@ class ElasticsearchClient:
             success, failed = bulk(self.client, actions, raise_on_error=False)
             logger.info("bulk indexed: success=%d, failed=%d", success, len(failed))
             return success, len(failed)
+        except ConnectionError as exc:
+            logger.error("elasticsearch connection failed during bulk index: %s", exc)
+            return 0, len(documents)
+        except TransportError as exc:
+            logger.error("elasticsearch transport error during bulk index: %s", exc)
+            return 0, len(documents)
+        except BulkIndexError as exc:
+            logger.error("bulk index error: %s", exc)
+            # 部分成功的情况
+            success = len(documents) - len(exc.errors)
+            return success, len(exc.errors)
+        except (KeyError, ValueError) as exc:
+            logger.error("invalid document format in bulk index: %s", exc)
+            return 0, len(documents)
         except Exception as exc:
-            logger.exception("bulk index failed: %s", exc)
+            logger.exception("unexpected error during bulk index: %s", exc)
             return 0, len(documents)
 
     def search(
@@ -156,6 +209,8 @@ class ElasticsearchClient:
             搜索结果列表
         """
         try:
+            from elasticsearch import ConnectionError, TransportError, NotFoundError
+
             response = self.client.search(
                 index=index_name,
                 query=query,
@@ -174,8 +229,20 @@ class ElasticsearchClient:
 
             logger.info("search completed: query=%s, hits=%d", query, len(hits))
             return hits
+        except NotFoundError as exc:
+            logger.warning("index not found: %s", index_name)
+            return []
+        except ConnectionError as exc:
+            logger.error("elasticsearch connection failed during search: %s", exc)
+            return []
+        except TransportError as exc:
+            logger.error("elasticsearch transport error during search: %s", exc)
+            return []
+        except (KeyError, ValueError) as exc:
+            logger.error("invalid query format or response: %s", exc)
+            return []
         except Exception as exc:
-            logger.exception("search failed: %s", exc)
+            logger.exception("unexpected error during search: %s", exc)
             return []
 
     def full_text_search(
