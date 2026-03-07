@@ -6,10 +6,10 @@
 
 from uuid import UUID
 
-from fastapi import HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session, joinedload
 
+from tkp_api.core.exceptions import PermissionDeniedException, ResourceNotFoundException
 from tkp_api.models.enums import DocumentStatus, KBRole, KBStatus, MembershipStatus, WorkspaceRole, WorkspaceStatus
 from tkp_api.models.knowledge import Document, KBMembership, KnowledgeBase
 from tkp_api.models.workspace import Workspace, WorkspaceMembership
@@ -18,16 +18,6 @@ from tkp_api.models.workspace import Workspace, WorkspaceMembership
 WORKSPACE_WRITE_ROLES = {WorkspaceRole.OWNER, WorkspaceRole.EDITOR}
 # 知识库写权限角色集合。
 KB_WRITE_ROLES = {KBRole.OWNER, KBRole.EDITOR}
-
-
-def _forbidden() -> HTTPException:
-    """统一 403 异常。"""
-    return HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="forbidden")
-
-
-def _not_found(message: str) -> HTTPException:
-    """统一 404 异常。"""
-    return HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=message)
 
 
 def get_workspace_membership(
@@ -65,9 +55,9 @@ def ensure_workspace_read_access(
     """
     workspace = db.get(Workspace, workspace_id)
     if not workspace or workspace.tenant_id != tenant_id:
-        raise _not_found("workspace not found")
+        raise ResourceNotFoundException("工作空间", str(workspace_id))
     if workspace.status == WorkspaceStatus.ARCHIVED:
-        raise _not_found("workspace not found")
+        raise ResourceNotFoundException("工作空间", str(workspace_id))
 
     membership = get_workspace_membership(
         db,
@@ -76,7 +66,7 @@ def ensure_workspace_read_access(
         user_id=user_id,
     )
     if not membership:
-        raise _forbidden()
+        raise PermissionDeniedException("无权限访问该工作空间")
 
     return workspace, membership
 
@@ -96,7 +86,7 @@ def ensure_workspace_write_access(
         user_id=user_id,
     )
     if membership.role not in WORKSPACE_WRITE_ROLES:
-        raise _forbidden()
+        raise PermissionDeniedException("无权限修改该工作空间")
     return workspace, membership
 
 
@@ -174,9 +164,9 @@ def ensure_kb_read_access(
     """
     kb = db.get(KnowledgeBase, kb_id)
     if not kb or kb.tenant_id != tenant_id:
-        raise _not_found("knowledge base not found")
+        raise ResourceNotFoundException("知识库", str(kb_id))
     if kb.status == KBStatus.ARCHIVED:
-        raise _not_found("knowledge base not found")
+        raise ResourceNotFoundException("知识库", str(kb_id))
 
     _, ws_membership = ensure_workspace_read_access(
         db,
@@ -187,7 +177,7 @@ def ensure_kb_read_access(
 
     kb_membership = get_kb_membership(db, tenant_id=tenant_id, kb_id=kb.id, user_id=user_id)
     if not kb_membership:
-        raise _forbidden()
+        raise PermissionDeniedException("无权限访问该知识库")
 
     return kb, ws_membership, kb_membership
 
@@ -207,9 +197,9 @@ def ensure_kb_write_access(
     """
     kb = db.get(KnowledgeBase, kb_id)
     if not kb or kb.tenant_id != tenant_id:
-        raise _not_found("knowledge base not found")
+        raise ResourceNotFoundException("知识库", str(kb_id))
     if kb.status == KBStatus.ARCHIVED:
-        raise _not_found("knowledge base not found")
+        raise ResourceNotFoundException("知识库", str(kb_id))
 
     _, ws_membership = ensure_workspace_read_access(
         db,
@@ -228,7 +218,7 @@ def ensure_kb_write_access(
     if kb_membership and kb_membership.role in KB_WRITE_ROLES:
         return kb, ws_membership, kb_membership
 
-    raise _forbidden()
+    raise PermissionDeniedException("无权限修改该知识库")
 
 
 def ensure_document_read_access(
@@ -241,9 +231,9 @@ def ensure_document_read_access(
     """校验文档读权限（文档 -> 知识库 -> 工作空间）。"""
     document = db.get(Document, document_id)
     if not document or document.tenant_id != tenant_id:
-        raise _not_found("document not found")
+        raise ResourceNotFoundException("文档", str(document_id))
     if document.status == DocumentStatus.DELETED:
-        raise _not_found("document not found")
+        raise ResourceNotFoundException("文档", str(document_id))
 
     kb, _, _ = ensure_kb_read_access(
         db,

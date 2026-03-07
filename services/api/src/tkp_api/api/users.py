@@ -137,7 +137,7 @@ def update_user(
         db,
         tenant_id=ctx.tenant_id,
         tenant_role=ctx.tenant_role,
-        action=PermissionAction.USER_DELETE,
+        action=PermissionAction.USER_UPDATE,
     )
 
     membership = (
@@ -211,7 +211,7 @@ def remove_user(
         db,
         tenant_id=ctx.tenant_id,
         tenant_role=ctx.tenant_role,
-        action=PermissionAction.USER_UPDATE,
+        action=PermissionAction.USER_DELETE,
     )
 
     membership = (

@@ -12,11 +12,12 @@ from datetime import datetime, timezone
 import hashlib
 from uuid import UUID, uuid4
 
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from tkp_api.core.exceptions import PermissionDeniedException, ResourceNotFoundException
 from tkp_api.core.security import AuthenticatedPrincipal, parse_authorization_header
 from tkp_api.db.session import get_db
 from tkp_api.models.enums import MembershipStatus, TenantRole
@@ -24,11 +25,6 @@ from tkp_api.models.tenant import TenantMembership, User
 from tkp_api.services.membership_sync import normalize_email
 
 bearer_scheme = HTTPBearer(auto_error=False)
-HTTP_422_UNPROCESSABLE = getattr(
-    status,
-    "HTTP_422_UNPROCESSABLE_CONTENT",
-    status.HTTP_422_UNPROCESSABLE_ENTITY,
-)
 
 
 @dataclass
@@ -162,10 +158,12 @@ def get_current_user(
     principal: AuthenticatedPrincipal = Depends(get_current_principal),
     db: Session = Depends(get_db),
 ) -> User:
-    """仅做认证，不绑定租户上下文。"""
+    """仅做认证，不绑定租户上下文。
+
+    注意：不在此处提交事务，由路由层或中间件统一管理。
+    """
     user = ensure_user(db, principal)
-    db.commit()
-    db.refresh(user)
+    db.flush()  # 确保用户数据可见，但不提交事务
     return user
 
 
@@ -178,24 +176,18 @@ def get_request_context(
     principal: AuthenticatedPrincipal = Depends(get_current_principal),
     db: Session = Depends(get_db),
 ) -> RequestContext:
-    """同时完成认证与租户成员关系授权。"""
+    """同时完成认证与租户成员关系授权。
+
+    注意：不在此处提交事务，由路由层或中间件统一管理。
+    """
     user = ensure_user(db, principal)
     tenant_id = _extract_tenant_id_from_claims(principal)
     if tenant_id is None:
-        db.rollback()
-        raise HTTPException(
-            status_code=HTTP_422_UNPROCESSABLE,
-            detail={
-                "code": "TENANT_CONTEXT_REQUIRED",
-                "message": "缺少租户上下文。",
-                "details": {
-                    "reason": "missing_tenant_context",
-                    "suggestion": "请先登录获取已绑定 tenant_id 的访问令牌，或调用 /api/auth/switch-tenant 切换租户后重试。",
-                },
-            },
+        raise PermissionDeniedException(
+            "缺少租户上下文，请先登录获取已绑定 tenant_id 的访问令牌，或调用 /api/auth/switch-tenant 切换租户后重试"
         )
 
-    # 所有租户内读写都依赖成员关系授权，拒绝“仅登录即可访问租户”。
+    # 所有租户内读写都依赖成员关系授权，拒绝"仅登录即可访问租户"。
     stmt = (
         select(TenantMembership)
         .where(TenantMembership.tenant_id == tenant_id)
@@ -204,10 +196,7 @@ def get_request_context(
     )
     membership = db.execute(stmt).scalar_one_or_none()
     if not membership:
-        db.rollback()
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="forbidden")
-
-    db.commit()
+        raise PermissionDeniedException(f"用户不属于租户 {tenant_id} 或成员关系未激活")
 
     return RequestContext(
         user_id=user.id,
@@ -222,7 +211,7 @@ def require_tenant_roles(*allowed_roles: str):
 
     def _dep(ctx: RequestContext = Depends(get_request_context)) -> RequestContext:
         if ctx.tenant_role not in allowed_roles:
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="forbidden")
+            raise PermissionDeniedException(f"需要以下角色之一：{', '.join(allowed_roles)}")
         return ctx
 
     return _dep

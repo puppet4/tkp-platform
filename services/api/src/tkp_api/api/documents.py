@@ -10,6 +10,7 @@ from fastapi import APIRouter, Depends, File, Form, Header, HTTPException, Path,
 from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
 
+from tkp_api.core.exceptions import DocumentValidationException
 from tkp_api.dependencies import get_request_context
 from tkp_api.db.session import get_db
 from tkp_api.models.enums import DocumentStatus, IngestionJobStatus, ParseStatus, SourceType
@@ -47,11 +48,14 @@ def validate_upload_file(file: UploadFile, content: bytes) -> None:
     """基础上传校验，防止空文件与超大文件直接入库。"""
     filename = (file.filename or "").strip()
     if not filename:
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="filename is required")
+        raise DocumentValidationException("文件名不能为空", details={"field": "filename"})
     if not content:
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="file content is empty")
+        raise DocumentValidationException("文件内容不能为空", details={"field": "content"})
     if len(content) > _MAX_UPLOAD_BYTES:
-        raise HTTPException(status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, detail="file is too large")
+        raise DocumentValidationException(
+            f"文件大小超过限制（最大 {_MAX_UPLOAD_BYTES // 1024 // 1024} MB）",
+            details={"field": "content", "size": len(content), "max_size": _MAX_UPLOAD_BYTES},
+        )
 
 
 @router.post(

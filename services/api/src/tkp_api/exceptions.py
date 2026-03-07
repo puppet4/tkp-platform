@@ -4,6 +4,7 @@ from fastapi import FastAPI, HTTPException, Request, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
+from tkp_api.core.exceptions import BusinessException
 from tkp_api.utils.response import DEFAULT_ERROR_MESSAGE, error_payload
 
 HTTP_422_UNPROCESSABLE = getattr(
@@ -139,6 +140,24 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
     )
 
 
+async def business_exception_handler(request: Request, exc: BusinessException):
+    """处理业务异常，返回结构化错误信息。"""
+    return JSONResponse(
+        status_code=exc.status_code,
+        content=error_payload(
+            request,
+            code=exc.code,
+            message=exc.message,
+            details={
+                "status_code": exc.status_code,
+                "reason": exc.code.lower(),
+                "suggestion": _default_http_suggestion(exc.status_code),
+                **exc.details,
+            },
+        ),
+    )
+
+
 async def unexpected_exception_handler(request: Request, exc: Exception):
     """处理未捕获异常，避免内部细节泄露。"""
     return JSONResponse(
@@ -158,6 +177,7 @@ async def unexpected_exception_handler(request: Request, exc: Exception):
 
 def register_exception_handlers(app: FastAPI) -> None:
     """集中注册异常处理器。"""
+    app.exception_handler(BusinessException)(business_exception_handler)
     app.exception_handler(HTTPException)(http_exception_handler)
     app.exception_handler(RequestValidationError)(validation_exception_handler)
     app.exception_handler(Exception)(unexpected_exception_handler)

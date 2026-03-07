@@ -41,7 +41,7 @@ def success(request: Request, data: Any, meta: dict[str, Any] | None = None) -> 
     if meta:
         final_meta.update(meta)
     return {
-        "request_id": request.state.request_id,
+        "request_id": getattr(request.state, "request_id", "unknown"),
         "data": data,
         "meta": final_meta,
     }
@@ -62,7 +62,7 @@ def error_payload(
     if details:
         final_details.update(details)
     return {
-        "request_id": request.state.request_id,
+        "request_id": getattr(request.state, "request_id", "unknown"),
         "error": {
             "code": code,
             "message": message,

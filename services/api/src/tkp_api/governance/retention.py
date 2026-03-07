@@ -4,7 +4,7 @@
 """
 
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any
 from uuid import UUID
 
@@ -85,6 +85,16 @@ DEFAULT_RETENTION_POLICIES = {
     ),
 }
 
+_RESOURCE_TABLES = {
+    "audit_logs": "audit_logs",
+    "retrieval_logs": "retrieval_logs",
+    "conversations": "conversations",
+    "agent_runs": "agent_runs",
+    "ingestion_jobs": "ingestion_jobs",
+    "deletion_requests": "deletion_requests",
+    "deletion_proofs": "deletion_proofs",
+}
+
 
 class RetentionService:
     """数据保留服务。"""
@@ -107,6 +117,10 @@ class RetentionService:
         """获取保留策略。"""
         return self.policies.get(resource_type)
 
+    def _resolve_table_name(self, resource_type: str) -> str | None:
+        """将资源类型映射为受控表名，避免 SQL 注入。"""
+        return _RESOURCE_TABLES.get(resource_type)
+
     def find_expired_records(
         self,
         resource_type: str,
@@ -125,10 +139,14 @@ class RetentionService:
         if not policy or policy.retention_days < 0:
             return []
 
-        cutoff_date = datetime.utcnow() - timedelta(days=policy.retention_days)
+        cutoff_date = datetime.now(timezone.utc) - timedelta(days=policy.retention_days)
+
+        table_name = self._resolve_table_name(resource_type)
+        if table_name is None:
+            logger.error("invalid retention resource_type: %s", resource_type)
+            return []
 
         # 构建查询
-        table_name = resource_type
         query_str = f"""
             SELECT id, tenant_id, created_at
             FROM {table_name}
@@ -183,8 +201,13 @@ class RetentionService:
         if not record_ids:
             return True
 
+        table_name = self._resolve_table_name(resource_type)
+        if table_name is None:
+            logger.error("invalid retention resource_type: %s", resource_type)
+            return False
+
         # 创建归档表（如果不存在）
-        archive_table = f"{resource_type}_archive"
+        archive_table = f"{table_name}_archive"
 
         try:
             # 复制数据到归档表
@@ -192,7 +215,7 @@ class RetentionService:
                 f"""
                 INSERT INTO {archive_table}
                 SELECT *, CURRENT_TIMESTAMP as archived_at
-                FROM {resource_type}
+                FROM {table_name}
                 WHERE id = ANY(:record_ids)
             """
             )
@@ -231,6 +254,10 @@ class RetentionService:
         if not policy:
             return {"error": f"no policy found for {resource_type}"}
 
+        table_name = self._resolve_table_name(resource_type)
+        if table_name is None:
+            return {"error": f"invalid resource_type: {resource_type}"}
+
         if not policy.auto_delete:
             return {"error": f"auto_delete not enabled for {resource_type}"}
 
@@ -240,7 +267,7 @@ class RetentionService:
         if not expired_records:
             return {"deleted_count": 0, "archived_count": 0}
 
-        record_ids = [UUID(r["id"]) for r in expired_records]
+        record_ids = [UUID(str(r["id"])) for r in expired_records]
 
         if dry_run:
             return {
@@ -252,14 +279,15 @@ class RetentionService:
         # 归档（如果需要）
         archived_count = 0
         if policy.archive_before_delete:
-            if self.archive_records(resource_type, record_ids):
-                archived_count = len(record_ids)
+            if not self.archive_records(resource_type, record_ids):
+                return {"error": f"archive failed for {resource_type}"}
+            archived_count = len(record_ids)
 
         # 删除记录
         try:
             query = text(
                 f"""
-                DELETE FROM {resource_type}
+                DELETE FROM {table_name}
                 WHERE id = ANY(:record_ids)
             """
             )
