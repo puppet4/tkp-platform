@@ -4,7 +4,6 @@ import os
 import subprocess
 from pathlib import Path
 
-
 REPO_ROOT = Path(__file__).resolve().parents[1]
 PRE_COMMIT_CONFIG = REPO_ROOT / ".pre-commit-config.yaml"
 PRE_COMMIT_GATE_SCRIPT = REPO_ROOT / "scripts" / "pre_commit_ci_gate.sh"

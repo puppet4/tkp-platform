@@ -1,13 +1,14 @@
+from uuid import UUID
+
 import jwt
 import pytest
 from fastapi import HTTPException
-from uuid import UUID
 
 from tkp_api.core.config import get_settings
 from tkp_api.core.security import activate_user_session, parse_authorization_header, revoke_token_jti
+from tkp_api.models.tenant import User
 from tkp_api.services.ingestion import build_job_idempotency_key
 from tkp_api.services.local_auth import hash_password, issue_access_token, verify_password
-from tkp_api.models.tenant import User
 
 TEST_JWT_SECRET = "unit-test-secret-key-at-least-32-bytes"
 

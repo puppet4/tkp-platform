@@ -1,6 +1,6 @@
-import jwt
 from uuid import uuid4
 
+import jwt
 import pytest
 from fastapi import HTTPException
 from sqlalchemy import create_engine, select

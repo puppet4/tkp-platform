@@ -4,7 +4,6 @@
 """
 
 import logging
-from typing import Any
 
 logger = logging.getLogger("tkp_worker.embeddings")
 

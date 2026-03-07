@@ -5,7 +5,6 @@ from collections.abc import Generator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime
-from pathlib import Path
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -21,8 +20,8 @@ from sqlalchemy.pool import StaticPool
 import tkp_api.models  # noqa: F401
 from tkp_api.core import security as security_module
 from tkp_api.core.config import get_settings
-from tkp_api.db.session import get_db
 from tkp_api.db.session import engine as app_engine
+from tkp_api.db.session import get_db
 from tkp_api.main import app
 from tkp_api.models.base import Base
 

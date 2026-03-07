@@ -15,11 +15,10 @@ from typing import Any
 from uuid import UUID
 
 from sqlalchemy import create_engine, text
-
-from tkp_worker.config import get_settings
-from tkp_worker.parsers import default_parser_registry
 from tkp_worker.chunker import create_chunker
+from tkp_worker.config import get_settings
 from tkp_worker.embeddings import create_embedding_service
+from tkp_worker.parsers import default_parser_registry
 
 logger = logging.getLogger("tkp_worker")
 
@@ -211,7 +210,6 @@ def _mark_failure(
     error_message: str,
 ) -> None:
     """按重试策略处理失败任务。"""
-    import math
 
     should_retry = attempt_count < max_attempts
     delay = min(base_seconds * (2 ** max(0, attempt_count - 1)), max_seconds)

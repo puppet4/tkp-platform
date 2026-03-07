@@ -1,8 +1,7 @@
-from pathlib import Path
 import sys
+from pathlib import Path
 
 import pytest
-
 from tkp_worker.main import _read_object_bytes_from_storage
 
 

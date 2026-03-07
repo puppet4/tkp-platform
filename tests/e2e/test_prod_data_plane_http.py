@@ -11,7 +11,6 @@ import httpx
 import pytest
 from sqlalchemy import create_engine, text
 
-
 API_BASE_URL = os.getenv("TKP_E2E_API_BASE_URL", "http://127.0.0.1:18000")
 DB_URL = os.getenv("TKP_E2E_DATABASE_URL")
 MINIO_ENDPOINT = os.getenv("TKP_E2E_MINIO_ENDPOINT")
