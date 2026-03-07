@@ -1,15 +1,15 @@
 """权限管理接口。"""
 
 from datetime import datetime, timezone
+from enum import Enum
 from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request, status
 from sqlalchemy.orm import Session
 
-from tkp_api.dependencies import get_request_context
 from tkp_api.db.session import get_db
+from tkp_api.dependencies import get_request_context
 from tkp_api.models.enums import TenantRole
-from tkp_api.utils.response import success
 from tkp_api.schemas.common import ErrorResponse, SuccessResponse
 from tkp_api.schemas.permission import (
     PermissionTemplatePublishRequest,
@@ -43,10 +43,11 @@ from tkp_api.services import (
     reset_tenant_role_actions,
     set_tenant_role_actions,
 )
+from tkp_api.utils.response import success
 
 router = APIRouter(prefix="/permissions")
-_PERMISSION_RUNTIME_TAG = ["permissions-runtime"]
-_PERMISSION_CONFIG_TAG = ["permissions-config"]
+_PERMISSION_RUNTIME_TAG: list[str | Enum] = ["permissions-runtime"]
+_PERMISSION_CONFIG_TAG: list[str | Enum] = ["permissions-config"]
 
 _PERMISSION_ADMIN_ROLES = {TenantRole.OWNER, TenantRole.ADMIN}
 _TENANT_ROLES = {TenantRole.OWNER, TenantRole.ADMIN, TenantRole.MEMBER, TenantRole.VIEWER}
@@ -165,9 +166,18 @@ def get_default_template(
     """查询默认权限模板。"""
     _ensure_permission_admin(ctx.tenant_role)
     template = default_permission_template()
+    role_permissions_raw = template.get("role_permissions")
+    if not isinstance(role_permissions_raw, dict):
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="invalid default template")
+
+    role_permissions_map: dict[str, list[str]] = {}
+    for role, codes_raw in role_permissions_raw.items():
+        if not isinstance(role, str) or not isinstance(codes_raw, list):
+            continue
+        role_permissions_map[role] = [code for code in codes_raw if isinstance(code, str)]
     role_permissions = [
         {"role": role, "permission_codes": codes}
-        for role, codes in template["role_permissions"].items()
+        for role, codes in role_permissions_map.items()
     ]
     return success(
         request,

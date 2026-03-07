@@ -1,14 +1,14 @@
 """健康检查接口。"""
 
+from fastapi import APIRouter, Depends, Request, status
+from fastapi.responses import JSONResponse
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from fastapi import APIRouter, Depends, Request, status
-
 from tkp_api.db.session import get_db
-from tkp_api.utils.response import success
 from tkp_api.schemas.common import ErrorResponse, SuccessResponse
 from tkp_api.schemas.responses import HealthStatusData
+from tkp_api.utils.response import success
 
 router = APIRouter(prefix="/health", tags=["health"])
 
@@ -58,15 +58,17 @@ def detailed_health(request: Request, db: Session = Depends(get_db)):
 
         # 如果有任何服务不健康，返回 503
         if result["status"] != "healthy":
-            return success(request, result, status_code=status.HTTP_503_SERVICE_UNAVAILABLE)
+            return JSONResponse(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, content=success(request, result))
 
         return success(request, result)
     except Exception as exc:
-        return success(
-            request,
-            {
-                "status": "unhealthy",
-                "error": str(exc),
-            },
+        return JSONResponse(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            content=success(
+                request,
+                {
+                    "status": "unhealthy",
+                    "error": str(exc),
+                },
+            ),
         )

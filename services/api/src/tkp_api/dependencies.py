@@ -7,9 +7,9 @@
 4. 生成后续路由统一使用的 RequestContext。
 """
 
+import hashlib
 from dataclasses import dataclass
 from datetime import datetime, timezone
-import hashlib
 from uuid import UUID, uuid4
 
 from fastapi import Depends
@@ -17,7 +17,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from tkp_api.core.exceptions import PermissionDeniedException, ResourceNotFoundException
+from tkp_api.core.exceptions import PermissionDeniedException
 from tkp_api.core.security import AuthenticatedPrincipal, parse_authorization_header
 from tkp_api.db.session import get_db
 from tkp_api.models.enums import MembershipStatus, TenantRole
@@ -199,7 +199,7 @@ def get_request_context(
         raise PermissionDeniedException(f"用户不属于租户 {tenant_id} 或成员关系未激活")
 
     return RequestContext(
-        user_id=user.id,
+        user_id=UUID(str(user.id)),
         tenant_id=tenant_id,
         tenant_role=membership.role,
         principal=principal,

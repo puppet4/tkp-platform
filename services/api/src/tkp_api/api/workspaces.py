@@ -6,13 +6,12 @@ from fastapi import APIRouter, Depends, HTTPException, Path, Request, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from tkp_api.dependencies import get_request_context
 from tkp_api.db.session import get_db
+from tkp_api.dependencies import get_request_context
 from tkp_api.models.enums import DocumentStatus, KBStatus, MembershipStatus, TenantRole, WorkspaceRole, WorkspaceStatus
 from tkp_api.models.knowledge import Document, KBMembership, KnowledgeBase
 from tkp_api.models.tenant import TenantMembership, User
 from tkp_api.models.workspace import Workspace, WorkspaceMembership
-from tkp_api.utils.response import success
 from tkp_api.schemas.common import ErrorResponse, SuccessResponse
 from tkp_api.schemas.responses import WorkspaceData, WorkspaceMemberData
 from tkp_api.schemas.workspace import WorkspaceCreateRequest, WorkspaceMemberUpsertRequest, WorkspaceUpdateRequest
@@ -25,7 +24,7 @@ from tkp_api.services import (
     require_tenant_action,
 )
 from tkp_api.services.membership_sync import sync_tenant_members_to_workspace
-
+from tkp_api.utils.response import success
 
 router = APIRouter(prefix="/workspaces", tags=["workspaces"])
 
@@ -95,7 +94,7 @@ def create_workspace(
 
     creator_membership = WorkspaceMembership(
         tenant_id=ctx.tenant_id,
-        workspace_id=workspace.id,
+        workspace_id=UUID(str(workspace.id)),
         user_id=ctx.user_id,
         role=WorkspaceRole.OWNER,
         status=MembershipStatus.ACTIVE,
@@ -106,7 +105,7 @@ def create_workspace(
     sync_tenant_members_to_workspace(
         db,
         tenant_id=ctx.tenant_id,
-        workspace_id=workspace.id,
+        workspace_id=UUID(str(workspace.id)),
     )
     # 保持“创建者即工作空间 Owner”的显式语义。
     creator_membership.role = WorkspaceRole.OWNER

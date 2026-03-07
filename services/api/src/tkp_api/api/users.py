@@ -6,17 +6,17 @@ from fastapi import APIRouter, Depends, HTTPException, Path, Request, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from tkp_api.dependencies import get_request_context
 from tkp_api.db.session import get_db
+from tkp_api.dependencies import get_request_context
 from tkp_api.models.enums import MembershipStatus, TenantRole
 from tkp_api.models.knowledge import KBMembership
 from tkp_api.models.tenant import TenantMembership, User
-from tkp_api.utils.response import success
 from tkp_api.schemas.common import ErrorResponse, SuccessResponse
 from tkp_api.schemas.responses import TenantUserData
 from tkp_api.schemas.user import UserUpdateRequest
-from tkp_api.services.membership_sync import disable_workspace_memberships_for_tenant_member
 from tkp_api.services import PermissionAction, audit_log, require_tenant_action
+from tkp_api.services.membership_sync import disable_workspace_memberships_for_tenant_member
+from tkp_api.utils.response import success
 
 router = APIRouter(prefix="/users", tags=["users"])
 
@@ -47,9 +47,9 @@ def list_users(
     ).scalars().all()
     user_ids = list({membership.user_id for membership in memberships})
 
-    users = []
+    users: list[User] = []
     if user_ids:
-        users = db.execute(select(User).where(User.id.in_(user_ids))).scalars().all()
+        users = list(db.execute(select(User).where(User.id.in_(user_ids))).scalars().all())
     user_map = {user.id: user for user in users}
 
     data = [

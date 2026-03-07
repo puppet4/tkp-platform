@@ -5,20 +5,18 @@ from uuid import UUID
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
-from sqlalchemy.exc import DataError, IntegrityError, SQLAlchemyError
 from sqlalchemy import select
+from sqlalchemy.exc import DataError, IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session
 
-from tkp_api.dependencies import get_current_principal, get_current_user, get_request_context
 from tkp_api.core.config import get_settings
 from tkp_api.core.security import AuthenticatedPrincipal, activate_user_session, clear_user_session, revoke_token_jti
-from tkp_api.core.exceptions import ConflictException, PermissionDeniedException, ResourceNotFoundException, ValidationException
 from tkp_api.db.session import get_db
-from tkp_api.models.enums import MembershipStatus, TenantRole, TenantStatus, WorkspaceRole
+from tkp_api.dependencies import get_current_principal, get_current_user
 from tkp_api.models.auth import UserCredential
+from tkp_api.models.enums import MembershipStatus, TenantRole, TenantStatus, WorkspaceRole
 from tkp_api.models.tenant import Tenant, TenantMembership, User
 from tkp_api.models.workspace import Workspace, WorkspaceMembership
-from tkp_api.utils.response import success
 from tkp_api.schemas.auth import (
     AuthLoginData,
     AuthLoginRequest,
@@ -29,9 +27,10 @@ from tkp_api.schemas.auth import (
 )
 from tkp_api.schemas.common import ErrorResponse, SuccessResponse
 from tkp_api.schemas.responses import AuthMeData
-from tkp_api.services.membership_sync import normalize_email
-from tkp_api.services.local_auth import hash_password, issue_access_token, verify_password
 from tkp_api.services import build_unique_tenant_slug, create_tenant_with_owner
+from tkp_api.services.local_auth import hash_password, issue_access_token, verify_password
+from tkp_api.services.membership_sync import normalize_email
+from tkp_api.utils.response import success
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 settings = get_settings()
@@ -181,7 +180,7 @@ def register(
         if not credential:
             credential = UserCredential(
                 id=uuid4(),
-                user_id=user.id,
+                user_id=UUID(str(user.id)),
                 password_hash=password_hash,
                 status="active",
                 password_updated_at=now,
@@ -220,7 +219,7 @@ def register(
             tenant_slug = build_unique_tenant_slug(db, base_slug=f"{email.split('@')[0]}-personal")
             personal_tenant, default_workspace = create_tenant_with_owner(
                 db,
-                owner_user_id=user.id,
+                owner_user_id=UUID(str(user.id)),
                 tenant_name=f"{display_name} 的个人空间",
                 tenant_slug=tenant_slug,
                 default_workspace_name="个人默认空间",
@@ -245,7 +244,7 @@ def register(
             if default_workspace is None:
                 # 兼容历史数据：若租户意外缺少工作空间，则补建默认空间与成员关系。
                 default_workspace = Workspace(
-                    tenant_id=personal_tenant.id,
+                    tenant_id=UUID(str(personal_tenant.id)),
                     name="默认工作空间",
                     slug="default",
                     description="历史数据补齐的默认工作空间",
@@ -254,9 +253,9 @@ def register(
                 db.flush()
                 db.add(
                     WorkspaceMembership(
-                        tenant_id=personal_tenant.id,
-                        workspace_id=default_workspace.id,
-                        user_id=user.id,
+                        tenant_id=UUID(str(personal_tenant.id)),
+                        workspace_id=UUID(str(default_workspace.id)),
+                        user_id=UUID(str(user.id)),
                         role=WorkspaceRole.OWNER,
                         status=MembershipStatus.ACTIVE,
                     )
@@ -357,7 +356,7 @@ def login(
         if not verify_password(payload.password, credential.password_hash):
             raise _invalid_credentials()
 
-        default_tenant_id = _resolve_user_default_tenant_id(db, user_id=user.id)
+        default_tenant_id = _resolve_user_default_tenant_id(db, user_id=UUID(str(user.id)))
         token, exp_ts, expires_at, jti = issue_access_token(user, tenant_id=default_tenant_id)
         user.last_login_at = datetime.now(timezone.utc)
         db.commit()
@@ -508,8 +507,8 @@ def me(
     tenant_ids = list({membership.tenant_id for membership in tenant_memberships})
     tenant_map = {}
     if tenant_ids:
-        tenants = db.execute(select(Tenant).where(Tenant.id.in_(tenant_ids))).scalars().all()
-        tenant_map = {tenant.id: tenant for tenant in tenants}
+        tenant_rows = db.execute(select(Tenant).where(Tenant.id.in_(tenant_ids))).scalars().all()
+        tenant_map = {tenant.id: tenant for tenant in tenant_rows}
 
     tenants = [
         {

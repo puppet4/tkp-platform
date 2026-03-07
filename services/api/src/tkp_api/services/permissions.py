@@ -276,7 +276,7 @@ def _load_role_permissions(db: Session, *, tenant_id: UUID, role: str) -> list[s
         .scalars()
         .all()
     )
-    return rows
+    return list(rows)
 
 
 def _normalize_permission_codes(permission_codes: list[str]) -> list[str]:

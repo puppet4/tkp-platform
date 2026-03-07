@@ -6,8 +6,8 @@ from fastapi import APIRouter, Depends, HTTPException, Path, Request, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from tkp_api.dependencies import get_current_user, get_request_context
 from tkp_api.db.session import get_db
+from tkp_api.dependencies import get_current_user, get_request_context
 from tkp_api.models.enums import (
     DocumentStatus,
     KBStatus,
@@ -19,7 +19,6 @@ from tkp_api.models.enums import (
 from tkp_api.models.knowledge import Document, KBMembership, KnowledgeBase
 from tkp_api.models.tenant import Tenant, TenantMembership, User
 from tkp_api.models.workspace import Workspace, WorkspaceMembership
-from tkp_api.utils.response import success
 from tkp_api.schemas.common import ErrorResponse, SuccessResponse
 from tkp_api.schemas.responses import TenantAccessItem, TenantCreateData, TenantData, TenantMemberData
 from tkp_api.schemas.tenant import (
@@ -35,7 +34,7 @@ from tkp_api.services.membership_sync import (
     normalize_email,
     sync_workspace_memberships_for_tenant_member,
 )
-
+from tkp_api.utils.response import success
 
 router = APIRouter(prefix="/tenants", tags=["tenants"])
 
@@ -122,7 +121,7 @@ def create_tenant(
 
     tenant, default_workspace = create_tenant_with_owner(
         db,
-        owner_user_id=user.id,
+        owner_user_id=UUID(str(user.id)),
         tenant_name=payload.name,
         tenant_slug=payload.slug,
         default_workspace_name="默认工作空间",
@@ -133,8 +132,8 @@ def create_tenant(
     audit_log(
         db=db,
         request=request,
-        tenant_id=tenant.id,
-        actor_user_id=user.id,
+        tenant_id=UUID(str(tenant.id)),
+        actor_user_id=UUID(str(user.id)),
         action="tenant.create",
         resource_type="tenant",
         resource_id=str(tenant.id),
@@ -273,7 +272,7 @@ def update_tenant(
     audit_log(
         db=db,
         request=request,
-        tenant_id=tenant.id,
+        tenant_id=UUID(str(tenant.id)),
         actor_user_id=ctx.user_id,
         action="tenant.update",
         resource_type="tenant",
@@ -330,8 +329,8 @@ def delete_tenant(
     workspace_memberships = db.execute(
         select(WorkspaceMembership).where(WorkspaceMembership.tenant_id == tenant_id)
     ).scalars().all()
-    for membership in workspace_memberships:
-        membership.status = MembershipStatus.DISABLED
+    for workspace_membership in workspace_memberships:
+        workspace_membership.status = MembershipStatus.DISABLED
 
     workspaces = db.execute(select(Workspace).where(Workspace.tenant_id == tenant_id)).scalars().all()
     for workspace in workspaces:
@@ -340,8 +339,8 @@ def delete_tenant(
     kb_memberships = db.execute(
         select(KBMembership).where(KBMembership.tenant_id == tenant_id)
     ).scalars().all()
-    for membership in kb_memberships:
-        membership.status = MembershipStatus.DISABLED
+    for kb_membership in kb_memberships:
+        kb_membership.status = MembershipStatus.DISABLED
 
     knowledge_bases = db.execute(select(KnowledgeBase).where(KnowledgeBase.tenant_id == tenant_id)).scalars().all()
     for kb in knowledge_bases:
@@ -483,7 +482,7 @@ def invite_tenant_member(
     else:
         membership = TenantMembership(
             tenant_id=tenant_id,
-            user_id=user.id,
+            user_id=UUID(str(user.id)),
             role=payload.role,
             status=MembershipStatus.INVITED,
         )
@@ -576,7 +575,7 @@ def upsert_tenant_member(
     else:
         membership = TenantMembership(
             tenant_id=tenant_id,
-            user_id=user.id,
+            user_id=UUID(str(user.id)),
             role=payload.role,
             status=MembershipStatus.ACTIVE,
         )
@@ -586,7 +585,7 @@ def upsert_tenant_member(
     sync_workspace_memberships_for_tenant_member(
         db,
         tenant_id=tenant_id,
-        user_id=user.id,
+        user_id=UUID(str(user.id)),
         tenant_role=membership.role,
     )
 
@@ -647,7 +646,7 @@ def join_tenant(
         sync_workspace_memberships_for_tenant_member(
             db,
             tenant_id=tenant_id,
-            user_id=user.id,
+            user_id=UUID(str(user.id)),
             tenant_role=membership.role,
         )
         db.commit()
@@ -671,7 +670,7 @@ def join_tenant(
     sync_workspace_memberships_for_tenant_member(
         db,
         tenant_id=tenant_id,
-        user_id=user.id,
+        user_id=UUID(str(user.id)),
         tenant_role=membership.role,
     )
 
@@ -679,7 +678,7 @@ def join_tenant(
         db=db,
         request=request,
         tenant_id=tenant_id,
-        actor_user_id=user.id,
+        actor_user_id=UUID(str(user.id)),
         action="tenant.member.join",
         resource_type="tenant_membership",
         resource_id=str(membership.id),
@@ -742,7 +741,8 @@ def update_tenant_member_role(
     if not membership:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="membership not found")
 
-    if membership.role == TenantRole.OWNER and payload.role != TenantRole.OWNER:
+    owner_role = TenantRole.OWNER.value
+    if membership.role == owner_role and payload.role != owner_role:
         owners = (
             db.execute(
                 select(TenantMembership)

@@ -3,7 +3,6 @@
 import hashlib
 import json
 from datetime import datetime, timezone
-from pathlib import Path as FilePath
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, File, Form, Header, HTTPException, Path, Query, Request, UploadFile, status
@@ -11,11 +10,10 @@ from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
 
 from tkp_api.core.exceptions import DocumentValidationException
-from tkp_api.dependencies import get_request_context
 from tkp_api.db.session import get_db
+from tkp_api.dependencies import get_request_context
 from tkp_api.models.enums import DocumentStatus, IngestionJobStatus, ParseStatus, SourceType
 from tkp_api.models.knowledge import ChunkEmbedding, Document, DocumentChunk, DocumentVersion, IngestionJob
-from tkp_api.utils.response import success
 from tkp_api.schemas.common import ErrorResponse, SuccessResponse
 from tkp_api.schemas.document import DocumentUpdateRequest, IngestionJobDeadLetterRequest
 from tkp_api.schemas.responses import (
@@ -38,6 +36,7 @@ from tkp_api.services import (
     require_tenant_action,
 )
 from tkp_api.services.quota import QuotaMetric, enforce_quota
+from tkp_api.utils.response import success
 
 router = APIRouter(tags=["documents"])
 
@@ -594,7 +593,7 @@ def update_document(
     ensure_kb_write_access(
         db,
         tenant_id=ctx.tenant_id,
-        kb_id=kb.id,
+        kb_id=UUID(str(kb.id)),
         user_id=ctx.user_id,
     )
 
@@ -675,7 +674,7 @@ def reindex_document(
     ensure_kb_write_access(
         db,
         tenant_id=ctx.tenant_id,
-        kb_id=kb.id,
+        kb_id=UUID(str(kb.id)),
         user_id=ctx.user_id,
     )
 
@@ -748,7 +747,7 @@ def delete_document(
     ensure_kb_write_access(
         db,
         tenant_id=ctx.tenant_id,
-        kb_id=kb.id,
+        kb_id=UUID(str(kb.id)),
         user_id=ctx.user_id,
     )
 

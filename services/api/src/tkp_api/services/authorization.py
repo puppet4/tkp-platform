@@ -7,7 +7,7 @@
 from uuid import UUID
 
 from sqlalchemy import select
-from sqlalchemy.orm import Session, joinedload
+from sqlalchemy.orm import Session
 
 from tkp_api.core.exceptions import PermissionDeniedException, ResourceNotFoundException
 from tkp_api.models.enums import DocumentStatus, KBRole, KBStatus, MembershipStatus, WorkspaceRole, WorkspaceStatus
@@ -175,7 +175,7 @@ def ensure_kb_read_access(
         user_id=user_id,
     )
 
-    kb_membership = get_kb_membership(db, tenant_id=tenant_id, kb_id=kb.id, user_id=user_id)
+    kb_membership = get_kb_membership(db, tenant_id=tenant_id, kb_id=UUID(str(kb.id)), user_id=user_id)
     if not kb_membership:
         raise PermissionDeniedException("无权限访问该知识库")
 
@@ -208,7 +208,7 @@ def ensure_kb_write_access(
         user_id=user_id,
     )
 
-    kb_membership = get_kb_membership(db, tenant_id=tenant_id, kb_id=kb.id, user_id=user_id)
+    kb_membership = get_kb_membership(db, tenant_id=tenant_id, kb_id=UUID(str(kb.id)), user_id=user_id)
 
     # 工作空间高权限角色可直接写知识库。
     if ws_membership.role in WORKSPACE_WRITE_ROLES:
@@ -296,4 +296,4 @@ def filter_readable_kb_ids(
         .scalars()
         .all()
     )
-    return rows
+    return list(rows)

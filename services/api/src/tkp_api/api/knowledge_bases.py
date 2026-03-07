@@ -6,12 +6,11 @@ from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request, sta
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from tkp_api.dependencies import get_request_context
 from tkp_api.db.session import get_db
-from tkp_api.models.enums import DocumentStatus, IngestionJobStatus, KBRole, KBStatus, MembershipStatus, TenantRole, WorkspaceRole
+from tkp_api.dependencies import get_request_context
+from tkp_api.models.enums import DocumentStatus, IngestionJobStatus, KBRole, KBStatus, MembershipStatus
 from tkp_api.models.knowledge import Document, DocumentChunk, IngestionJob, KBMembership, KnowledgeBase
 from tkp_api.models.workspace import WorkspaceMembership
-from tkp_api.utils.response import success
 from tkp_api.schemas.common import ErrorResponse, SuccessResponse
 from tkp_api.schemas.knowledge import KBMembershipUpsertRequest, KnowledgeBaseCreateRequest, KnowledgeBaseUpdateRequest
 from tkp_api.schemas.responses import KBMembershipData, KnowledgeBaseData, KnowledgeBaseStatsData
@@ -24,7 +23,7 @@ from tkp_api.services import (
     ensure_workspace_write_access,
     require_tenant_action,
 )
-
+from tkp_api.utils.response import success
 
 router = APIRouter(prefix="/knowledge-bases", tags=["knowledge_bases"])
 
@@ -101,7 +100,7 @@ def create_knowledge_base(
     db.add(
         KBMembership(
             tenant_id=ctx.tenant_id,
-            kb_id=kb.id,
+            kb_id=UUID(str(kb.id)),
             user_id=ctx.user_id,
             role=KBRole.OWNER,
             status=MembershipStatus.ACTIVE,

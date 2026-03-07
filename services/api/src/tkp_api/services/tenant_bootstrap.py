@@ -49,7 +49,7 @@ def create_tenant_with_owner(
 
     db.add(
         TenantMembership(
-            tenant_id=tenant.id,
+            tenant_id=UUID(str(tenant.id)),
             user_id=owner_user_id,
             role=TenantRole.OWNER,
             status=MembershipStatus.ACTIVE,
@@ -57,7 +57,7 @@ def create_tenant_with_owner(
     )
 
     workspace = Workspace(
-        tenant_id=tenant.id,
+        tenant_id=UUID(str(tenant.id)),
         name=default_workspace_name,
         slug=default_workspace_slug,
         description=default_workspace_description,
@@ -67,8 +67,8 @@ def create_tenant_with_owner(
 
     db.add(
         WorkspaceMembership(
-            tenant_id=tenant.id,
-            workspace_id=workspace.id,
+            tenant_id=UUID(str(tenant.id)),
+            workspace_id=UUID(str(workspace.id)),
             user_id=owner_user_id,
             role=WorkspaceRole.OWNER,
             status=MembershipStatus.ACTIVE,

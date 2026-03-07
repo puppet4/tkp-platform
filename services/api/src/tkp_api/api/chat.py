@@ -7,11 +7,10 @@ from pydantic import BaseModel, Field
 from sqlalchemy import desc, func, select
 from sqlalchemy.orm import Session
 
-from tkp_api.dependencies import get_request_context
 from tkp_api.db.session import get_db
+from tkp_api.dependencies import get_request_context
 from tkp_api.models.conversation import Conversation, Message
 from tkp_api.models.enums import MessageRole
-from tkp_api.utils.response import success
 from tkp_api.schemas.chat import ChatCompletionRequest
 from tkp_api.schemas.common import ErrorResponse, SuccessResponse
 from tkp_api.schemas.responses import ChatCompletionData
@@ -22,6 +21,7 @@ from tkp_api.services import (
     require_tenant_action,
 )
 from tkp_api.services.quota import QuotaMetric, enforce_quota, resolve_workspace_scope_for_kbs
+from tkp_api.utils.response import success
 
 router = APIRouter(prefix="/chat", tags=["chat"])
 
@@ -312,14 +312,6 @@ def delete_conversation(
 # ============ 对话补全 API ============
 
 
-# ============ 请求/响应模型 ============
-
-class ConversationUpdateRequest(BaseModel):
-    """更新会话请求。"""
-
-    title: str = Field(description="会话标题", min_length=1, max_length=256)
-
-
 @router.post(
     "/completions",
     summary="创建问答回复",
@@ -421,7 +413,7 @@ def chat_completions(
     db.add(
         Message(
             tenant_id=ctx.tenant_id,
-            conversation_id=conversation.id,
+            conversation_id=UUID(str(conversation.id)),
             role=MessageRole.USER,
             content=question,
             citations=[],
@@ -444,7 +436,7 @@ def chat_completions(
 
     assistant_message = Message(
         tenant_id=ctx.tenant_id,
-        conversation_id=conversation.id,
+        conversation_id=UUID(str(conversation.id)),
         role=MessageRole.ASSISTANT,
         content=answer_text,
         citations=citations,
