@@ -726,6 +726,7 @@ class WorkflowRunner:
             self.stage_permission_flow()
             self.stage_users_and_workspaces_flow()
             self.stage_knowledge_base_and_documents_flow()
+            self.stage_feedback_governance_and_metrics_flow()
             self.stage_cleanup_and_logout()
         except _StopWorkflow:
             self._finish_current_stage()
@@ -2803,6 +2804,123 @@ class WorkflowRunner:
         )
         self._assert_kb_stats_data(kb_stats_after_delete, kb_id=self.ctx.kb1_id)
         assert kb_stats_after_delete["document_deleted"] >= 1
+
+    def stage_feedback_governance_and_metrics_flow(self) -> None:
+        self.stage("反馈与治理补充覆盖")
+        # 目标：补齐 feedback/governance/metrics 路由覆盖。
+
+        created_feedback = self.success(
+            "POST",
+            "/api/feedback",
+            token=self.ctx.owner_token,
+            expected_status=201,
+            json={
+                "feedback_type": "comment",
+                "comment": "coverage feedback",
+                "tags": ["coverage"],
+            },
+        )
+        _require_keys(created_feedback, ["feedback_id", "feedback_type", "created_at"], "feedback.create")
+        _assert_uuid(created_feedback["feedback_id"], "feedback.create.feedback_id")
+        _assert_iso_datetime(created_feedback["created_at"], "feedback.create.created_at")
+
+        feedback_list_data = self.success(
+            "GET",
+            "/api/feedback",
+            token=self.ctx.owner_token,
+        )
+        _require_keys(feedback_list_data, ["feedbacks", "total", "limit", "offset"], "feedback.list")
+        assert isinstance(feedback_list_data["feedbacks"], list)
+
+        self.expect_error(
+            "POST",
+            "/api/feedback/replay",
+            token=self.ctx.owner_token,
+            expected_status=404,
+            json={"feedback_id": str(uuid4()), "replay_type": "full_pipeline"},
+        )
+        self.expect_error(
+            "GET",
+            "/api/feedback/replay/{replay_id}",
+            actual_path=f"/api/feedback/replay/{uuid4()}",
+            token=self.ctx.owner_token,
+            expected_status=404,
+        )
+
+        self.call(
+            "POST",
+            "/api/governance/deletion/requests",
+            actual_path="/api/governance/deletion/requests",
+            token=self.ctx.owner_token,
+            expected_status=404,
+            params={
+                "resource_type": "conversation",
+                "resource_id": str(uuid4()),
+                "reason": "coverage request",
+            },
+        )
+        random_request_id = uuid4()
+        self.call(
+            "POST",
+            "/api/governance/deletion/requests/{request_id}/approve",
+            actual_path=f"/api/governance/deletion/requests/{random_request_id}/approve",
+            token=self.ctx.owner_token,
+            expected_status=404,
+        )
+        self.call(
+            "POST",
+            "/api/governance/deletion/requests/{request_id}/reject",
+            actual_path=f"/api/governance/deletion/requests/{random_request_id}/reject",
+            token=self.ctx.owner_token,
+            expected_status=404,
+            params={"reject_reason": "coverage reject"},
+        )
+        self.call(
+            "POST",
+            "/api/governance/deletion/requests/{request_id}/execute",
+            actual_path=f"/api/governance/deletion/requests/{random_request_id}/execute",
+            token=self.ctx.owner_token,
+            expected_status=404,
+        )
+        self.call(
+            "GET",
+            "/api/governance/deletion/proofs/{proof_id}",
+            actual_path=f"/api/governance/deletion/proofs/{uuid4()}",
+            token=self.ctx.owner_token,
+            expected_status=404,
+        )
+
+        cleanup_resp = self.call(
+            "POST",
+            "/api/governance/retention/cleanup",
+            actual_path="/api/governance/retention/cleanup",
+            token=self.ctx.owner_token,
+            expected_status=200,
+            params={"resource_type": "agent_runs", "dry_run": "true"},
+        )
+        cleanup_payload = cleanup_resp.json()
+        assert "error" not in cleanup_payload
+
+        pii_resp = self.call(
+            "POST",
+            "/api/governance/pii/mask",
+            actual_path="/api/governance/pii/mask",
+            token=self.ctx.owner_token,
+            expected_status=200,
+            params={"text": "contact me at demo@example.com", "pii_types": ["email"]},
+        )
+        pii_payload = pii_resp.json()
+        _require_keys(pii_payload, ["original_length", "masked_text", "masked_length"], "governance.pii.mask")
+        assert pii_payload["masked_length"] >= 0
+
+        metrics_resp = self.call(
+            "GET",
+            "/api/metrics",
+            actual_path="/api/metrics",
+            token=self.ctx.owner_token,
+            expected_status=200,
+        )
+        assert metrics_resp.text.strip()
 
     def stage_cleanup_and_logout(self) -> None:
         self.stage("资源清理与登出")

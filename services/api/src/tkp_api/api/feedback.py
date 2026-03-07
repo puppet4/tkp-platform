@@ -46,7 +46,7 @@ def create_feedback(
     request: Request,
     payload: FeedbackCreateRequest,
     db: Session = Depends(get_db),
-    ctx=Depends(require_tenant_roles([TenantRole.MEMBER])),
+    ctx=Depends(require_tenant_roles(TenantRole.OWNER, TenantRole.ADMIN, TenantRole.MEMBER)),
 ):
     """提交用户反馈。"""
     service = FeedbackReplayService()
@@ -85,7 +85,7 @@ def replay_feedback(
     request: Request,
     payload: FeedbackReplayRequest,
     db: Session = Depends(get_db),
-    ctx=Depends(require_tenant_roles([TenantRole.ADMIN])),
+    ctx=Depends(require_tenant_roles(TenantRole.OWNER, TenantRole.ADMIN)),
 ):
     """回放反馈。"""
     service = FeedbackReplayService()
@@ -122,7 +122,7 @@ def get_replay_result(
     request: Request,
     replay_id: UUID,
     db: Session = Depends(get_db),
-    ctx=Depends(require_tenant_roles([TenantRole.ADMIN])),
+    ctx=Depends(require_tenant_roles(TenantRole.OWNER, TenantRole.ADMIN)),
 ):
     """获取回放结果。"""
     from sqlalchemy import select
@@ -170,7 +170,7 @@ def list_feedbacks(
     limit: int = 50,
     offset: int = 0,
     db: Session = Depends(get_db),
-    ctx=Depends(require_tenant_roles([TenantRole.ADMIN])),
+    ctx=Depends(require_tenant_roles(TenantRole.OWNER, TenantRole.ADMIN)),
 ):
     """获取反馈列表。"""
     from sqlalchemy import select

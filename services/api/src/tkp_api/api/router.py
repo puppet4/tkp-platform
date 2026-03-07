@@ -7,8 +7,11 @@ from . import (
     auth,
     chat,
     documents,
+    feedback,
+    governance,
     health,
     knowledge_bases,
+    metrics,
     ops,
     permissions,
     retrieval,
@@ -32,3 +35,6 @@ api_router.include_router(retrieval.router)
 api_router.include_router(chat.router)
 api_router.include_router(agents.router)
 api_router.include_router(ops.router)
+api_router.include_router(feedback.router)
+api_router.include_router(metrics.router)
+api_router.include_router(governance.router)
