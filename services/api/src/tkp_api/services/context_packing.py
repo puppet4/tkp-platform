@@ -133,7 +133,7 @@ class ContextPacker:
         if not chunks:
             return [], 0
 
-        deduped = []
+        deduped: list[dict[str, Any]] = []
         seen_hashes = set()
         dedup_count = 0
 
@@ -229,7 +229,8 @@ class ContextPacker:
 
         只有当剩余预算足够容纳至少一半内容时才截断。
         """
-        chunk_tokens = chunk.get("_token_count", 0)
+        raw_chunk_tokens = chunk.get("_token_count", 0)
+        chunk_tokens = int(raw_chunk_tokens) if isinstance(raw_chunk_tokens, (int, float)) else 0
         remaining_budget = self.available_tokens - current_tokens
         return remaining_budget >= chunk_tokens * 0.5
 

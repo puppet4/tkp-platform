@@ -5,7 +5,6 @@
 
 import logging
 import sys
-from typing import Any
 
 from tkp_api.core.config import get_settings
 
@@ -15,7 +14,7 @@ class StructuredFormatter(logging.Formatter):
 
     def format(self, record: logging.LogRecord) -> str:
         """格式化日志记录为 JSON。"""
-        import orjson
+        import orjson  # type: ignore[import-not-found]
         from datetime import datetime
 
         log_data = {
@@ -42,7 +41,10 @@ class StructuredFormatter(logging.Formatter):
             log_data["exception"] = self.formatException(record.exc_info)
 
         # 使用 orjson 进行高性能序列化
-        return orjson.dumps(log_data).decode('utf-8')
+        payload = orjson.dumps(log_data)
+        if isinstance(payload, bytes):
+            return payload.decode("utf-8")
+        return str(payload)
 
 
 def setup_logging() -> None:
@@ -60,6 +62,7 @@ def setup_logging() -> None:
     handler = logging.StreamHandler(sys.stdout)
 
     # 根据环境选择格式
+    formatter: logging.Formatter
     if settings.app_env in ("prod", "production"):
         # 生产环境：JSON 格式
         formatter = StructuredFormatter()

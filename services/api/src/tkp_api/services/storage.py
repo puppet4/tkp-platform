@@ -107,7 +107,7 @@ class MinioStorageProvider:
 def _build_oss_bucket(settings: Settings):
     """构建阿里云 OSS Bucket 客户端（延迟导入）。"""
     try:
-        import oss2
+        import oss2  # type: ignore[import-untyped]
     except ModuleNotFoundError as exc:
         raise RuntimeError("oss backend requires package 'oss2'") from exc
 

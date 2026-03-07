@@ -155,7 +155,7 @@ class RateLimitGuardrail:
             max_calls_per_minute: 每分钟最大调用次数
         """
         self.max_calls_per_minute = max_calls_per_minute
-        self.call_history = {}
+        self.call_history: dict[str, list[float]] = {}
 
     def check_rate_limit(self, user_id: str) -> dict[str, Any]:
         """检查速率限制。

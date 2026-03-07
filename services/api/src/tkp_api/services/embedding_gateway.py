@@ -8,6 +8,7 @@
 """
 
 import hashlib
+import json
 import logging
 import time
 from typing import Any
@@ -15,6 +16,30 @@ from typing import Any
 from openai import OpenAI
 
 logger = logging.getLogger("tkp_api.embedding_gateway")
+
+
+def _coerce_embedding_vector(value: Any) -> list[float] | None:
+    """将任意输入转换为 embedding 向量。"""
+    if not isinstance(value, list):
+        return None
+    normalized: list[float] = []
+    for item in value:
+        if not isinstance(item, (int, float)):
+            return None
+        normalized.append(float(item))
+    return normalized
+
+
+def _coerce_embedding_matrix(value: Any) -> list[list[float]]:
+    """将任意输入转换为 embedding 矩阵。"""
+    if not isinstance(value, list):
+        return []
+    rows: list[list[float]] = []
+    for row in value:
+        normalized = _coerce_embedding_vector(row)
+        if normalized is not None:
+            rows.append(normalized)
+    return rows
 
 
 class EmbeddingCache:
@@ -46,9 +71,9 @@ class EmbeddingCache:
             key = self._make_key(text, model)
             cached = self.redis.get(key)
             if cached:
-                import json
                 logger.debug("embedding cache hit: model=%s, text_len=%d", model, len(text))
-                return json.loads(cached)
+                parsed = json.loads(cached)
+                return _coerce_embedding_vector(parsed)
         except Exception as exc:
             logger.warning("embedding cache get failed: %s", exc)
 
@@ -60,7 +85,6 @@ class EmbeddingCache:
             return
 
         try:
-            import json
             key = self._make_key(text, model)
             value = json.dumps(embedding)
             self.redis.setex(key, self.ttl, value)
@@ -181,7 +205,7 @@ class LocalEmbeddingProvider(EmbeddingProvider):
     def __init__(self, model_name: str = "sentence-transformers/all-MiniLM-L6-v2"):
         """初始化本地提供者。"""
         try:
-            from sentence_transformers import SentenceTransformer
+            from sentence_transformers import SentenceTransformer  # type: ignore[import-untyped]
         except ImportError as exc:
             raise RuntimeError("Local provider requires 'sentence-transformers' package") from exc
 
@@ -191,7 +215,7 @@ class LocalEmbeddingProvider(EmbeddingProvider):
         """生成 embeddings。"""
         try:
             embeddings = self.model.encode(texts, convert_to_numpy=True)
-            return embeddings.tolist()
+            return _coerce_embedding_matrix(embeddings.tolist())
         except Exception as exc:
             logger.exception("local embedding failed: %s", exc)
             raise
@@ -330,7 +354,9 @@ class EmbeddingGateway:
     def _get_model_name(self) -> str:
         """获取当前模型名称。"""
         if hasattr(self.primary_provider, "model"):
-            return self.primary_provider.model
+            model_name = getattr(self.primary_provider, "model")
+            if isinstance(model_name, str):
+                return model_name
         return type(self.primary_provider).__name__
 
 

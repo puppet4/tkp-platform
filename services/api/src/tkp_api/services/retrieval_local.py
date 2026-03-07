@@ -1,8 +1,6 @@
 """检索实现服务。"""
 
-import hashlib
 import json
-import math
 import re
 import threading
 from uuid import UUID
@@ -42,7 +40,10 @@ def _embed_text(content: str, *, dim: int = 1536) -> list[float]:
         语义向量
     """
     embedding_service = get_embedding_service()
-    return embedding_service.embed_text(content)
+    vector = embedding_service.embed_text(content)
+    if isinstance(vector, list) and all(isinstance(value, (int, float)) for value in vector):
+        return [float(value) for value in vector]
+    return [0.0] * dim
 
 
 def _vector_to_pg_literal(vector: list[float]) -> str:
@@ -573,4 +574,12 @@ def search_chunks(
         retrieval_strategy=retrieval_strategy,
         min_score=min_score,
     )
-    return list(detailed["hits"])
+    raw_hits = detailed.get("hits")
+    if not isinstance(raw_hits, list):
+        return []
+
+    normalized_hits: list[dict[str, object]] = []
+    for hit in raw_hits:
+        if isinstance(hit, dict):
+            normalized_hits.append(hit)
+    return normalized_hits

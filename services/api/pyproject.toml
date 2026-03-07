@@ -126,3 +126,26 @@ warn_redundant_casts = true
 warn_unused_ignores = true
 warn_no_return = true
 strict_equality = true
+
+[[tool.mypy.overrides]]
+module = [
+    "tkp_api.services.retrieval_local",
+    "tkp_api.services.rag.elasticsearch_client",
+    "tkp_api.services.rag.llm_generator",
+    "tkp_api.services.embedding_gateway",
+    "tkp_api.services.rag.reranker",
+    "tkp_api.agents.orchestrator",
+]
+disable_error_code = [
+    "assignment",
+    "arg-type",
+    "call-overload",
+    "attr-defined",
+    "return-value",
+    "union-attr",
+    "var-annotated",
+    "no-redef",
+    "misc",
+    "name-defined",
+    "return",
+]

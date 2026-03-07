@@ -1,8 +1,8 @@
 """认证解析与令牌校验工具。"""
+import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from functools import lru_cache
-import re
 from threading import Lock
 from typing import Any
 
@@ -12,14 +12,12 @@ from jwt import InvalidTokenError, PyJWKClient
 
 from tkp_api.core.config import get_settings
 
-try:
-    from redis import Redis
-    from redis.exceptions import RedisError
-except ImportError:  # pragma: no cover - 依赖缺失时自动回退到本地缓存
-    Redis = Any  # type: ignore[assignment]
+redis_module: Any | None = None
 
-    class RedisError(Exception):
-        pass
+try:
+    import redis as redis_module
+except ImportError:  # pragma: no cover - 依赖缺失时自动回退到本地缓存
+    redis_module = None
 
 UNAUTHORIZED = HTTPException(
     status_code=status.HTTP_401_UNAUTHORIZED,
@@ -41,7 +39,7 @@ _LOCAL_BLACKLIST: dict[str, int] = {}
 _LOCAL_ACTIVE_USER_SESSIONS: dict[str, tuple[str, int]] = {}
 _LOCAL_ACTIVE_JTI_SESSIONS: dict[str, tuple[str, int]] = {}
 _LOCAL_LOCK = Lock()
-_redis_client: Redis | None = None
+_redis_client: Any | None = None
 
 
 @dataclass
@@ -76,7 +74,7 @@ def _decode_jwt(token: str) -> dict[str, Any]:
         if settings.auth_jwks_url:
             # 生产建议使用 JWKS，支持密钥轮换。
             key = _get_jwks_client(settings.auth_jwks_url).get_signing_key_from_jwt(token).key
-            return jwt.decode(
+            decoded = jwt.decode(
                 token,
                 key=key,
                 algorithms=algorithms,
@@ -85,9 +83,12 @@ def _decode_jwt(token: str) -> dict[str, Any]:
                 leeway=settings.auth_jwt_leeway_seconds,
                 options=options,
             )
+            if isinstance(decoded, dict):
+                return dict(decoded)
+            raise UNAUTHORIZED
 
         # 未配置 JWKS 时，回退到对称密钥校验（适合本地开发/测试）。
-        return jwt.decode(
+        decoded = jwt.decode(
             token,
             key=settings.auth_jwt_secret.get_secret_value(),
             algorithms=algorithms,
@@ -96,7 +97,10 @@ def _decode_jwt(token: str) -> dict[str, Any]:
             leeway=settings.auth_jwt_leeway_seconds,
             options=options,
         )
-    except InvalidTokenError as exc:
+        if isinstance(decoded, dict):
+            return dict(decoded)
+        raise UNAUTHORIZED
+    except (InvalidTokenError, TypeError, ValueError) as exc:
         raise UNAUTHORIZED from exc
 
 
@@ -112,13 +116,13 @@ def _cleanup_local(now_ts: int) -> None:
         _LOCAL_ACTIVE_JTI_SESSIONS.pop(key, None)
 
 
-def _get_redis() -> Redis | None:
+def _get_redis() -> Any | None:
     global _redis_client
     settings = get_settings()
-    if not settings.redis_url or Redis is Any:
+    if not settings.redis_url or redis_module is None:
         return None
     if _redis_client is None:
-        _redis_client = Redis.from_url(settings.redis_url, decode_responses=True)
+        _redis_client = redis_module.Redis.from_url(settings.redis_url, decode_responses=True)
     return _redis_client
 
 
@@ -145,7 +149,8 @@ def activate_user_session(*, user_session_id: str, jti: str, exp_ts: int) -> Non
     if redis_client is not None:
         try:
             user_key = _session_user_key(user_session_id)
-            previous_jti = redis_client.get(user_key)
+            previous_jti_raw = redis_client.get(user_key)
+            previous_jti = previous_jti_raw if isinstance(previous_jti_raw, str) else None
             pipe = redis_client.pipeline()
             pipe.setex(user_key, ttl, jti)
             pipe.setex(_session_jti_key(jti), ttl, user_session_id)
@@ -153,7 +158,7 @@ def activate_user_session(*, user_session_id: str, jti: str, exp_ts: int) -> Non
                 pipe.delete(_session_jti_key(previous_jti))
             pipe.execute()
             return
-        except RedisError:
+        except Exception:
             # Redis 不可用时，回退到本地缓存，保证会话控制尽量可用。
             pass
 
@@ -172,14 +177,15 @@ def clear_user_session(*, user_session_id: str, jti: str) -> None:
     if redis_client is not None:
         try:
             user_key = _session_user_key(user_session_id)
-            current_jti = redis_client.get(user_key)
+            current_jti_raw = redis_client.get(user_key)
+            current_jti = current_jti_raw if isinstance(current_jti_raw, str) else None
             pipe = redis_client.pipeline()
             pipe.delete(_session_jti_key(jti))
             if current_jti == jti:
                 pipe.delete(user_key)
             pipe.execute()
             return
-        except RedisError:
+        except Exception:
             pass
 
     now_ts = int(datetime.now(timezone.utc).timestamp())
@@ -200,8 +206,8 @@ def is_user_session_active(*, user_session_id: str, jti: str) -> bool:
             if not current_jti or current_jti != jti:
                 return False
             jti_owner = redis_client.get(_session_jti_key(jti))
-            return bool(jti_owner and jti_owner == user_session_id)
-        except RedisError:
+            return bool(isinstance(jti_owner, str) and jti_owner == user_session_id)
+        except Exception:
             pass
 
     now_ts = int(datetime.now(timezone.utc).timestamp())
@@ -223,7 +229,7 @@ def revoke_token_jti(jti: str, exp_ts: int) -> None:
         try:
             redis_client.setex(_key_for_jti(jti), ttl, "1")
             return
-        except RedisError:
+        except Exception:
             # Redis 不可用时，回退到本地缓存，保证登出语义尽量可用。
             pass
 
@@ -238,7 +244,7 @@ def is_token_jti_revoked(jti: str) -> bool:
     if redis_client is not None:
         try:
             return bool(redis_client.exists(_key_for_jti(jti)))
-        except RedisError:
+        except Exception:
             pass
 
     now_ts = int(datetime.now(timezone.utc).timestamp())
@@ -269,7 +275,7 @@ def _extract_bearer_token(authorization: str | None) -> str:
     """从 Authorization 头中提取 Bearer token，兼容重复头被逗号拼接的场景。"""
     if not authorization:
         raise UNAUTHORIZED
-    tokens = re.findall(r"Bearer\s+([^,\s]+)", authorization, flags=re.IGNORECASE)
+    tokens: list[str] = re.findall(r"Bearer\s+([^,\s]+)", authorization, flags=re.IGNORECASE)
     if not tokens:
         raise UNAUTHORIZED
     placeholder_seen = False

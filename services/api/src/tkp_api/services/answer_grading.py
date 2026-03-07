@@ -244,7 +244,7 @@ class AnswerGrader:
                 max_tokens=10,
             )
 
-            score_text = response.choices[0].message.content.strip()
+            score_text = (response.choices[0].message.content or "").strip()
             score = float(score_text)
             return min(max(score / 10.0, 0.0), 1.0)
         except Exception as exc:

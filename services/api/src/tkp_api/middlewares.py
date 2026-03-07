@@ -2,8 +2,8 @@
 
 import json
 import logging
-from time import perf_counter
 import uuid
+from time import perf_counter
 
 from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
@@ -14,12 +14,23 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from tkp_api.core.config import get_settings
 from tkp_api.core.rate_limit import limiter
 from tkp_api.core.rate_limit_handler import _rate_limit_exceeded_handler
-from tkp_api.middleware.transaction import TransactionMiddleware
 from tkp_api.middleware.request_size_limit import RequestSizeLimitMiddleware
+from tkp_api.middleware.transaction import TransactionMiddleware
 from tkp_api.utils.masking import default_masker
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
+
+
+async def _rate_limit_exception_handler(request: Request, exc: Exception) -> Response:
+    """为 FastAPI 提供通用异常签名的限流处理器。"""
+    if isinstance(exc, RateLimitExceeded):
+        return await _rate_limit_exceeded_handler(request, exc)
+    return Response(
+        content='{"error": {"code": "RATE_LIMIT_EXCEEDED", "message": "请求过于频繁，请稍后再试"}}',
+        status_code=429,
+        media_type="application/json",
+    )
 
 
 async def request_id_middleware(request: Request, call_next):
@@ -136,5 +147,5 @@ def register_middlewares(app: FastAPI) -> None:
     # 6. API 限流（生产环境启用，避免本地/测试因外部存储不可用导致阻断）
     if settings.app_env in {"prod", "production"}:
         app.state.limiter = limiter
-        app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+        app.add_exception_handler(RateLimitExceeded, _rate_limit_exception_handler)
         app.add_middleware(SlowAPIMiddleware)

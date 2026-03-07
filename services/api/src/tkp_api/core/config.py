@@ -41,7 +41,7 @@ class Settings(BaseSettings):
     auth_jwt_audience: str | None = Field(default=None, description="期望的受众。")
     auth_jwks_url: str | None = Field(default=None, description="可选密钥集合地址。")
     auth_jwt_secret: SecretStr = Field(
-        default="change-me-in-prod-secret-at-least-32b",
+        default=SecretStr("change-me-in-prod-secret-at-least-32b"),
         description="未使用密钥集合时的对称密钥。",
     )
     auth_jwt_leeway_seconds: int = Field(default=30, description="令牌校验时钟容错秒数。")
@@ -73,14 +73,17 @@ class Settings(BaseSettings):
     rag_retry_backoff_seconds: float = Field(default=0.2, description="RAG 调用重试退避秒数。")
     rag_circuit_breaker_fail_threshold: int = Field(default=3, description="RAG 熔断失败阈值。")
     rag_circuit_breaker_open_seconds: int = Field(default=30, description="RAG 熔断打开时长（秒）。")
-    internal_service_token: SecretStr = Field(default="change-me-internal-token", description="内部服务间鉴权令牌。")
+    internal_service_token: SecretStr = Field(
+        default=SecretStr("change-me-internal-token"),
+        description="内部服务间鉴权令牌。",
+    )
     agent_allowed_tools: str = Field(
         default="retrieval",
         description="Agent 可用工具白名单，逗号分隔。",
     )
 
     # OpenAI API 配置（用于内置 RAG 功能）
-    openai_api_key: SecretStr = Field(default="", description="OpenAI API 密钥。")
+    openai_api_key: SecretStr = Field(default=SecretStr(""), description="OpenAI API 密钥。")
     openai_api_base: str | None = Field(default=None, description="OpenAI API 基础 URL（可选，用于代理）。")
     openai_embedding_model: str = Field(default="text-embedding-3-small", description="OpenAI 嵌入模型。")
     openai_chat_model: str = Field(default="gpt-4o-mini", description="OpenAI 聊天模型。")
@@ -103,7 +106,7 @@ class Settings(BaseSettings):
     embedding_rate_limit_enabled: bool = Field(default=True, description="是否启用速率限制。")
     embedding_rate_limit_max: int = Field(default=1000, description="速率限制：时间窗口内最大请求数。")
     embedding_rate_limit_window: int = Field(default=60, description="速率限制：时间窗口大小（秒）。")
-    cohere_api_key: SecretStr = Field(default="", description="Cohere API 密钥。")
+    cohere_api_key: SecretStr = Field(default=SecretStr(""), description="Cohere API 密钥。")
     cohere_embedding_model: str = Field(default="embed-multilingual-v3.0", description="Cohere 嵌入模型。")
     local_embedding_model: str = Field(default="sentence-transformers/all-MiniLM-L6-v2", description="本地嵌入模型。")
 
@@ -214,7 +217,6 @@ class Settings(BaseSettings):
     telemetry_enable_traces: bool = Field(default=True, description="是否启用追踪。")
     telemetry_enable_metrics: bool = Field(default=True, description="是否启用指标。")
     telemetry_metric_export_interval_ms: int = Field(default=60000, description="指标导出间隔（毫秒）。")
-    app_log_level: str = Field(default="INFO", description="应用日志级别。")
 
     @field_validator("auth_jwt_algorithms")
     @classmethod
@@ -301,4 +303,3 @@ def get_settings() -> Settings:
 def clear_settings_cache() -> None:
     """清除配置缓存（用于测试）。"""
     get_settings.cache_clear()
-

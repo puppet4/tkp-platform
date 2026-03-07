@@ -52,7 +52,7 @@ def require_confirmation(
             confirmation_code = None
 
             # 从 header 或 payload 中获取确认信息
-            if hasattr(payload, "confirmation_id"):
+            if payload is not None and hasattr(payload, "confirmation_id"):
                 confirmation_id = payload.confirmation_id
                 confirmation_code = getattr(payload, "confirmation_code", None)
             else:
@@ -63,7 +63,7 @@ def require_confirmation(
             operation_data = {}
             if extract_operation_data:
                 operation_data = extract_operation_data(payload)
-            elif hasattr(payload, "dict"):
+            elif payload is not None and hasattr(payload, "dict"):
                 operation_data = payload.dict()
 
             # 如果没有确认信息，返回确认请求

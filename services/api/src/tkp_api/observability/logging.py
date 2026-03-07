@@ -5,7 +5,7 @@
 
 import logging
 import sys
-from typing import Any
+from typing import Callable
 
 
 class JSONFormatter(logging.Formatter):
@@ -70,6 +70,7 @@ def setup_logging(
     console_handler.setLevel(level)
 
     # 设置格式化器
+    formatter: logging.Formatter
     if format_type == "json":
         formatter = JSONFormatter()
     else:
@@ -101,14 +102,15 @@ class LogContext:
     def __init__(self, **kwargs):
         """初始化日志上下文。"""
         self.context = kwargs
-        self.old_factory = None
+        self.old_factory: Callable[..., logging.LogRecord] | None = None
 
     def __enter__(self):
         """进入上下文。"""
-        self.old_factory = logging.getLogRecordFactory()
+        old_factory = logging.getLogRecordFactory()
+        self.old_factory = old_factory
 
         def record_factory(*args, **kwargs):
-            record = self.old_factory(*args, **kwargs)
+            record = old_factory(*args, **kwargs)
             for key, value in self.context.items():
                 setattr(record, key, value)
             return record

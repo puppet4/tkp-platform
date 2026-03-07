@@ -143,7 +143,7 @@ def _do_request(
 def _is_retryable_error(exc: HTTPException) -> bool:
     if exc.status_code in {status.HTTP_503_SERVICE_UNAVAILABLE, status.HTTP_504_GATEWAY_TIMEOUT}:
         return True
-    detail = exc.detail if isinstance(exc.detail, dict) else {}
+    detail: dict[str, Any] = exc.detail if isinstance(exc.detail, dict) else {}
     code = str(detail.get("code") or "")
     return code in {"RAG_UNAVAILABLE", "RAG_TIMEOUT", "RAG_UPSTREAM_RETRYABLE"}
 
@@ -205,4 +205,3 @@ def post_rag_json(
     )
     assert last_error is not None
     raise last_error
-

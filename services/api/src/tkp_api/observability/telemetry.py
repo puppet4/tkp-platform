@@ -57,7 +57,7 @@ def init_telemetry(
         }
     )
 
-    result = {}
+    result: dict[str, Any] = {}
 
     # 初始化追踪
     if enable_traces:
@@ -82,6 +82,7 @@ def init_telemetry(
 
     # 初始化指标
     if enable_metrics:
+        metric_exporter: Any
         if otlp_endpoint:
             metric_exporter = OTLPMetricExporter(endpoint=otlp_endpoint, insecure=True)
         else:

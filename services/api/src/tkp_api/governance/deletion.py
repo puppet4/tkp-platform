@@ -175,7 +175,7 @@ class DeletionService:
                 return False
             raise
         self.db.commit()
-        success = result.rowcount > 0
+        success = int(getattr(result, "rowcount", 0) or 0) > 0
         if success:
             logger.info("deletion request approved: request_id=%s tenant_id=%s", request_id, tenant_id)
         return success
@@ -221,7 +221,7 @@ class DeletionService:
                 return False
             raise
         self.db.commit()
-        success = result.rowcount > 0
+        success = int(getattr(result, "rowcount", 0) or 0) > 0
         if success:
             logger.info("deletion request rejected: request_id=%s tenant_id=%s", request_id, tenant_id)
         return success
@@ -672,4 +672,5 @@ class DeletionService:
 
         proof_data = f"{row.id}{row.request_id}{row.resource_type}{row.resource_id}{row.deleted_at.isoformat()}{row.data_hash}"
         calculated_hash = hashlib.sha256(proof_data.encode()).hexdigest()
-        return calculated_hash == row.proof_hash
+        proof_hash = row.proof_hash if isinstance(row.proof_hash, str) else ""
+        return calculated_hash == proof_hash

@@ -113,24 +113,35 @@ def calculator_tool(expression: str) -> dict[str, Any]:
         import ast
         import operator
 
-        operators = {
+        binary_operators: dict[type[ast.operator], Callable[[float, float], float]] = {
             ast.Add: operator.add,
             ast.Sub: operator.sub,
             ast.Mult: operator.mul,
             ast.Div: operator.truediv,
             ast.Pow: operator.pow,
+        }
+        unary_operators: dict[type[ast.unaryop], Callable[[float], float]] = {
             ast.USub: operator.neg,
         }
 
-        def eval_expr(node):
+        def eval_expr(node: ast.expr) -> float:
             if isinstance(node, ast.Num):
-                return node.n
-            elif isinstance(node, ast.BinOp):
-                return operators[type(node.op)](eval_expr(node.left), eval_expr(node.right))
-            elif isinstance(node, ast.UnaryOp):
-                return operators[type(node.op)](eval_expr(node.operand))
-            else:
-                raise ValueError(f"Unsupported operation: {type(node)}")
+                if isinstance(node.n, (int, float)):
+                    return float(node.n)
+                raise ValueError(f"Unsupported numeric value: {type(node.n)}")
+            if isinstance(node, ast.Constant) and isinstance(node.value, (int, float)):
+                return float(node.value)
+            if isinstance(node, ast.BinOp):
+                binary_handler = binary_operators.get(type(node.op))
+                if binary_handler is None:
+                    raise ValueError(f"Unsupported binary operation: {type(node.op)}")
+                return binary_handler(eval_expr(node.left), eval_expr(node.right))
+            if isinstance(node, ast.UnaryOp):
+                unary_handler = unary_operators.get(type(node.op))
+                if unary_handler is None:
+                    raise ValueError(f"Unsupported unary operation: {type(node.op)}")
+                return unary_handler(eval_expr(node.operand))
+            raise ValueError(f"Unsupported expression node: {type(node)}")
 
         tree = ast.parse(expression, mode="eval")
         result = eval_expr(tree.body)

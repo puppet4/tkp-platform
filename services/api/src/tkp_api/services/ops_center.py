@@ -22,7 +22,8 @@ from tkp_api.models.ops import OpsAlertWebhook, OpsDeletionProof, OpsIncidentTic
 from tkp_api.models.tenant import User
 from tkp_api.models.workspace import Workspace
 from tkp_api.services.cost import build_tenant_cost_summary
-from tkp_api.services.ops_metrics import build_ingestion_alerts, build_ingestion_metrics, build_retrieval_quality_metrics
+from tkp_api.services.ops_metrics import build_ingestion_alerts, build_ingestion_metrics, \
+    build_retrieval_quality_metrics
 
 _PROMPT_TOKEN_UNIT_COST = 0.000001
 _COMPLETION_TOKEN_UNIT_COST = 0.000002
@@ -152,6 +153,16 @@ def build_ops_overview(db: Session, *, tenant_id: UUID, window_hours: int = 24) 
         ).scalar_one()
         or 0
     )
+    estimated_total_cost_raw = cost_summary.get("estimated_total_cost")
+    if isinstance(estimated_total_cost_raw, (int, float)):
+        estimated_total_cost = float(estimated_total_cost_raw)
+    elif isinstance(estimated_total_cost_raw, str):
+        try:
+            estimated_total_cost = float(estimated_total_cost_raw)
+        except ValueError:
+            estimated_total_cost = 0.0
+    else:
+        estimated_total_cost = 0.0
 
     return {
         "tenant_id": str(tenant_id),
@@ -161,7 +172,7 @@ def build_ops_overview(db: Session, *, tenant_id: UUID, window_hours: int = 24) 
         "ingestion_backlog_total": int(ingestion_metrics["backlog_total"]),
         "ingestion_failure_rate": float(ingestion_metrics["failure_rate_last_window"]),
         "retrieval_zero_hit_rate": float(retrieval_quality["zero_hit_rate"]),
-        "estimated_total_cost": float(cost_summary["estimated_total_cost"]),
+        "estimated_total_cost": estimated_total_cost,
         "incident_open_total": incident_open_total,
         "incident_critical_open_total": incident_critical_total,
         "webhook_enabled_total": webhook_enabled_total,

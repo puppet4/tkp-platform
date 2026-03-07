@@ -153,7 +153,7 @@ class RetentionService:
             WHERE created_at < :cutoff_date
         """
 
-        params = {"cutoff_date": cutoff_date}
+        params: dict[str, Any] = {"cutoff_date": cutoff_date}
 
         if tenant_id:
             query_str += " AND tenant_id = :tenant_id"
@@ -295,7 +295,7 @@ class RetentionService:
             result = self.db.execute(query, {"record_ids": [str(rid) for rid in record_ids]})
             self.db.commit()
 
-            deleted_count = result.rowcount
+            deleted_count = int(getattr(result, "rowcount", 0) or 0)
             logger.info(
                 "deleted %d expired records: resource_type=%s",
                 deleted_count,

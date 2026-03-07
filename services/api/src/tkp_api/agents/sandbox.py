@@ -201,7 +201,7 @@ class SandboxExecutor:
             code = code_file.read_text()
 
             # 创建受限的全局命名空间
-            restricted_globals = {
+            restricted_globals: dict[str, Any] = {
                 "__builtins__": {
                     "print": print,
                     "len": len,
@@ -230,7 +230,7 @@ class SandboxExecutor:
                 restricted_globals.update(context)
 
             # 执行代码
-            local_namespace = {}
+            local_namespace: dict[str, Any] = {}
             exec(code, restricted_globals, local_namespace)
 
             # 获取结果（假设代码定义了 result 变量）

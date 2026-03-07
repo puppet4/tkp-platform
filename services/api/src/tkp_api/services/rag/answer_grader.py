@@ -148,7 +148,13 @@ class AnswerGrader:
             return 0.0
 
         # 提取相似度分数
-        similarities = [chunk.get("similarity", 0.0) for chunk in chunks]
+        similarities: list[float] = []
+        for chunk in chunks:
+            raw_similarity = chunk.get("similarity", 0.0)
+            if isinstance(raw_similarity, (int, float)):
+                similarities.append(float(raw_similarity))
+            else:
+                similarities.append(0.0)
 
         # 平均相似度（权重 60%）
         avg_similarity = sum(similarities) / len(similarities)
@@ -166,7 +172,7 @@ class AnswerGrader:
 
         quality_score = avg_similarity * 0.6 + count_score * 0.2 + consistency_score * 0.2
 
-        return min(quality_score, 1.0)
+        return float(min(quality_score, 1.0))
 
     def _calculate_citation_coverage(self, answer: str, chunks: list[dict[str, Any]]) -> float:
         """计算引用覆盖分数。

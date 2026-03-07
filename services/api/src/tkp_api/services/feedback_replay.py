@@ -201,9 +201,9 @@ class FeedbackReplayService:
 
         # 保存消息快照
         if message_id:
-            stmt = select(Message).where(Message.id == message_id)
-            result = db.execute(stmt)
-            message = result.scalar_one_or_none()
+            message_stmt = select(Message).where(Message.id == message_id)
+            message_result = db.execute(message_stmt)
+            message = message_result.scalar_one_or_none()
             if message:
                 snapshot["message"] = {
                     "id": str(message.id),
@@ -214,15 +214,15 @@ class FeedbackReplayService:
 
         # 保存检索日志快照
         if retrieval_log_id:
-            stmt = select(RetrievalLog).where(RetrievalLog.id == retrieval_log_id)
-            result = db.execute(stmt)
-            retrieval_log = result.scalar_one_or_none()
+            retrieval_stmt = select(RetrievalLog).where(RetrievalLog.id == retrieval_log_id)
+            retrieval_result = db.execute(retrieval_stmt)
+            retrieval_log = retrieval_result.scalar_one_or_none()
             if retrieval_log:
                 snapshot["retrieval"] = {
                     "id": str(retrieval_log.id),
-                    "query": retrieval_log.query,
-                    "results": retrieval_log.results,
-                    "metadata": retrieval_log.metadata,
+                    "query": retrieval_log.query_text,
+                    "results": retrieval_log.result_chunks,
+                    "metadata": retrieval_log.filter_json,
                 }
 
         return snapshot

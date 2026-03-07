@@ -4,10 +4,9 @@
 """
 
 import logging
-from typing import Callable
 
 from fastapi import Request, Response
-from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
 
 from tkp_api.core.context import set_request_context, reset_request_context
 from tkp_api.db.session import SessionLocal
@@ -28,7 +27,7 @@ class TransactionMiddleware(BaseHTTPMiddleware):
     注意：get_db() 依赖注入会从 contextvars 获取此会话。
     """
 
-    async def dispatch(self, request: Request, call_next: Callable) -> Response:
+    async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
         """处理请求并管理事务。"""
         # 跳过不需要数据库的路径
         skip_paths = ["/docs", "/openapi.json", "/redoc", "/favicon.ico"]

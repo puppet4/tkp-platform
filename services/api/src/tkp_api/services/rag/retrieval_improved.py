@@ -11,13 +11,51 @@ from uuid import UUID
 from sqlalchemy.orm import Session
 
 from tkp_api.core.config import get_settings
-from tkp_api.services.rag.vector_retrieval import create_retriever
-from tkp_api.services.rag.llm_generator import create_generator
-from tkp_api.services.query_preprocessing import QueryPreprocessor
 from tkp_api.services.parent_child_merger import ParentChildMerger
+from tkp_api.services.query_preprocessing import QueryPreprocessor
 from tkp_api.services.rag.answer_grader import create_answer_grader
+from tkp_api.services.rag.llm_generator import create_generator
+from tkp_api.services.rag.vector_retrieval import create_retriever
 
 logger = logging.getLogger("tkp_api.rag.retrieval_improved")
+
+
+def _normalize_usage(raw_usage: Any) -> dict[str, int]:
+    """归一化生成器 usage 字段。"""
+    if not isinstance(raw_usage, dict):
+        return {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
+
+    prompt_tokens = raw_usage.get("prompt_tokens", 0)
+    completion_tokens = raw_usage.get("completion_tokens", 0)
+    total_tokens = raw_usage.get("total_tokens", 0)
+    return {
+        "prompt_tokens": int(prompt_tokens) if isinstance(prompt_tokens, (int, float)) else 0,
+        "completion_tokens": int(completion_tokens) if isinstance(completion_tokens, (int, float)) else 0,
+        "total_tokens": int(total_tokens) if isinstance(total_tokens, (int, float)) else 0,
+    }
+
+
+def _normalize_generation_result(raw_result: Any) -> dict[str, Any]:
+    """归一化生成器返回结果，确保字段类型稳定。"""
+    if not isinstance(raw_result, dict):
+        return {
+            "answer": "",
+            "citations": [],
+            "usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
+        }
+
+    answer_raw = raw_result.get("answer")
+    citations_raw = raw_result.get("citations")
+    normalized_citations: list[Any] = citations_raw if isinstance(citations_raw, list) else []
+
+    normalized: dict[str, Any] = {
+        "answer": answer_raw if isinstance(answer_raw, str) else "",
+        "citations": normalized_citations,
+        "usage": _normalize_usage(raw_result.get("usage")),
+    }
+    if "llm_confidence" in raw_result:
+        normalized["llm_confidence"] = raw_result.get("llm_confidence")
+    return normalized
 
 
 # 线程安全的服务单例管理器
@@ -106,12 +144,7 @@ class RAGServicesSingleton:
         if cls._answer_grader is None:
             with cls._lock:
                 if cls._answer_grader is None:
-                    settings = get_settings()
-                    cls._answer_grader = create_answer_grader(
-                        api_key=settings.openai_api_key.get_secret_value(),
-                        model=settings.answer_grading_model,
-                        confidence_threshold=settings.answer_confidence_threshold,
-                    )
+                    cls._answer_grader = create_answer_grader()
         return cls._answer_grader
 
     @classmethod
@@ -302,11 +335,13 @@ def generate_answer_improved(
 
     try:
         # 如果启用答案评分，请求 LLM 提供置信度
-        result = generator.generate_answer(
-            query=question,
-            context_chunks=chunks,
-            history_messages=history_messages,
-            include_confidence=settings.answer_grading_enabled,
+        result = _normalize_generation_result(
+            generator.generate_answer(
+                query=question,
+                context_chunks=chunks,
+                history_messages=history_messages,
+                include_confidence=settings.answer_grading_enabled,
+            )
         )
 
         # Feature 3: Answer Grading

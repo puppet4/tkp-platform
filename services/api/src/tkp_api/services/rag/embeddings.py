@@ -3,9 +3,7 @@
 使用 OpenAI Embeddings API 生成文本向量。
 """
 
-import asyncio
 import logging
-from typing import Any
 
 logger = logging.getLogger("tkp_api.rag.embeddings")
 

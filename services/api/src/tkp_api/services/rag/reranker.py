@@ -63,7 +63,7 @@ class RerankService:
     def _init_cross_encoder(self):
         """初始化 Cross-Encoder。"""
         try:
-            from sentence_transformers import CrossEncoder
+            from sentence_transformers import CrossEncoder  # type: ignore[import-untyped]
         except ImportError as exc:
             raise RuntimeError("Cross-Encoder requires 'sentence-transformers' package") from exc
 
@@ -140,7 +140,7 @@ class RerankService:
         top_n: int,
     ) -> list[dict[str, Any]]:
         """使用 Jina Rerank。"""
-        import requests
+        import requests  # type: ignore[import-untyped]
 
         # 提取文档内容
         doc_texts = [doc.get("content", "") for doc in documents]

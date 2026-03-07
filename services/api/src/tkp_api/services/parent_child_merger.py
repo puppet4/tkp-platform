@@ -188,8 +188,8 @@ class ParentChildMerger:
                 "chunk_id": parent.id,
                 "document_id": parent.document_id,
                 "content": parent.content,
-                "sequence": parent.sequence,
-                "metadata": parent.metadata or {},
+                "sequence": parent.chunk_no,
+                "metadata": parent.metadata_ or {},
             }
         except Exception as exc:
             logger.warning("failed to load parent chunk %s: %s", parent_chunk_id, exc)

@@ -38,7 +38,7 @@ class QueryPreprocessor:
         self.language_detector = None
         if enable_language_detection:
             try:
-                from langdetect import detect, detect_langs
+                from langdetect import detect, detect_langs  # type: ignore[import-untyped]
                 self.detect = detect
                 self.detect_langs = detect_langs
                 logger.info("language detection enabled")
@@ -82,7 +82,7 @@ class QueryPreprocessor:
                 "normalized": False,
             }
 
-        result = {
+        result: dict[str, Any] = {
             "original_query": query,
             "processed_query": query,
             "language": None,
@@ -101,7 +101,8 @@ class QueryPreprocessor:
         corrections = []
         corrected_query = query
         if self.enable_spell_correction:
-            correction_result = self._correct_spelling(query, result.get("language"))
+            language = result.get("language")
+            correction_result = self._correct_spelling(query, language if isinstance(language, str) else None)
             corrected_query = correction_result["corrected_query"]
             corrections = correction_result["corrections"]
             result["corrections"] = corrections

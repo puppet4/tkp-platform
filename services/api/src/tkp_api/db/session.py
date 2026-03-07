@@ -61,10 +61,22 @@ def get_engine_stats() -> dict:
         连接池状态字典
     """
     pool = engine.pool
+
+    def _metric(name: str) -> int:
+        metric_getter = getattr(pool, name, None)
+        if not callable(metric_getter):
+            return 0
+        value = metric_getter()
+        if isinstance(value, (int, float)):
+            return int(value)
+        return 0
+
+    pool_size = _metric("size")
+    overflow = _metric("overflow")
     return {
-        "pool_size": pool.size(),
-        "checked_in": pool.checkedin(),
-        "checked_out": pool.checkedout(),
-        "overflow": pool.overflow(),
-        "total_connections": pool.size() + pool.overflow(),
+        "pool_size": pool_size,
+        "checked_in": _metric("checkedin"),
+        "checked_out": _metric("checkedout"),
+        "overflow": overflow,
+        "total_connections": pool_size + overflow,
     }

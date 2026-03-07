@@ -2,11 +2,11 @@
 
 from fastapi import FastAPI
 
+from tkp_api.api.router import api_router
 from tkp_api.core.config import get_settings
 from tkp_api.core.logging_config import setup_logging
 from tkp_api.exceptions import register_exception_handlers
 from tkp_api.middlewares import register_middlewares
-from tkp_api.api.router import api_router
 
 settings = get_settings()
 

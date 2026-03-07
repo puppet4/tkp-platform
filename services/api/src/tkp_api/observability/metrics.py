@@ -18,9 +18,9 @@ class MetricsCollector:
         """初始化指标收集器。"""
         self.meter_name = meter_name
         self.meter = None
-        self.counters = {}
-        self.histograms = {}
-        self.gauges = {}
+        self.counters: dict[str, Any] = {}
+        self.histograms: dict[str, Any] = {}
+        self.gauges: dict[str, Any] = {}
 
         try:
             from tkp_api.observability.telemetry import get_meter

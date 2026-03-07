@@ -7,26 +7,37 @@ import hashlib
 import json
 import logging
 import threading
+import time
 from typing import Any
 
-from cachetools import LRUCache
+from cachetools import LRUCache  # type: ignore[import-untyped]
 from openai import OpenAI
-from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 
 from tkp_api.core.config import get_settings
 from tkp_api.core.exceptions import EmbeddingException
 
 logger = logging.getLogger(__name__)
 
-try:
-    from redis import Redis
-    from redis.exceptions import RedisError
+redis_module: Any | None = None
+REDIS_AVAILABLE = False
 
+try:
+    import redis as redis_module
     REDIS_AVAILABLE = True
 except ImportError:
-    Redis = Any  # type: ignore[assignment]
-    RedisError = Exception  # type: ignore[assignment]
-    REDIS_AVAILABLE = False
+    redis_module = None
+
+
+def _normalize_embedding(value: Any) -> list[float] | None:
+    """归一化 embedding 数据。"""
+    if not isinstance(value, list):
+        return None
+    normalized: list[float] = []
+    for item in value:
+        if not isinstance(item, (int, float)):
+            return None
+        normalized.append(float(item))
+    return normalized
 
 
 class EmbeddingService:
@@ -51,10 +62,10 @@ class EmbeddingService:
         self.cache_prefix = f"{self.settings.retrieval_cache_prefix}embedding:"
 
         # 初始化 Redis 缓存（可选）
-        self._redis_client: Redis | None = None
-        if REDIS_AVAILABLE and self.settings.redis_url and self.cache_enabled:
+        self._redis_client: Any | None = None
+        if REDIS_AVAILABLE and redis_module is not None and self.settings.redis_url and self.cache_enabled:
             try:
-                self._redis_client = Redis.from_url(
+                self._redis_client = redis_module.Redis.from_url(
                     self.settings.redis_url,
                     decode_responses=False,  # 存储二进制数据
                     socket_connect_timeout=5,
@@ -85,14 +96,18 @@ class EmbeddingService:
         if self._redis_client:
             try:
                 cached = self._redis_client.get(cache_key)
-                if cached:
-                    return json.loads(cached)
-            except (RedisError, json.JSONDecodeError):
+                if isinstance(cached, (str, bytes, bytearray)):
+                    parsed = json.loads(cached)
+                    normalized = _normalize_embedding(parsed)
+                    if normalized is not None:
+                        return normalized
+            except Exception:
                 pass
 
         # 回退到本地缓存（线程安全）
         with self._cache_lock:
-            return self._local_cache.get(cache_key)
+            local_value = self._local_cache.get(cache_key)
+            return _normalize_embedding(local_value)
 
     def _set_to_cache(self, text: str, vector: list[float]) -> None:
         """将向量存入缓存。"""
@@ -109,19 +124,13 @@ class EmbeddingService:
                     self.cache_ttl,
                     json.dumps(vector),
                 )
-            except RedisError:
+            except Exception:
                 pass
 
         # 同时存入本地缓存（线程安全，自动 LRU 淘汰）
         with self._cache_lock:
             self._local_cache[cache_key] = vector
 
-    @retry(
-        stop=stop_after_attempt(3),
-        wait=wait_exponential(multiplier=1, min=1, max=10),
-        retry=retry_if_exception_type((ConnectionError, TimeoutError)),
-        reraise=True,
-    )
     def embed_text(self, text: str) -> list[float]:
         """生成单个文本的向量。
 
@@ -146,28 +155,43 @@ class EmbeddingService:
             logger.debug(f"Embedding cache hit for text length {len(normalized)}")
             return cached
 
-        # 调用 OpenAI API
-        try:
-            logger.debug(f"Calling OpenAI embeddings API for text length {len(normalized)}")
-            response = self.client.embeddings.create(
-                model=self.model,
-                input=normalized,
-                dimensions=self.dimensions,
-            )
-            vector = response.data[0].embedding
+        # 调用 OpenAI API（网络异常时最多重试 3 次）
+        for attempt in range(3):
+            try:
+                logger.debug(f"Calling OpenAI embeddings API for text length {len(normalized)}")
+                response = self.client.embeddings.create(
+                    model=self.model,
+                    input=normalized,
+                    dimensions=self.dimensions,
+                )
+                vector = _normalize_embedding(response.data[0].embedding)
+                if vector is None:
+                    raise EmbeddingException(
+                        "向量嵌入失败: embedding payload is invalid",
+                        details={"model": self.model, "text_length": len(normalized)},
+                    )
 
-            # 存入缓存
-            self._set_to_cache(normalized, vector)
-            logger.debug(f"Embedding generated and cached for text length {len(normalized)}")
-
-            return vector
-
-        except Exception as e:
-            logger.error(f"Embedding failed: {str(e)}", exc_info=True)
-            raise EmbeddingException(
-                f"向量嵌入失败: {str(e)}",
-                details={"model": self.model, "text_length": len(normalized)},
-            ) from e
+                # 存入缓存
+                self._set_to_cache(normalized, vector)
+                logger.debug(f"Embedding generated and cached for text length {len(normalized)}")
+                return vector
+            except EmbeddingException:
+                raise
+            except Exception as exc:
+                is_retryable = isinstance(exc, (ConnectionError, TimeoutError))
+                is_last_attempt = attempt >= 2
+                if is_retryable and not is_last_attempt:
+                    time.sleep(min(2 ** attempt, 10))
+                    continue
+                logger.error(f"Embedding failed: {str(exc)}", exc_info=True)
+                raise EmbeddingException(
+                    f"向量嵌入失败: {str(exc)}",
+                    details={"model": self.model, "text_length": len(normalized)},
+                ) from exc
+        raise EmbeddingException(
+            "向量嵌入失败: retry attempts exhausted",
+            details={"model": self.model, "text_length": len(normalized)},
+        )
 
     def embed_batch(self, texts: list[str]) -> list[list[float]]:
         """批量生成文本向量。
@@ -214,7 +238,12 @@ class EmbeddingService:
                 )
 
                 for i, embedding_data in enumerate(response.data):
-                    vector = embedding_data.embedding
+                    vector = _normalize_embedding(embedding_data.embedding)
+                    if vector is None:
+                        raise EmbeddingException(
+                            "批量向量嵌入失败: embedding payload is invalid",
+                            details={"model": self.model, "batch_size": len(uncached_texts)},
+                        )
                     original_index = uncached_indices[i]
                     results[original_index] = vector
 

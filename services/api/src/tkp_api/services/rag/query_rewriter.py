@@ -98,7 +98,7 @@ class QueryRewriter:
             max_tokens=200,
         )
 
-        expanded = response.choices[0].message.content.strip()
+        expanded = (response.choices[0].message.content or "").strip()
         logger.info("query expansion: '%s' -> '%s'", query, expanded)
         return [expanded]
 
@@ -122,7 +122,7 @@ class QueryRewriter:
             max_tokens=300,
         )
 
-        content = response.choices[0].message.content.strip()
+        content = (response.choices[0].message.content or "").strip()
         queries = [q.strip() for q in content.split("\n") if q.strip()]
 
         # 确保包含原始查询
@@ -152,7 +152,7 @@ class QueryRewriter:
             max_tokens=200,
         )
 
-        content = response.choices[0].message.content.strip()
+        content = (response.choices[0].message.content or "").strip()
         variants = [q.strip() for q in content.split("\n") if q.strip()]
 
         # 包含原始查询

@@ -26,7 +26,7 @@ class KafkaProducer:
             client_id: 客户端 ID
         """
         try:
-            from kafka import KafkaProducer as _KafkaProducer
+            from kafka import KafkaProducer as _KafkaProducer  # type: ignore[import-untyped]
         except ImportError as exc:
             raise RuntimeError("Kafka producer requires 'kafka-python' package") from exc
 

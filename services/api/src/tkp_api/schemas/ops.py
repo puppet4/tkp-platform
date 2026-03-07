@@ -1,7 +1,8 @@
 """运维与评测请求结构。"""
 
-from pydantic import BaseModel, Field
 from uuid import UUID
+
+from pydantic import BaseModel, Field
 
 
 class RetrievalEvalSampleRequest(BaseModel):

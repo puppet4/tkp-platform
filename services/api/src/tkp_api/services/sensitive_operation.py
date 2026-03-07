@@ -6,15 +6,11 @@
 - 操作审计
 """
 
-import hashlib
 import logging
 import secrets
 from datetime import datetime, timedelta, timezone
 from typing import Any
 from uuid import UUID
-
-from sqlalchemy import select
-from sqlalchemy.orm import Session
 
 logger = logging.getLogger("tkp_api.sensitive_operation")
 
@@ -199,7 +195,8 @@ class SensitiveOperationService:
 
         try:
             key = f"sensitive_op:confirmation:{confirmation_id}"
-            deleted = self.redis.delete(key)
+            deleted_raw = self.redis.delete(key)
+            deleted = int(deleted_raw) if isinstance(deleted_raw, (int, float)) else 0
             if deleted:
                 logger.info("confirmation cancelled: id=%s", confirmation_id[:8])
             return deleted > 0

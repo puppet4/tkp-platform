@@ -8,7 +8,6 @@ from functools import lru_cache
 from typing import Any
 from uuid import UUID
 
-from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
 
 from tkp_api.core.config import get_settings

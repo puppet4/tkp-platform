@@ -7,8 +7,8 @@ import logging
 from typing import Any
 from uuid import UUID, uuid4
 
-from tkp_api.agents.sandbox import SandboxExecutor
 from tkp_api.agents.guardrail import GuardrailService
+from tkp_api.agents.sandbox import SandboxExecutor
 from tkp_api.agents.tools import ToolRegistry, create_default_tools
 
 logger = logging.getLogger("tkp_api.agents.orchestrator")
