@@ -34,6 +34,11 @@ from tkp_api.services import build_unique_tenant_slug, create_tenant_with_owner
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 settings = get_settings()
+HTTP_422_UNPROCESSABLE = getattr(
+    status,
+    "HTTP_422_UNPROCESSABLE_CONTENT",
+    status.HTTP_422_UNPROCESSABLE_ENTITY,
+)
 
 
 def _invalid_credentials() -> HTTPException:
@@ -123,7 +128,7 @@ def register(
     display_name = payload.display_name.strip() if payload.display_name else email.split("@")[0]
     if payload.display_name is not None and not display_name:
         raise _register_error(
-            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            status_code=HTTP_422_UNPROCESSABLE,
             code="REGISTER_INVALID_DISPLAY_NAME",
             message="注册失败：展示名不能为空白字符。",
             reason="invalid_display_name",
@@ -272,7 +277,7 @@ def register(
     except DataError as exc:
         db.rollback()
         raise _register_error(
-            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            status_code=HTTP_422_UNPROCESSABLE,
             code="REGISTER_INVALID_DATA",
             message="注册失败：输入数据不符合系统限制。",
             reason="database_data_validation_failed",
@@ -561,4 +566,3 @@ def me(
         "workspaces": workspaces,
     }
     return success(request, data)
-

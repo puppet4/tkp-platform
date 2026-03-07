@@ -6,6 +6,12 @@ from fastapi.responses import JSONResponse
 
 from tkp_api.utils.response import DEFAULT_ERROR_MESSAGE, error_payload
 
+HTTP_422_UNPROCESSABLE = getattr(
+    status,
+    "HTTP_422_UNPROCESSABLE_CONTENT",
+    status.HTTP_422_UNPROCESSABLE_ENTITY,
+)
+
 
 def _default_http_error_code(status_code: int) -> str:
     if status_code == status.HTTP_400_BAD_REQUEST:
@@ -18,7 +24,7 @@ def _default_http_error_code(status_code: int) -> str:
         return "NOT_FOUND"
     if status_code == status.HTTP_409_CONFLICT:
         return "CONFLICT"
-    if status_code == status.HTTP_422_UNPROCESSABLE_CONTENT:
+    if status_code == HTTP_422_UNPROCESSABLE:
         return "VALIDATION_ERROR"
     return "HTTP_ERROR"
 
@@ -34,7 +40,7 @@ def _default_http_message(status_code: int) -> str:
         return "请求资源不存在。"
     if status_code == status.HTTP_409_CONFLICT:
         return "请求与当前数据状态冲突。"
-    if status_code == status.HTTP_422_UNPROCESSABLE_CONTENT:
+    if status_code == HTTP_422_UNPROCESSABLE:
         return "请求参数校验失败。"
     return "请求处理失败。"
 
@@ -48,7 +54,7 @@ def _default_http_suggestion(status_code: int) -> str:
         return "请确认资源 ID 是否正确，或资源是否已被删除。"
     if status_code == status.HTTP_409_CONFLICT:
         return "请刷新页面获取最新数据后重试。"
-    if status_code == status.HTTP_422_UNPROCESSABLE_CONTENT:
+    if status_code == HTTP_422_UNPROCESSABLE:
         return "请根据错误字段提示修正请求参数后重试。"
     return "请稍后重试，若持续失败请联系管理员。"
 
@@ -118,15 +124,15 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
         for err in exc.errors()
     ]
     return JSONResponse(
-        status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+        status_code=HTTP_422_UNPROCESSABLE,
         content=error_payload(
             request,
             code="VALIDATION_ERROR",
             message="请求参数校验失败。",
             details={
-                "status_code": status.HTTP_422_UNPROCESSABLE_CONTENT,
+                "status_code": HTTP_422_UNPROCESSABLE,
                 "reason": "validation_error",
-                "suggestion": _default_http_suggestion(status.HTTP_422_UNPROCESSABLE_CONTENT),
+                "suggestion": _default_http_suggestion(HTTP_422_UNPROCESSABLE),
                 "errors": normalized_errors,
             },
         ),

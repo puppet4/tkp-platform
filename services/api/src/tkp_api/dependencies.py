@@ -24,6 +24,11 @@ from tkp_api.models.tenant import TenantMembership, User
 from tkp_api.services.membership_sync import normalize_email
 
 bearer_scheme = HTTPBearer(auto_error=False)
+HTTP_422_UNPROCESSABLE = getattr(
+    status,
+    "HTTP_422_UNPROCESSABLE_CONTENT",
+    status.HTTP_422_UNPROCESSABLE_ENTITY,
+)
 
 
 @dataclass
@@ -179,7 +184,7 @@ def get_request_context(
     if tenant_id is None:
         db.rollback()
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            status_code=HTTP_422_UNPROCESSABLE,
             detail={
                 "code": "TENANT_CONTEXT_REQUIRED",
                 "message": "缺少租户上下文。",

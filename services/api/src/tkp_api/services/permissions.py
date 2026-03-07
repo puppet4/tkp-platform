@@ -13,6 +13,12 @@ from tkp_api.models.audit import AuditLog
 from tkp_api.models.enums import KBRole, TenantRole, WorkspaceRole
 from tkp_api.models.permission import TenantRolePermission
 
+HTTP_422_UNPROCESSABLE = getattr(
+    status,
+    "HTTP_422_UNPROCESSABLE_CONTENT",
+    status.HTTP_422_UNPROCESSABLE_ENTITY,
+)
+
 
 class PermissionAction(StrEnum):
     """后端接口鉴权动作定义。"""
@@ -285,7 +291,7 @@ def _validate_catalog_permission_codes(permission_codes: list[str]) -> list[str]
     invalid_codes = [code for code in normalized if code not in catalog_set]
     if invalid_codes:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            status_code=HTTP_422_UNPROCESSABLE,
             detail={"message": "invalid permission codes", "invalid_codes": invalid_codes},
         )
     return normalized
