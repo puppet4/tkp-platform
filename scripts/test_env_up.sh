@@ -98,13 +98,12 @@ if [[ "$TEST_MINIO_ENABLED" == "1" ]]; then
   fi
 fi
 
-DB_EXISTS="$(
-  podman exec "$TEST_PG_CONTAINER" psql -U "$TEST_DB_USER" -d postgres -tAc \
-    "SELECT 1 FROM pg_database WHERE datname='${TEST_DB_NAME}'"
-)"
-if [[ "$DB_EXISTS" != "1" ]]; then
-  podman exec "$TEST_PG_CONTAINER" createdb -U "$TEST_DB_USER" -T template0 "$TEST_DB_NAME"
-fi
+# Always recreate test DB so sql/init_all.sql can be safely reapplied across repeated pre-commit runs.
+podman exec "$TEST_PG_CONTAINER" psql -U "$TEST_DB_USER" -d postgres -v ON_ERROR_STOP=1 -c \
+  "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname='${TEST_DB_NAME}' AND pid <> pg_backend_pid();" \
+  >/dev/null
+podman exec "$TEST_PG_CONTAINER" dropdb -U "$TEST_DB_USER" --if-exists "$TEST_DB_NAME"
+podman exec "$TEST_PG_CONTAINER" createdb -U "$TEST_DB_USER" -T template0 "$TEST_DB_NAME"
 
 for f in \
   "$ROOT_DIR/sql/init_all.sql"

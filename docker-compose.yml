@@ -122,7 +122,6 @@ services:
     ports:
       - "9090:9090"
     volumes:
-      - ./infra/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
       - prometheus_data:/prometheus
     healthcheck:
       test: ["CMD", "wget", "--spider", "-q", "http://localhost:9090/-/healthy"]
@@ -139,7 +138,6 @@ services:
       - "3000:3000"
     volumes:
       - grafana_data:/var/lib/grafana
-      - ./infra/grafana/provisioning:/etc/grafana/provisioning
     depends_on:
       - prometheus
     healthcheck:

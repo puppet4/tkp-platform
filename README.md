@@ -74,13 +74,7 @@ PYTHONPATH=services/api/src uv run --project services/api python services/api/sc
 
 ### 6. 启动服务
 
-**方式一：使用快速启动脚本（推荐）**
-
-```bash
-bash scripts/quick_start.sh
-```
-
-**方式二：手动启动**
+手动启动：
 
 ```bash
 # 终端 1: 启动 API 服务（包含 RAG 功能）
@@ -172,8 +166,8 @@ KD_OBSERVABILITY_LOG_LEVEL=INFO
 ### 启用 Row Level Security (RLS)
 
 ```bash
-# 执行 RLS 配置脚本
-psql "$KD_DATABASE_URL" -f sql/migrations/20260307_100000_enable_rls.sql
+# 初始化数据库（包含 RLS 相关结构）
+psql "$KD_DATABASE_URL" -f sql/init_all.sql
 
 # 在应用配置中启用
 KD_GOVERNANCE_ENABLE_RLS=true
@@ -197,8 +191,8 @@ KD_GOVERNANCE_ENABLE_PII_MASKING=true
 ### 数据删除证明流程
 
 ```bash
-# 创建删除请求表
-psql "$KD_DATABASE_URL" -f sql/migrations/20260307_110000_add_deletion_tables.sql
+# 初始化数据库（包含删除请求与证明表）
+psql "$KD_DATABASE_URL" -f sql/init_all.sql
 
 # 配置删除审批
 KD_GOVERNANCE_DELETION_REQUIRE_APPROVAL=true
@@ -406,7 +400,7 @@ curl -X POST http://localhost:8000/api/chat/completions \
 services/
   api/          # API 服务（包含 RAG 功能）
     src/tkp_api/
-      services/rag/  # RAG 模块（embeddings, vector_retrieval, llm_generator）
+      rag/  # 内置 RAG 模块（embeddings, vector_retrieval, llm_generator）
     pyproject.toml
   worker/       # Worker 服务（文档处理）
     src/tkp_worker/
@@ -428,8 +422,8 @@ bash scripts/check_sql_governance.sh
 规则摘要：
 - 禁止 `create_all` / `metadata.create_all` 之类代码建表。
 - 禁止代码式 schema 同步脚本（如 `create_all.py`、`sync_comments.py`）。
-- 禁止 SQL 中出现外键定义（`FOREIGN KEY` / `REFERENCES`）。
-- 禁止直接修改基线 SQL（`sql/000~040`），结构变更走 `sql/migrations/*.sql`。
+- 增量 SQL 中禁止出现外键定义（`FOREIGN KEY` / `REFERENCES`）。
+- 基线统一维护在 `sql/init_all.sql`；迁移目录/锁文件若不存在会在治理脚本中跳过对应检查。
 
 ### Environment
 
@@ -449,32 +443,31 @@ Copy `.env.example` to `.env` in repo root and update values.
 - 当未配置 `KD_AUTH_JWKS_URL` 时，`KD_AUTH_JWT_SECRET` 必须至少 32 字节。
 - 当 `KD_STORAGE_BACKEND=minio|oss` 时，`KD_STORAGE_ENDPOINT/KD_STORAGE_ACCESS_KEY/KD_STORAGE_SECRET_KEY/KD_STORAGE_BUCKET` 必填。
 - `KD_RAG_BASE_URL` 配置时必须是合法 `http(s)` URL，且 `KD_INTERNAL_SERVICE_TOKEN` 不能为空白。
-- `KD_OPENAI_API_KEY` 必填（Worker 和 RAG 服务）。
+- `KD_OPENAI_API_KEY` 必填（Worker 与 API 内置 RAG）。
 
-### Podman Stack
+### Local Stack
 
-一键拉起全栈（`postgres + redis + minio + rag + api + worker`）：
+推荐使用 Docker Compose 拉起本地依赖与服务：
 
 ```bash
-bash scripts/stack_up.sh
+docker compose up -d
 ```
 
 查看日志：
 
 ```bash
-bash scripts/stack_logs.sh
+docker compose logs -f api worker postgres redis
 ```
 
 停止全栈：
 
 ```bash
-bash scripts/stack_down.sh
+docker compose down
 ```
 
 说明：
-- 默认使用环境文件：`infra/env/dev.env`。
-- 可通过 `STACK_ENV_FILE=/path/to/env` 切换配置层。
-- 编排文件：`infra/podman-compose.yml`。
+- 编排文件：`docker-compose.yml`。
+- 数据库初始化脚本：`sql/init_all.sql`（通过 volume 挂载自动执行）。
 
 ### API Tests
 
@@ -494,21 +487,15 @@ bash scripts/test_api.sh --suite all --mode postgres
 
 ### Production-like E2E
 
-验证真实数据面闭环（`API -> Worker -> RAG`，依赖 `Postgres + Redis + MinIO`）：
+验证真实数据面闭环（`API -> Worker -> 内置 RAG`，依赖 `Postgres + Redis + MinIO`）：
 
 ```bash
-bash scripts/test_data_plane_e2e.sh
+PYTHONPATH=services/api/src .venv/bin/python -m pytest tests/e2e/test_prod_data_plane_http.py -q
 ```
 
 说明：
-- 脚本会自动拉起/复用测试依赖容器，并启动本地 `api/rag/worker` 进程。
-- 默认端口：
-  - API: `19080`
-  - RAG: `19081`
-  - Postgres: `55432`
-  - Redis: `56379`
-  - MinIO: `59000` (console `59001`)
-- 可通过环境变量覆盖端口与凭据（如 `API_PORT`、`RAG_PORT`、`TEST_MINIO_PORT`）。
+- 测试默认访问 `TKP_E2E_API_BASE_URL`（默认 `http://127.0.0.1:18000`）。
+- 当目标 API 不可达时，测试会自动 skip，避免本地环境误失败。
 
 ### Runtime Ops
 

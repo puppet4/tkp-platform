@@ -40,6 +40,19 @@ from tkp_api.services.quota import QuotaMetric, enforce_quota
 
 router = APIRouter(tags=["documents"])
 
+_MAX_UPLOAD_BYTES = 50 * 1024 * 1024
+
+
+def validate_upload_file(file: UploadFile, content: bytes) -> None:
+    """基础上传校验，防止空文件与超大文件直接入库。"""
+    filename = (file.filename or "").strip()
+    if not filename:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="filename is required")
+    if not content:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="file content is empty")
+    if len(content) > _MAX_UPLOAD_BYTES:
+        raise HTTPException(status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, detail="file is too large")
+
 
 @router.post(
     "/knowledge-bases/{kb_id}/documents",

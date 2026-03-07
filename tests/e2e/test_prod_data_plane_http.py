@@ -8,6 +8,7 @@ from typing import Any
 from uuid import UUID, uuid4
 
 import httpx
+import pytest
 from sqlalchemy import create_engine, text
 
 
@@ -136,7 +137,18 @@ def _assert_embeddings_written(*, document_id: str) -> None:
     assert isinstance(count, int) and count > 0
 
 
+def _ensure_api_reachable_or_skip() -> None:
+    try:
+        resp = httpx.get(f"{API_BASE_URL}/api/health/live", timeout=3.0, trust_env=False)
+        if resp.status_code >= 500:
+            pytest.skip(f"E2E API unhealthy at {API_BASE_URL}: status={resp.status_code}")
+    except Exception as exc:  # pragma: no cover - environment dependent
+        pytest.skip(f"E2E API unavailable at {API_BASE_URL}: {exc}")
+
+
 def test_prod_data_plane_end_to_end_http() -> None:
+    _ensure_api_reachable_or_skip()
+
     user_email = f"e2e-{uuid4().hex[:10]}@example.com"
     password = "StrongPassw0rd!"
     display_name = "e2e-owner"

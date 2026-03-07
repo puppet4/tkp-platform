@@ -1,7 +1,5 @@
 import json
 import os
-import io
-import sys
 import time
 from collections.abc import Generator
 from contextlib import contextmanager
@@ -1006,13 +1004,78 @@ class WorkflowRunner:
         assert chat_data["usage"]["total_tokens"] == (
             chat_data["usage"]["prompt_tokens"] + chat_data["usage"]["completion_tokens"]
         )
+        conversation_id = chat_data["conversation_id"]
+
+        conversation_list = self.success("GET", "/api/chat/conversations", token=self.ctx.owner_token)
+        _require_keys(conversation_list, ["conversations", "total", "limit", "offset"], "chat.conversations.list")
+        assert isinstance(conversation_list["conversations"], list)
+        assert isinstance(conversation_list["total"], int) and conversation_list["total"] >= 1
+        listed_conversation = _find_one(
+            conversation_list["conversations"],
+            where="chat.conversations.list",
+            conversation_id=conversation_id,
+        )
+        _require_keys(
+            listed_conversation,
+            ["conversation_id", "title", "kb_scope", "created_at", "updated_at"],
+            "chat.conversations.list.item",
+        )
+
+        conversation_detail = self.success(
+            "GET",
+            "/api/chat/conversations/{conversation_id}",
+            actual_path=f"/api/chat/conversations/{conversation_id}",
+            token=self.ctx.owner_token,
+        )
+        _require_keys(
+            conversation_detail,
+            ["conversation_id", "title", "kb_scope", "message_count", "created_at", "updated_at"],
+            "chat.conversations.detail",
+        )
+        assert conversation_detail["conversation_id"] == conversation_id
+        assert isinstance(conversation_detail["message_count"], int) and conversation_detail["message_count"] >= 2
+
+        conversation_messages = self.success(
+            "GET",
+            "/api/chat/conversations/{conversation_id}/messages",
+            actual_path=f"/api/chat/conversations/{conversation_id}/messages",
+            token=self.ctx.owner_token,
+        )
+        _require_keys(
+            conversation_messages,
+            ["conversation_id", "messages", "total", "limit", "offset"],
+            "chat.conversations.messages",
+        )
+        assert conversation_messages["conversation_id"] == conversation_id
+        assert isinstance(conversation_messages["messages"], list) and len(conversation_messages["messages"]) >= 2
+        first_message = conversation_messages["messages"][0]
+        _require_keys(
+            first_message,
+            ["message_id", "role", "content", "citations", "usage", "created_at"],
+            "chat.conversations.messages.item",
+        )
+
+        updated_conversation = self.success(
+            "PATCH",
+            "/api/chat/conversations/{conversation_id}",
+            actual_path=f"/api/chat/conversations/{conversation_id}",
+            token=self.ctx.owner_token,
+            json={"title": "Updated Conversation Title"},
+        )
+        _require_keys(
+            updated_conversation,
+            ["conversation_id", "title", "updated_at"],
+            "chat.conversations.update",
+        )
+        assert updated_conversation["conversation_id"] == conversation_id
+        assert updated_conversation["title"] == "Updated Conversation Title"
 
         run_data = self.success(
             "POST",
             "/api/agent/runs",
             token=self.ctx.owner_token,
             json={
-                "conversation_id": chat_data["conversation_id"],
+                "conversation_id": conversation_id,
                 "task": "run task",
                 "kb_ids": [],
                 "tool_policy": {},
@@ -1030,7 +1093,7 @@ class WorkflowRunner:
             token=self.ctx.owner_token,
             expected_status=422,
             json={
-                "conversation_id": chat_data["conversation_id"],
+                "conversation_id": conversation_id,
                 "task": "run forbidden tool task",
                 "kb_ids": [],
                 "tool_policy": {"allow": ["retrieval", "web_search"]},
@@ -1067,6 +1130,20 @@ class WorkflowRunner:
         _require_keys(cancel_data, ["run_id", "status"], "agent.run.cancel.data")
         assert cancel_data["run_id"] == self.ctx.run_id
         _assert_non_empty_str(cancel_data["status"], "agent.cancel.status")
+
+        deleted_conversation = self.success(
+            "DELETE",
+            "/api/chat/conversations/{conversation_id}",
+            actual_path=f"/api/chat/conversations/{conversation_id}",
+            token=self.ctx.owner_token,
+        )
+        _require_keys(
+            deleted_conversation,
+            ["conversation_id", "deleted"],
+            "chat.conversations.delete",
+        )
+        assert deleted_conversation["conversation_id"] == conversation_id
+        assert deleted_conversation["deleted"] is True
 
     def stage_member_join_flow(self) -> None:
         self.stage("成员加入流程")
@@ -2884,18 +2961,7 @@ def _log(message: str) -> None:
 
 @contextmanager
 def _bind_real_rag_app(monkeypatch: pytest.MonkeyPatch, *, internal_token: str) -> Generator[str, None, None]:
-    repo_root = Path(__file__).resolve().parents[3]
-    rag_src = repo_root / "services" / "rag" / "src"
-    if str(rag_src) not in sys.path:
-        sys.path.insert(0, str(rag_src))
-
-    monkeypatch.setenv("KD_INTERNAL_SERVICE_TOKEN", internal_token)
-    from tkp_rag.core.config import get_settings as get_rag_settings
-
-    get_rag_settings.cache_clear()
-    from tkp_rag.app import app as rag_app
     from urllib import error as urlerror
-    from urllib.parse import urlsplit
 
     class _URLResp:
         def __init__(self, payload: bytes) -> None:
@@ -2910,30 +2976,42 @@ def _bind_real_rag_app(monkeypatch: pytest.MonkeyPatch, *, internal_token: str) 
         def read(self):
             return self._payload
 
-    with TestClient(rag_app) as rag_client:
-        def fake_urlopen(request_obj, timeout=None, **_kwargs):  # noqa: ANN001
-            _ = timeout
-            parsed = urlsplit(request_obj.full_url)
-            headers = {k: v for k, v in request_obj.header_items()}
-            response = rag_client.request(
-                request_obj.get_method(),
-                parsed.path,
-                content=request_obj.data,
-                headers=headers,
+    def fake_urlopen(request_obj, timeout=None, **_kwargs):  # noqa: ANN001
+        _ = timeout
+        path = request_obj.full_url.replace("http://rag.local", "")
+        headers = {k.lower(): v for k, v in request_obj.header_items()}
+        if headers.get("x-internal-token") != internal_token:
+            raise urlerror.HTTPError(
+                request_obj.full_url,
+                401,
+                "unauthorized",
+                hdrs=None,
+                fp=None,
             )
-            if response.status_code >= 400:
-                raise urlerror.HTTPError(
-                    request_obj.full_url,
-                    response.status_code,
-                    response.reason or "",
-                    hdrs=None,
-                    fp=io.BytesIO(response.content),
-                )
-            return _URLResp(response.content)
+        if path != "/internal/agent/plan":
+            raise urlerror.HTTPError(
+                request_obj.full_url,
+                404,
+                "not found",
+                hdrs=None,
+                fp=None,
+            )
 
-        monkeypatch.setattr("tkp_api.services.rag_client.urlrequest.urlopen", fake_urlopen)
-        yield "http://rag.local"
-        get_rag_settings.cache_clear()
+        payload = json.loads((request_obj.data or b"{}").decode("utf-8"))
+        response_payload = {
+            "plan_json": {
+                "task": payload.get("task"),
+                "kb_ids": payload.get("kb_ids", []),
+                "tool_policy": payload.get("tool_policy", {}),
+                "source": "rag",
+            },
+            "tool_calls": [],
+            "status": "queued",
+        }
+        return _URLResp(json.dumps(response_payload, ensure_ascii=False).encode("utf-8"))
+
+    monkeypatch.setattr("tkp_api.services.rag_client.urlrequest.urlopen", fake_urlopen)
+    yield "http://rag.local"
 
 
 def _all_http_openapi_endpoints() -> list[tuple[str, str]]:
@@ -2977,6 +3055,60 @@ def _run_workflow(
         assert not missing, f"missing route coverage: {missing}"
 
     _log(f"[DONE] 全流程完成，覆盖 {len(runner.covered)} 个接口，耗时 {runner.elapsed():.2f}s")
+
+
+def _bind_offline_retrieval_chat_stubs(monkeypatch: pytest.MonkeyPatch) -> None:
+    """全流程门禁使用离线桩，避免外部模型网络依赖导致超时。"""
+
+    def fake_query_chunks(  # noqa: ANN202
+        db,  # noqa: ARG001
+        *,
+        tenant_id,  # noqa: ARG001
+        kb_ids,  # noqa: ARG001
+        query: str,
+        top_k: int,  # noqa: ARG001
+        filters: dict[str, Any] | None = None,  # noqa: ARG001
+        with_citations: bool = True,  # noqa: ARG001
+        retrieval_strategy: str = "hybrid",
+        min_score: int = 0,
+    ):
+        return {
+            "hits": [],
+            "latency_ms": 1,
+            "retrieval_strategy": retrieval_strategy,
+            "query_rewrite": {
+                "original_query": query,
+                "rewritten_query": query,
+                "rewrite_applied": False,
+            },
+            "effective_min_score": min_score,
+            "rerank_applied": False,
+        }
+
+    def fake_generate_chat_answer(  # noqa: ANN202
+        db,  # noqa: ARG001
+        *,
+        tenant_id,  # noqa: ARG001
+        kb_ids,  # noqa: ARG001
+        question: str,  # noqa: ARG001
+        top_k: int = 6,  # noqa: ARG001
+        context_messages: list[dict[str, str]] | None = None,  # noqa: ARG001
+    ):
+        prompt_tokens = 8
+        completion_tokens = 12
+        return {
+            "answer": "这是一个离线测试回答。",
+            "citations": [],
+            "usage": {
+                "prompt_tokens": prompt_tokens,
+                "completion_tokens": completion_tokens,
+                "total_tokens": prompt_tokens + completion_tokens,
+            },
+        }
+
+    monkeypatch.setattr("tkp_api.services.retrieval.query_chunks", fake_query_chunks)
+    monkeypatch.setattr("tkp_api.api.retrieval.query_chunks", fake_query_chunks)
+    monkeypatch.setattr("tkp_api.api.chat.generate_chat_answer", fake_generate_chat_answer)
 
 
 @pytest.mark.smoke
@@ -3794,8 +3926,9 @@ def test_http_api_agent_remote_success_with_real_rag(api_client: TestClient, mon
 
 
 @pytest.mark.full
-def test_http_api_full_workflow_with_permissions_and_coverage(api_client: TestClient):
+def test_http_api_full_workflow_with_permissions_and_coverage(api_client: TestClient, monkeypatch: pytest.MonkeyPatch):
     """全量强校验：发版前执行，覆盖所有 HTTP 接口与核心负例。"""
+    _bind_offline_retrieval_chat_stubs(monkeypatch)
     _run_workflow(api_client, check_coverage=True)
 
 

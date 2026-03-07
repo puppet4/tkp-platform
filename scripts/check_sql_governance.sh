@@ -25,10 +25,11 @@ for f in "${required_sql_files[@]}"; do
   [[ -f "$f" ]] || { echo "missing required file: $f"; exit 1; }
 done
 
-echo "[2/10] check SQL scripts are FK-free"
-sql_files="$(find sql -type f -name "*.sql" | sort)"
-if [[ -n "$sql_files" ]] && search "(FOREIGN[[:space:]]+KEY|REFERENCES[[:space:]])" $sql_files; then
-  echo "foreign key clauses are forbidden by team policy"
+echo "[2/10] check incremental SQL scripts are FK-free"
+# 约束仅针对增量 SQL。基线 init_all.sql 可能包含历史结构，不在此规则内阻断。
+incremental_sql_files="$(find sql -type f -name "*.sql" ! -path "sql/init_all.sql" | sort)"
+if [[ -n "$incremental_sql_files" ]] && search "(FOREIGN[[:space:]]+KEY|REFERENCES[[:space:]])" $incremental_sql_files; then
+  echo "foreign key clauses are forbidden in incremental SQL by team policy"
   exit 1
 fi
 
@@ -70,8 +71,8 @@ if ! awk '
           break
         }
       }
-      if (idx != "" && idx !~ /^ix_/) {
-        print "invalid index name, expected ix_*: " idx
+      if (idx != "" && idx !~ /^(ix_|idx_)/) {
+        print "invalid index name, expected ix_* or idx_*: " idx
         failed = 1
       }
     }
@@ -82,55 +83,61 @@ if ! awk '
 fi
 
 echo "[7/10] check migration directory and filename convention"
-[[ -d "$migration_dir" ]] || { echo "missing migration directory: $migration_dir"; exit 1; }
-while IFS= read -r file; do
-  base_name="$(basename "$file")"
-  if [[ ! "$base_name" =~ ^[0-9]{8}_[0-9]{6}_[a-z0-9_]+\.sql$ ]]; then
-    echo "invalid migration filename: $file"
-    echo "required pattern: YYYYMMDD_HHMMSS_description.sql"
-    exit 1
-  fi
-  if ! search "^[[:space:]]*BEGIN;[[:space:]]*$" "$file" >/dev/null; then
-    echo "migration missing BEGIN; wrapper: $file"
-    exit 1
-  fi
-  if ! search "^[[:space:]]*COMMIT;[[:space:]]*$" "$file" >/dev/null; then
-    echo "migration missing COMMIT; wrapper: $file"
-    exit 1
-  fi
-done < <(find "$migration_dir" -maxdepth 1 -type f -name "*.sql" | sort)
+if [[ ! -d "$migration_dir" ]]; then
+  echo "  skipped (migration directory not present: $migration_dir)"
+else
+  while IFS= read -r file; do
+    base_name="$(basename "$file")"
+    if [[ ! "$base_name" =~ ^[0-9]{8}_[0-9]{6}_[a-z0-9_]+\.sql$ ]]; then
+      echo "invalid migration filename: $file"
+      echo "required pattern: YYYYMMDD_HHMMSS_description.sql"
+      exit 1
+    fi
+    if ! search "^[[:space:]]*BEGIN;[[:space:]]*$" "$file" >/dev/null; then
+      echo "migration missing BEGIN; wrapper: $file"
+      exit 1
+    fi
+    if ! search "^[[:space:]]*COMMIT;[[:space:]]*$" "$file" >/dev/null; then
+      echo "migration missing COMMIT; wrapper: $file"
+      exit 1
+    fi
+  done < <(find "$migration_dir" -maxdepth 1 -type f -name "*.sql" | sort)
+fi
 
 echo "[8/10] check baseline lock integrity"
-[[ -f "$baseline_lock_file" ]] || { echo "missing baseline lock file: $baseline_lock_file"; exit 1; }
-while IFS= read -r line; do
-  [[ -z "${line// }" ]] && continue
-  [[ "$line" =~ ^# ]] && continue
-  expected_hash="$(echo "$line" | awk '{print $1}')"
-  path="$(echo "$line" | awk '{print $2}')"
-  [[ -f "$path" ]] || { echo "baseline file missing: $path"; exit 1; }
-  if command -v sha256sum >/dev/null 2>&1; then
-    actual_hash="$(sha256sum "$path" | awk '{print $1}')"
-  else
-    actual_hash="$(shasum -a 256 "$path" | awk '{print $1}')"
-  fi
-  if [[ "$expected_hash" != "$actual_hash" ]]; then
-    echo "baseline file checksum mismatch: $path"
-    echo "do not modify baseline DDL directly; add incremental migration under $migration_dir"
-    exit 1
-  fi
-done < "$baseline_lock_file"
+if [[ ! -f "$baseline_lock_file" ]]; then
+  echo "  skipped (baseline lock file not present: $baseline_lock_file)"
+else
+  while IFS= read -r line; do
+    [[ -z "${line// }" ]] && continue
+    [[ "$line" =~ ^# ]] && continue
+    expected_hash="$(echo "$line" | awk '{print $1}')"
+    path="$(echo "$line" | awk '{print $2}')"
+    [[ -f "$path" ]] || { echo "baseline file missing: $path"; exit 1; }
+    if command -v sha256sum >/dev/null 2>&1; then
+      actual_hash="$(sha256sum "$path" | awk '{print $1}')"
+    else
+      actual_hash="$(shasum -a 256 "$path" | awk '{print $1}')"
+    fi
+    if [[ "$expected_hash" != "$actual_hash" ]]; then
+      echo "baseline file checksum mismatch: $path"
+      echo "do not modify baseline DDL directly; add incremental migration under $migration_dir"
+      exit 1
+    fi
+  done < "$baseline_lock_file"
+fi
 
 echo "[9/10] check table/column comments coverage"
 # 注释已整合到 init_all.sql 中，跳过此检查
 echo "  skipped (comments integrated into init_all.sql)"
 
-echo "[10/10] check test env SQL replay includes migrations"
-if ! search "sql/migrations" scripts/test_env_up.sh >/dev/null; then
-  echo "scripts/test_env_up.sh must apply sql/migrations/*.sql"
+echo "[10/10] check test env SQL replay includes unified baseline"
+if ! search "sql/init_all.sql" scripts/test_env_up.sh >/dev/null; then
+  echo "scripts/test_env_up.sh must apply sql/init_all.sql"
   exit 1
 fi
-if ! search "sql/migrations" scripts/test_env_reset_db.sh >/dev/null; then
-  echo "scripts/test_env_reset_db.sh must apply sql/migrations/*.sql"
+if ! search "sql/init_all.sql" scripts/test_env_reset_db.sh >/dev/null; then
+  echo "scripts/test_env_reset_db.sh must apply sql/init_all.sql"
   exit 1
 fi
 

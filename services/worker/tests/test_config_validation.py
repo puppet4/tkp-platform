@@ -15,5 +15,6 @@ def test_worker_settings_accept_valid_minio_config():
         storage_endpoint="127.0.0.1:9000",
         storage_access_key="minioadmin",
         storage_secret_key="minioadmin",
+        openai_api_key="test-key",
     )
     assert cfg.storage_backend == "minio"

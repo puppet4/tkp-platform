@@ -1,6 +1,9 @@
 from pathlib import Path
+import sys
 
-from tkp_worker.main import _read_object_bytes
+import pytest
+
+from tkp_worker.main import _read_object_bytes_from_storage
 
 
 class _FakeObject:
@@ -32,7 +35,7 @@ def test_read_object_bytes_local(tmp_path):
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_bytes(b"local-bytes")
 
-    data = _read_object_bytes(
+    data = _read_object_bytes_from_storage(
         backend="local",
         storage_root=str(tmp_path),
         object_key="tenant/a/doc.md",
@@ -42,12 +45,14 @@ def test_read_object_bytes_local(tmp_path):
 
 
 def test_read_object_bytes_minio(monkeypatch):
-    from tkp_worker import main as worker_main
+    class _FakeMinioModule:
+        @staticmethod
+        def Minio(*_args, **_kwargs):  # noqa: N802
+            return _FakeMinio(b"minio-bytes")
 
-    fake = _FakeMinio(b"minio-bytes")
-    monkeypatch.setattr(worker_main, "_build_minio_client", lambda *_args, **_kwargs: fake)
+    monkeypatch.setitem(sys.modules, "minio", _FakeMinioModule())
 
-    data = _read_object_bytes(
+    data = _read_object_bytes_from_storage(
         backend="minio",
         storage_root="./unused",
         object_key="tenant/a/doc.md",
@@ -58,3 +63,13 @@ def test_read_object_bytes_minio(monkeypatch):
         secure=False,
     )
     assert data == b"minio-bytes"
+
+
+def test_read_object_bytes_raises_on_unsupported_backend():
+    with pytest.raises(ValueError, match="unsupported storage backend"):
+        _read_object_bytes_from_storage(
+            backend="unknown",
+            storage_root="./unused",
+            object_key="a",
+            bucket_name="b",
+        )

@@ -214,6 +214,17 @@ class Settings(BaseSettings):
             raise ValueError("auth_jwt_algorithms must include at least one algorithm")
         return ",".join(items)
 
+    @field_validator("rag_base_url")
+    @classmethod
+    def validate_rag_base_url(cls, value: str) -> str:
+        """RAG 基础地址必须是合法 http(s) URL（空字符串表示禁用远程 RAG）。"""
+        if not value:
+            return value
+        parsed = urlparse(value)
+        if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+            raise ValueError("KD_RAG_BASE_URL must be a valid http(s) URL")
+        return value
+
     @property
     def auth_algorithms(self) -> list[str]:
         """返回规范化后的算法数组。"""

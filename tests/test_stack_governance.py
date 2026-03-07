@@ -2,29 +2,25 @@ from pathlib import Path
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-COMPOSE_FILE = REPO_ROOT / "infra" / "podman-compose.yml"
-STACK_UP = REPO_ROOT / "scripts" / "stack_up.sh"
-STACK_DOWN = REPO_ROOT / "scripts" / "stack_down.sh"
-STACK_LOGS = REPO_ROOT / "scripts" / "stack_logs.sh"
-DEV_ENV = REPO_ROOT / "infra" / "env" / "dev.env"
+COMPOSE_FILE = REPO_ROOT / "docker-compose.yml"
+TEST_ENV_UP = REPO_ROOT / "scripts" / "test_env_up.sh"
+TEST_ENV_RESET = REPO_ROOT / "scripts" / "test_env_reset_db.sh"
+SQL_INIT = REPO_ROOT / "sql" / "init_all.sql"
 
 
-def test_podman_compose_file_exists_and_contains_full_stack_services():
-    assert COMPOSE_FILE.exists(), "missing infra/podman-compose.yml"
+def test_docker_compose_exists_and_contains_core_services():
+    assert COMPOSE_FILE.exists(), "missing docker-compose.yml"
     content = COMPOSE_FILE.read_text(encoding="utf-8")
-    for service_name in ("postgres", "redis", "minio", "api", "rag", "worker"):
+    for service_name in ("postgres", "redis", "api", "worker"):
         assert f"{service_name}:" in content
 
 
-def test_stack_scripts_exist_and_use_podman_compose():
-    for script in (STACK_UP, STACK_DOWN, STACK_LOGS):
+def test_test_env_scripts_exist_and_apply_sql_init():
+    for script in (TEST_ENV_UP, TEST_ENV_RESET):
         assert script.exists(), f"missing {script.name}"
         content = script.read_text(encoding="utf-8")
-        assert "podman compose" in content
+        assert "sql/init_all.sql" in content
 
 
-def test_dev_env_exists_for_stack_layering():
-    assert DEV_ENV.exists(), "missing infra/env/dev.env"
-    content = DEV_ENV.read_text(encoding="utf-8")
-    for key in ("KD_DATABASE_URL=", "KD_REDIS_URL=", "KD_STORAGE_ENDPOINT=", "KD_RAG_BASE_URL="):
-        assert key in content
+def test_sql_init_file_exists_for_local_bootstrap():
+    assert SQL_INIT.exists(), "missing sql/init_all.sql"

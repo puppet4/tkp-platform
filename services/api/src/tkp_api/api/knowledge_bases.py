@@ -37,6 +37,26 @@ def _get_kb_or_404(db: Session, *, tenant_id: UUID, kb_id: UUID) -> KnowledgeBas
     return kb
 
 
+def _get_workspace_membership(
+    db: Session,
+    *,
+    tenant_id: UUID,
+    workspace_id: UUID,
+    user_id: UUID,
+) -> WorkspaceMembership | None:
+    """读取用户在工作空间的成员关系。"""
+    return (
+        db.execute(
+            select(WorkspaceMembership)
+            .where(WorkspaceMembership.tenant_id == tenant_id)
+            .where(WorkspaceMembership.workspace_id == workspace_id)
+            .where(WorkspaceMembership.user_id == user_id)
+            .where(WorkspaceMembership.status == MembershipStatus.ACTIVE)
+        )
+        .scalar_one_or_none()
+    )
+
+
 @router.post(
     "",
     summary="创建知识库",
