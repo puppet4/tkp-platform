@@ -20,33 +20,39 @@ required_sql_files=(
 migration_dir="sql/archive/migrations"
 baseline_lock_file="sql/baseline.lock"
 
-echo "[1/10] check required SQL files"
+echo "[1/11] check required SQL files"
 for f in "${required_sql_files[@]}"; do
   [[ -f "$f" ]] || { echo "missing required file: $f"; exit 1; }
 done
 
-echo "[2/10] check incremental SQL scripts are FK-free"
-# 约束仅针对增量 SQL。基线 init_all.sql 可能包含历史结构，不在此规则内阻断。
-incremental_sql_files="$(find sql -type f -name "*.sql" ! -path "sql/init_all.sql" | sort)"
-if [[ -n "$incremental_sql_files" ]] && search "(FOREIGN[[:space:]]+KEY|REFERENCES[[:space:]])" $incremental_sql_files; then
-  echo "foreign key clauses are forbidden in incremental SQL by team policy"
+echo "[2/11] check all SQL scripts are FK-free"
+all_sql_files="$(find sql -type f -name "*.sql" | sort)"
+if [[ -n "$all_sql_files" ]] && search "(FOREIGN[[:space:]]+KEY|REFERENCES[[:space:]])" $all_sql_files; then
+  echo "foreign key clauses are forbidden in SQL scripts by team policy"
   exit 1
 fi
 
-echo "[3/10] check no ORM auto-schema creation"
+echo "[3/11] check ORM model constraints are FK-free"
+service_src_python_files="$(find services -type f -name "*.py" | grep "/src/" || true)"
+if [[ -n "$service_src_python_files" ]] && search "(ForeignKeyConstraint|ForeignKey\\()" $service_src_python_files; then
+  echo "ORM ForeignKey constraints are forbidden by team policy"
+  exit 1
+fi
+
+echo "[4/11] check no ORM auto-schema creation"
 service_src_python_files="$(find services -type f -name "*.py" | grep "/src/" || true)"
 if [[ -n "$service_src_python_files" ]] && search "(create_all\\(|metadata\\.create_all)" $service_src_python_files; then
   echo "ORM auto schema creation is forbidden"
   exit 1
 fi
 
-echo "[4/10] check no code-based schema sync scripts"
+echo "[5/11] check no code-based schema sync scripts"
 if find services -type f \( -name "*create_all*.py" -o -name "*sync_comments*.py" -o -name "*schema_sync*.py" \) | grep -q .; then
   echo "code-based schema sync scripts are forbidden"
   exit 1
 fi
 
-echo "[5/10] check SQL naming convention in table DDL"
+echo "[6/11] check SQL naming convention in table DDL"
 if ! search "CONSTRAINT[[:space:]]+uk_" sql/init_all.sql >/dev/null; then
   echo "expected uk_ unique constraints not found"
   exit 1
@@ -56,7 +62,7 @@ if ! search "CONSTRAINT[[:space:]]+ck_" sql/init_all.sql >/dev/null; then
   exit 1
 fi
 
-echo "[6/10] check SQL index naming convention"
+echo "[7/11] check SQL index naming convention"
 if ! awk '
   BEGIN { failed = 0 }
   {
@@ -82,7 +88,7 @@ if ! awk '
   exit 1
 fi
 
-echo "[7/10] check migration directory and filename convention"
+echo "[8/11] check migration directory and filename convention"
 if [[ ! -d "$migration_dir" ]]; then
   echo "  skipped (migration directory not present: $migration_dir)"
 else
@@ -104,7 +110,7 @@ else
   done < <(find "$migration_dir" -maxdepth 1 -type f -name "*.sql" | sort)
 fi
 
-echo "[8/10] check baseline lock integrity"
+echo "[9/11] check baseline lock integrity"
 if [[ ! -f "$baseline_lock_file" ]]; then
   echo "  skipped (baseline lock file not present: $baseline_lock_file)"
 else
@@ -127,11 +133,11 @@ else
   done < "$baseline_lock_file"
 fi
 
-echo "[9/10] check table/column comments coverage"
+echo "[10/11] check table/column comments coverage"
 # 注释已整合到 init_all.sql 中，跳过此检查
 echo "  skipped (comments integrated into init_all.sql)"
 
-echo "[10/10] check test env SQL replay includes unified baseline"
+echo "[11/11] check test env SQL replay includes unified baseline"
 if ! search "sql/init_all.sql" scripts/test_env_up.sh >/dev/null; then
   echo "scripts/test_env_up.sh must apply sql/init_all.sql"
   exit 1

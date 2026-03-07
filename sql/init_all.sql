@@ -344,22 +344,7 @@ CREATE INDEX idx_feedback_replays_tenant_id ON feedback_replays(tenant_id);
 CREATE INDEX idx_feedback_replays_feedback_id ON feedback_replays(feedback_id);
 CREATE INDEX idx_feedback_replays_status ON feedback_replays(status);
 
--- 外键约束
-ALTER TABLE user_feedbacks
-    ADD CONSTRAINT fk_user_feedbacks_tenant
-    FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE;
-
-ALTER TABLE user_feedbacks
-    ADD CONSTRAINT fk_user_feedbacks_user
-    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE;
-
-ALTER TABLE feedback_replays
-    ADD CONSTRAINT fk_feedback_replays_tenant
-    FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE;
-
-ALTER TABLE feedback_replays
-    ADD CONSTRAINT fk_feedback_replays_feedback
-    FOREIGN KEY (feedback_id) REFERENCES user_feedbacks(id) ON DELETE CASCADE;
+-- 逻辑关联（无外键约束，依赖应用层与任务补偿保证一致性）
 
 -- 注释
 COMMENT ON TABLE user_feedbacks IS '用户反馈表';
@@ -415,26 +400,7 @@ CREATE INDEX idx_agent_recoveries_agent_run_id ON agent_recoveries(agent_run_id)
 CREATE INDEX idx_agent_recoveries_checkpoint_id ON agent_recoveries(checkpoint_id);
 CREATE INDEX idx_agent_recoveries_status ON agent_recoveries(status);
 
--- 外键约束
-ALTER TABLE agent_checkpoints
-    ADD CONSTRAINT fk_agent_checkpoints_tenant
-    FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE;
-
-ALTER TABLE agent_checkpoints
-    ADD CONSTRAINT fk_agent_checkpoints_agent_run
-    FOREIGN KEY (agent_run_id) REFERENCES agent_runs(id) ON DELETE CASCADE;
-
-ALTER TABLE agent_recoveries
-    ADD CONSTRAINT fk_agent_recoveries_tenant
-    FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE;
-
-ALTER TABLE agent_recoveries
-    ADD CONSTRAINT fk_agent_recoveries_agent_run
-    FOREIGN KEY (agent_run_id) REFERENCES agent_runs(id) ON DELETE CASCADE;
-
-ALTER TABLE agent_recoveries
-    ADD CONSTRAINT fk_agent_recoveries_checkpoint
-    FOREIGN KEY (checkpoint_id) REFERENCES agent_checkpoints(id) ON DELETE CASCADE;
+-- 逻辑关联（无外键约束，依赖应用层与任务补偿保证一致性）
 
 -- 注释
 COMMENT ON TABLE agent_checkpoints IS 'Agent 执行恢复点表';

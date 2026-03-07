@@ -422,7 +422,7 @@ bash scripts/check_sql_governance.sh
 规则摘要：
 - 禁止 `create_all` / `metadata.create_all` 之类代码建表。
 - 禁止代码式 schema 同步脚本（如 `create_all.py`、`sync_comments.py`）。
-- 增量 SQL 中禁止出现外键定义（`FOREIGN KEY` / `REFERENCES`）。
+- 所有 SQL 中都禁止出现外键定义（`FOREIGN KEY` / `REFERENCES`）。
 - 基线统一维护在 `sql/init_all.sql`；迁移目录/锁文件若不存在会在治理脚本中跳过对应检查。
 
 ### Environment
