@@ -35,6 +35,7 @@ class EmbeddingService:
             raise RuntimeError("Embedding service requires 'openai' package") from exc
 
         self.client = OpenAI(api_key=api_key, base_url=base_url if base_url else None)
+        self.base_url = base_url or ""
         self.model = model
         self.dimensions = dimensions
         self.batch_size = batch_size
@@ -69,6 +70,12 @@ class EmbeddingService:
                     "Embedding endpoint returned 405 Not Allowed. "
                     "Please verify OPENAI_EMBEDDING_BASE_URL points to an OpenAI-compatible API root "
                     "(for Zhipu BigModel use: https://open.bigmodel.cn/api/paas/v4)."
+                ) from exc
+            if "has no attribute 'data'" in error_text:
+                raise RuntimeError(
+                    "Embedding response format is not OpenAI-compatible. "
+                    f"Current OPENAI_EMBEDDING_BASE_URL={self.base_url or '<default>'}. "
+                    "Please verify the endpoint and model (common API root is .../v1)."
                 ) from exc
             if "model_not_found" in error_text:
                 raise RuntimeError(
@@ -117,6 +124,12 @@ class EmbeddingService:
                     "Embedding endpoint returned 405 Not Allowed. "
                     "Please verify OPENAI_EMBEDDING_BASE_URL points to an OpenAI-compatible API root "
                     "(for Zhipu BigModel use: https://open.bigmodel.cn/api/paas/v4)."
+                ) from exc
+            if "has no attribute 'data'" in error_text:
+                raise RuntimeError(
+                    "Embedding response format is not OpenAI-compatible. "
+                    f"Current OPENAI_EMBEDDING_BASE_URL={self.base_url or '<default>'}. "
+                    "Please verify the endpoint and model (common API root is .../v1)."
                 ) from exc
             if "model_not_found" in error_text:
                 raise RuntimeError(

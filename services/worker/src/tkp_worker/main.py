@@ -214,6 +214,8 @@ def _mark_failure(
     non_retryable_markers = (
         "model_not_found",
         "405 not allowed",
+        "openai-compatible",
+        "has no attribute 'data'",
         "invalid api key",
         "incorrect api key",
         "authentication",
@@ -488,7 +490,7 @@ def _process_job_with_real_embeddings(
             :content,
             :token_count,
             CAST(:metadata AS jsonb),
-            :embedding::vector,
+            CAST(:embedding AS vector),
             :embedding_model,
             now(),
             now()
@@ -533,22 +535,22 @@ def _process_job_with_real_embeddings(
         text(
             """
             UPDATE document_versions
-            SET parse_status = 'completed', chunk_count = :chunk_count
+            SET parse_status = 'success'
             WHERE id = :document_version_id
             """
         ),
-        {"document_version_id": str(document_version_id), "chunk_count": len(chunks)},
+        {"document_version_id": str(document_version_id)},
     )
 
     conn.execute(
         text(
             """
             UPDATE documents
-            SET status = 'ready', chunk_count = :chunk_count, updated_at = now()
+            SET status = 'ready', updated_at = now()
             WHERE id = :document_id
             """
         ),
-        {"document_id": str(document_id), "chunk_count": len(chunks)},
+        {"document_id": str(document_id)},
     )
 
 
