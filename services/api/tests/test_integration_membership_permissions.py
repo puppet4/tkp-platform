@@ -219,8 +219,8 @@ def test_login_disabled_user_returns_clear_error(db_session: Session):
 
 
 def test_login_response_contains_tenant_id(db_session: Session, monkeypatch):
-    monkeypatch.setenv("KD_AUTH_JWT_SECRET", TEST_JWT_SECRET)
-    monkeypatch.setenv("KD_AUTH_JWT_ALGORITHMS", "HS256")
+    monkeypatch.setenv("AUTH_JWT_SECRET", TEST_JWT_SECRET)
+    monkeypatch.setenv("AUTH_JWT_ALGORITHMS", "HS256")
     get_settings.cache_clear()
 
     auth_api.register(
@@ -251,12 +251,12 @@ def test_login_response_contains_tenant_id(db_session: Session, monkeypatch):
 
 
 def test_login_single_session_keeps_latest_token(db_session: Session, monkeypatch):
-    monkeypatch.setenv("KD_AUTH_JWT_SECRET", TEST_JWT_SECRET)
-    monkeypatch.setenv("KD_AUTH_JWT_ALGORITHMS", "HS256")
-    monkeypatch.delenv("KD_AUTH_JWT_ISSUER", raising=False)
-    monkeypatch.delenv("KD_AUTH_JWT_AUDIENCE", raising=False)
-    monkeypatch.delenv("KD_AUTH_JWKS_URL", raising=False)
-    monkeypatch.delenv("KD_REDIS_URL", raising=False)
+    monkeypatch.setenv("AUTH_JWT_SECRET", TEST_JWT_SECRET)
+    monkeypatch.setenv("AUTH_JWT_ALGORITHMS", "HS256")
+    monkeypatch.delenv("AUTH_JWT_ISSUER", raising=False)
+    monkeypatch.delenv("AUTH_JWT_AUDIENCE", raising=False)
+    monkeypatch.delenv("AUTH_JWKS_URL", raising=False)
+    monkeypatch.delenv("REDIS_URL", raising=False)
     get_settings.cache_clear()
 
     auth_api.register(
@@ -293,8 +293,8 @@ def test_login_single_session_keeps_latest_token(db_session: Session, monkeypatc
 
 
 def test_switch_tenant_issues_token_with_target_tenant(db_session: Session, monkeypatch):
-    monkeypatch.setenv("KD_AUTH_JWT_SECRET", TEST_JWT_SECRET)
-    monkeypatch.setenv("KD_AUTH_JWT_ALGORITHMS", "HS256")
+    monkeypatch.setenv("AUTH_JWT_SECRET", TEST_JWT_SECRET)
+    monkeypatch.setenv("AUTH_JWT_ALGORITHMS", "HS256")
     get_settings.cache_clear()
 
     register_response = auth_api.register(

@@ -4,14 +4,14 @@ from functools import lru_cache
 from typing import Literal
 from urllib.parse import urlparse
 
-from pydantic import Field, SecretStr, field_validator, model_validator
+from pydantic import AliasChoices, Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
     """接口服务共享配置。"""
 
-    model_config = SettingsConfigDict(env_file=".env", env_prefix="KD_", extra="ignore")
+    model_config = SettingsConfigDict(env_file=".env", env_prefix="", extra="ignore", populate_by_name=True)
 
     app_name: str = Field(default="Tenant Knowledge Platform", description="应用名称。")
     app_env: str = Field(default="dev", description="运行环境标识。")
@@ -83,10 +83,32 @@ class Settings(BaseSettings):
     )
 
     # OpenAI API 配置（用于内置 RAG 功能）
-    openai_api_key: SecretStr = Field(default=SecretStr(""), description="OpenAI API 密钥。")
-    openai_api_base: str | None = Field(default=None, description="OpenAI API 基础 URL（可选，用于代理）。")
-    openai_embedding_model: str = Field(default="text-embedding-3-small", description="OpenAI 嵌入模型。")
-    openai_chat_model: str = Field(default="gpt-4o-mini", description="OpenAI 聊天模型。")
+    openai_api_key: SecretStr = Field(
+        default=SecretStr(""),
+        description="OpenAI API 密钥。",
+    )
+    openai_api_base: str | None = Field(
+        default=None,
+        description="OpenAI API 基础 URL（可选，用于代理）。",
+        validation_alias=AliasChoices(
+            "openai_api_base",
+            "OPENAI_BASE_URL",
+            "OPENAI_API_BASE",
+        ),
+    )
+    openai_embedding_model: str = Field(
+        default="text-embedding-3-small",
+        description="OpenAI 嵌入模型。",
+    )
+    openai_chat_model: str = Field(
+        default="gpt-4o-mini",
+        description="OpenAI 聊天模型。",
+        validation_alias=AliasChoices(
+            "openai_chat_model",
+            "OPENAI_MODEL",
+            "OPENAI_CHAT_MODEL",
+        ),
+    )
     openai_chat_temperature: float = Field(default=0.7, description="LLM 生成温度。")
     openai_chat_max_tokens: int = Field(default=2000, description="LLM 最大生成 token 数。")
     openai_embedding_dimensions: int = Field(default=1536, description="向量维度。")
@@ -235,7 +257,7 @@ class Settings(BaseSettings):
             return value
         parsed = urlparse(value)
         if parsed.scheme not in {"http", "https"} or not parsed.netloc:
-            raise ValueError("KD_RAG_BASE_URL must be a valid http(s) URL")
+            raise ValueError("RAG_BASE_URL must be a valid http(s) URL")
         return value
 
     @property
@@ -252,45 +274,45 @@ class Settings(BaseSettings):
     def validate_runtime_contract(self) -> "Settings":
         """运行时关键配置校验（启动前失败，避免带病运行）。"""
         if not self.auth_jwks_url and len(self.auth_jwt_secret.get_secret_value().encode("utf-8")) < 32:
-            raise ValueError("KD_AUTH_JWT_SECRET must be at least 32 bytes when KD_AUTH_JWKS_URL is unset")
+            raise ValueError("AUTH_JWT_SECRET must be at least 32 bytes when AUTH_JWKS_URL is unset")
 
         # 生产环境安全检查：禁止使用默认密钥
         if self.app_env in {"prod", "production"}:
             secret_value = self.auth_jwt_secret.get_secret_value()
             if "change-me" in secret_value.lower() or "please-change" in secret_value.lower():
                 raise ValueError(
-                    "Production environment detected: KD_AUTH_JWT_SECRET must not contain default values. "
+                    "Production environment detected: AUTH_JWT_SECRET must not contain default values. "
                     "Please set a strong random secret key."
                 )
 
             internal_token = self.internal_service_token.get_secret_value()
             if "change-me" in internal_token.lower():
                 raise ValueError(
-                    "Production environment detected: KD_INTERNAL_SERVICE_TOKEN must not contain default values. "
+                    "Production environment detected: INTERNAL_SERVICE_TOKEN must not contain default values. "
                     "Please set a strong random token."
                 )
 
             openai_key = self.openai_api_key.get_secret_value()
             if not openai_key or openai_key.startswith("sk-your-"):
                 raise ValueError(
-                    "Production environment detected: KD_OPENAI_API_KEY must be configured with a valid API key."
+                    "Production environment detected: OPENAI_API_KEY must be configured with a valid API key."
                 )
 
         if self.storage_backend in {"minio", "oss"}:
             missing: list[str] = []
             if not self.storage_endpoint:
-                missing.append("KD_STORAGE_ENDPOINT")
+                missing.append("STORAGE_ENDPOINT")
             if not self.storage_access_key:
-                missing.append("KD_STORAGE_ACCESS_KEY")
+                missing.append("STORAGE_ACCESS_KEY")
             if not self.storage_secret_key:
-                missing.append("KD_STORAGE_SECRET_KEY")
+                missing.append("STORAGE_SECRET_KEY")
             if not self.storage_bucket:
-                missing.append("KD_STORAGE_BUCKET")
+                missing.append("STORAGE_BUCKET")
             if missing:
                 raise ValueError(f"storage backend '{self.storage_backend}' requires: {', '.join(missing)}")
 
         if not self.agent_allowed_tools_list:
-            raise ValueError("KD_AGENT_ALLOWED_TOOLS must include at least one tool")
+            raise ValueError("AGENT_ALLOWED_TOOLS must include at least one tool")
         return self
 
 

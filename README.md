@@ -34,10 +34,10 @@ bash scripts/test_env_up.sh
 3. 启动 API
 
 ```bash
-KD_DATABASE_URL=postgresql+psycopg://postgres:postgres@127.0.0.1:55432/tkp_api_test \
-KD_REDIS_URL=redis://127.0.0.1:56379/0 \
-KD_STORAGE_BACKEND=local \
-KD_STORAGE_ROOT=./.storage-dev \
+DATABASE_URL=postgresql+psycopg://postgres:postgres@127.0.0.1:55432/tkp_api_test \
+REDIS_URL=redis://127.0.0.1:56379/0 \
+STORAGE_BACKEND=local \
+STORAGE_ROOT=./.storage-dev \
 PYTHONPATH=services/api/src \
 .venv/bin/python -m uvicorn tkp_api.main:app --host 127.0.0.1 --port 8000
 ```
@@ -45,9 +45,9 @@ PYTHONPATH=services/api/src \
 4. 启动 Worker（需要处理文档入库时）
 
 ```bash
-KD_DATABASE_URL=postgresql+psycopg://postgres:postgres@127.0.0.1:55432/tkp_api_test \
-KD_STORAGE_BACKEND=local \
-KD_STORAGE_ROOT=./.storage-dev \
+DATABASE_URL=postgresql+psycopg://postgres:postgres@127.0.0.1:55432/tkp_api_test \
+STORAGE_BACKEND=local \
+STORAGE_ROOT=./.storage-dev \
 PYTHONPATH=services/worker/src \
 .venv/bin/python -m tkp_worker.main
 ```

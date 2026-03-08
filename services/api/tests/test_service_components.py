@@ -55,9 +55,9 @@ class _FakeMinio:
 
 
 def test_persist_upload_local_backend(tmp_path, monkeypatch):
-    monkeypatch.setenv("KD_STORAGE_BACKEND", "local")
-    monkeypatch.setenv("KD_STORAGE_ROOT", str(tmp_path))
-    monkeypatch.setenv("KD_STORAGE_KEY_PREFIX", "unit-test")
+    monkeypatch.setenv("STORAGE_BACKEND", "local")
+    monkeypatch.setenv("STORAGE_ROOT", str(tmp_path))
+    monkeypatch.setenv("STORAGE_KEY_PREFIX", "unit-test")
     get_settings.cache_clear()
 
     key = storage_service.persist_upload(
@@ -77,10 +77,10 @@ def test_persist_upload_local_backend(tmp_path, monkeypatch):
 def test_persist_upload_minio_backend(tmp_path, monkeypatch):
     fake_client = _FakeMinio()
 
-    monkeypatch.setenv("KD_STORAGE_BACKEND", "minio")
-    monkeypatch.setenv("KD_STORAGE_ROOT", str(tmp_path))
-    monkeypatch.setenv("KD_STORAGE_BUCKET", "tkp-unit")
-    monkeypatch.setenv("KD_STORAGE_KEY_PREFIX", "ingestion")
+    monkeypatch.setenv("STORAGE_BACKEND", "minio")
+    monkeypatch.setenv("STORAGE_ROOT", str(tmp_path))
+    monkeypatch.setenv("STORAGE_BUCKET", "tkp-unit")
+    monkeypatch.setenv("STORAGE_KEY_PREFIX", "ingestion")
     get_settings.cache_clear()
 
     monkeypatch.setattr(storage_service, "_build_minio_client", lambda _settings: fake_client)

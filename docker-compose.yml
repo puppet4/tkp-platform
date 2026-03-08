@@ -154,36 +154,39 @@ services:
     container_name: tkp-api
     environment:
       # Database
-      KD_DATABASE_URL: postgresql+psycopg://postgres:postgres@postgres:5432/tenant_knowledge_platform
+      DATABASE_URL: postgresql+psycopg://postgres:postgres@postgres:5432/tenant_knowledge_platform
 
       # Redis
-      KD_REDIS_URL: redis://redis:6379/0
+      REDIS_URL: redis://redis:6379/0
 
       # Storage
-      KD_STORAGE_BACKEND: minio
-      KD_STORAGE_ENDPOINT: minio:9000
-      KD_STORAGE_ACCESS_KEY: minioadmin
-      KD_STORAGE_SECRET_KEY: minioadmin
-      KD_STORAGE_BUCKET_NAME: tkp-documents
-      KD_STORAGE_SECURE: "false"
+      STORAGE_BACKEND: minio
+      STORAGE_ENDPOINT: minio:9000
+      STORAGE_ACCESS_KEY: minioadmin
+      STORAGE_SECRET_KEY: minioadmin
+      STORAGE_BUCKET: tkp-documents
+      STORAGE_SECURE: "false"
 
       # Elasticsearch
-      KD_ELASTICSEARCH_ENABLED: "true"
-      KD_ELASTICSEARCH_HOSTS: elasticsearch:9200
+      ELASTICSEARCH_ENABLED: "true"
+      ELASTICSEARCH_HOSTS: elasticsearch:9200
 
       # OpenAI (set your API key)
-      KD_OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_BASE_URL: ${OPENAI_BASE_URL:-}
+      OPENAI_MODEL: ${OPENAI_MODEL:-gpt-4o-mini}
+      OPENAI_EMBEDDING_MODEL: ${OPENAI_EMBEDDING_MODEL:-text-embedding-3-small}
 
       # Auth
-      KD_AUTH_JWT_SECRET: change-me-in-prod-secret-at-least-32-bytes-long
+      AUTH_JWT_SECRET: change-me-in-prod-secret-at-least-32-bytes-long
 
       # Observability
-      KD_TELEMETRY_ENABLED: "true"
-      KD_TELEMETRY_OTLP_ENDPOINT: http://jaeger:4317
+      TELEMETRY_ENABLED: "true"
+      TELEMETRY_OTLP_ENDPOINT: http://jaeger:4317
 
       # App
-      KD_APP_DEBUG: "false"
-      KD_APP_LOG_LEVEL: INFO
+      APP_DEBUG: "false"
+      APP_LOG_LEVEL: INFO
     ports:
       - "8000:8000"
     depends_on:
@@ -210,23 +213,25 @@ services:
       dockerfile: Dockerfile
     environment:
       # Database
-      KD_DATABASE_URL: postgresql+psycopg://postgres:postgres@postgres:5432/tenant_knowledge_platform
+      DATABASE_URL: postgresql+psycopg://postgres:postgres@postgres:5432/tenant_knowledge_platform
 
       # Storage
-      KD_STORAGE_BACKEND: minio
-      KD_STORAGE_ENDPOINT: minio:9000
-      KD_STORAGE_ACCESS_KEY: minioadmin
-      KD_STORAGE_SECRET_KEY: minioadmin
-      KD_STORAGE_BUCKET_NAME: tkp-documents
-      KD_STORAGE_SECURE: "false"
+      STORAGE_BACKEND: minio
+      STORAGE_ENDPOINT: minio:9000
+      STORAGE_ACCESS_KEY: minioadmin
+      STORAGE_SECRET_KEY: minioadmin
+      STORAGE_BUCKET: tkp-documents
+      STORAGE_SECURE: "false"
 
       # OpenAI
-      KD_OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_BASE_URL: ${OPENAI_BASE_URL:-}
+      OPENAI_EMBEDDING_MODEL: ${OPENAI_EMBEDDING_MODEL:-text-embedding-3-small}
 
       # Worker
-      KD_WORKER_ID: worker-${WORKER_ID:-1}
-      KD_POLL_INTERVAL_SECONDS: 5
-      KD_JOB_LOCK_TIMEOUT_SECONDS: 300
+      WORKER_ID: worker-${WORKER_ID:-1}
+      WORKER_POLL_INTERVAL_SECONDS: 5
+      WORKER_LOCK_TIMEOUT_SECONDS: 300
     depends_on:
       postgres:
         condition: service_healthy

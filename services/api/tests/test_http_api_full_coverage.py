@@ -3161,11 +3161,11 @@ def _truncate_all_tables_for_test(db_engine) -> None:
 
 @pytest.fixture
 def api_client(monkeypatch: pytest.MonkeyPatch, tmp_path) -> Generator[TestClient, None, None]:
-    monkeypatch.setenv("KD_AUTH_JWT_SECRET", "http-test-secret-key-at-least-32-bytes")
-    monkeypatch.setenv("KD_AUTH_JWT_ALGORITHMS", "HS256")
-    monkeypatch.setenv("KD_STORAGE_ROOT", str(tmp_path / "storage"))
-    monkeypatch.setenv("KD_STORAGE_BACKEND", "local")
-    monkeypatch.setenv("KD_RAG_BASE_URL", "")
+    monkeypatch.setenv("AUTH_JWT_SECRET", "http-test-secret-key-at-least-32-bytes")
+    monkeypatch.setenv("AUTH_JWT_ALGORITHMS", "HS256")
+    monkeypatch.setenv("STORAGE_ROOT", str(tmp_path / "storage"))
+    monkeypatch.setenv("STORAGE_BACKEND", "local")
+    monkeypatch.setenv("RAG_BASE_URL", "")
     get_settings.cache_clear()
     _reset_runtime_auth_state()
     app.dependency_overrides.clear()
@@ -4070,7 +4070,7 @@ def test_http_api_retrieval_should_fail_fast_when_rag_remote_unavailable(
     当启用 RAG 远程服务且服务不可达时，API 应明确返回 503 与可诊断错误码，
     而不是静默走本地逻辑。
     """
-    monkeypatch.setenv("KD_RAG_BASE_URL", "http://127.0.0.1:9")
+    monkeypatch.setenv("RAG_BASE_URL", "http://127.0.0.1:9")
     get_settings.cache_clear()
 
     runner = WorkflowRunner(api_client)
@@ -4117,7 +4117,7 @@ def test_http_api_agent_should_fail_fast_when_rag_remote_unavailable(
     拆服务专项：
     启用 RAG 远程规划后，若 RAG 不可达，agent 创建应返回明确 503。
     """
-    monkeypatch.setenv("KD_RAG_BASE_URL", "http://127.0.0.1:9")
+    monkeypatch.setenv("RAG_BASE_URL", "http://127.0.0.1:9")
     get_settings.cache_clear()
 
     runner = WorkflowRunner(api_client)
@@ -4150,8 +4150,8 @@ def test_http_api_agent_remote_success_with_real_rag(api_client: TestClient, mon
     """
     internal_token = f"test-internal-{uuid4().hex[:8]}"
     with _bind_real_rag_app(monkeypatch, internal_token=internal_token) as rag_base_url:
-        monkeypatch.setenv("KD_RAG_BASE_URL", rag_base_url)
-        monkeypatch.setenv("KD_INTERNAL_SERVICE_TOKEN", internal_token)
+        monkeypatch.setenv("RAG_BASE_URL", rag_base_url)
+        monkeypatch.setenv("INTERNAL_SERVICE_TOKEN", internal_token)
         get_settings.cache_clear()
 
         runner = WorkflowRunner(api_client)

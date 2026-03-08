@@ -3,14 +3,14 @@
 from functools import lru_cache
 from typing import Literal
 
-from pydantic import Field, model_validator
+from pydantic import AliasChoices, Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
     """工作进程运行参数。"""
 
-    model_config = SettingsConfigDict(env_file=".env", env_prefix="KD_", extra="ignore")
+    model_config = SettingsConfigDict(env_file=".env", env_prefix="", extra="ignore", populate_by_name=True)
 
     database_url: str = Field(
         default="postgresql+psycopg://postgres:postgres@localhost:5432/tkp_api",
@@ -41,6 +41,15 @@ class Settings(BaseSettings):
     openai_api_key: str = Field(
         default="",
         description="OpenAI API 密钥，用于生成文本向量。",
+    )
+    openai_api_base: str | None = Field(
+        default=None,
+        description="OpenAI API 基础 URL（可选，用于代理或兼容网关）。",
+        validation_alias=AliasChoices(
+            "openai_api_base",
+            "OPENAI_BASE_URL",
+            "OPENAI_API_BASE",
+        ),
     )
     openai_embedding_model: str = Field(
         default="text-embedding-3-small",
@@ -79,18 +88,18 @@ class Settings(BaseSettings):
         if self.storage_backend in {"minio", "oss"}:
             missing: list[str] = []
             if not self.storage_endpoint:
-                missing.append("KD_STORAGE_ENDPOINT")
+                missing.append("STORAGE_ENDPOINT")
             if not self.storage_access_key:
-                missing.append("KD_STORAGE_ACCESS_KEY")
+                missing.append("STORAGE_ACCESS_KEY")
             if not self.storage_secret_key:
-                missing.append("KD_STORAGE_SECRET_KEY")
+                missing.append("STORAGE_SECRET_KEY")
             if not self.storage_bucket:
-                missing.append("KD_STORAGE_BUCKET")
+                missing.append("STORAGE_BUCKET")
             if missing:
                 raise ValueError(f"storage backend '{self.storage_backend}' requires: {', '.join(missing)}")
 
         if not self.openai_api_key or self.openai_api_key.strip() == "":
-            raise ValueError("KD_OPENAI_API_KEY is required for embedding generation")
+            raise ValueError("OPENAI_API_KEY is required for embedding generation")
 
         if self.chunk_overlap >= self.chunk_size:
             raise ValueError("chunk_overlap must be less than chunk_size")

@@ -83,7 +83,7 @@ case "$TEST_ENFORCE_COVERAGE" in
     ;;
 esac
 
-export KD_STORAGE_ROOT="${KD_STORAGE_ROOT:-$ROOT_DIR/.storage-test}"
+export STORAGE_ROOT="${STORAGE_ROOT:-$ROOT_DIR/.storage-test}"
 export UV_CACHE_DIR="${UV_CACHE_DIR:-$ROOT_DIR/.uv-cache}"
 export TKP_TEST_LOG="${TKP_TEST_LOG:-1}"
 export TKP_TEST_LOG_VERBOSE="${TKP_TEST_LOG_VERBOSE:-1}"
@@ -91,13 +91,13 @@ export TKP_TEST_LOG_PAYLOAD="${TKP_TEST_LOG_PAYLOAD:-0}"
 
 configure_mode_env() {
   if [[ "$TEST_HTTP_MODE" == "postgres" ]]; then
-    export KD_DATABASE_URL="${KD_DATABASE_URL:-postgresql+psycopg://$TEST_DB_USER:$TEST_DB_PASSWORD@127.0.0.1:$TEST_PG_PORT/$TEST_DB_NAME}"
-    export KD_REDIS_URL="${KD_REDIS_URL:-redis://127.0.0.1:$TEST_REDIS_PORT/0}"
+    export DATABASE_URL="${DATABASE_URL:-postgresql+psycopg://$TEST_DB_USER:$TEST_DB_PASSWORD@127.0.0.1:$TEST_PG_PORT/$TEST_DB_NAME}"
+    export REDIS_URL="${REDIS_URL:-redis://127.0.0.1:$TEST_REDIS_PORT/0}"
     export TKP_TEST_DB_MODE=postgres
   else
     export TKP_TEST_DB_MODE=sqlite
-    unset KD_DATABASE_URL || true
-    unset KD_REDIS_URL || true
+    unset DATABASE_URL || true
+    unset REDIS_URL || true
   fi
 }
 
@@ -147,8 +147,8 @@ run_pytest_target() {
     echo "  coverage:     disabled (smoke/targeted run)"
   fi
   if [[ "$TEST_HTTP_MODE" == "postgres" ]]; then
-    echo "  KD_DATABASE_URL=$KD_DATABASE_URL"
-    echo "  KD_REDIS_URL=$KD_REDIS_URL"
+    echo "  DATABASE_URL=$DATABASE_URL"
+    echo "  REDIS_URL=$REDIS_URL"
   fi
 
   set +e

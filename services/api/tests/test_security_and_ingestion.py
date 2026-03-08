@@ -14,11 +14,11 @@ TEST_JWT_SECRET = "unit-test-secret-key-at-least-32-bytes"
 
 
 def test_parse_authorization_header_jwt(monkeypatch):
-    monkeypatch.setenv("KD_AUTH_JWT_SECRET", TEST_JWT_SECRET)
-    monkeypatch.setenv("KD_AUTH_JWT_ALGORITHMS", "HS256")
-    monkeypatch.delenv("KD_AUTH_JWT_ISSUER", raising=False)
-    monkeypatch.delenv("KD_AUTH_JWT_AUDIENCE", raising=False)
-    monkeypatch.delenv("KD_AUTH_JWKS_URL", raising=False)
+    monkeypatch.setenv("AUTH_JWT_SECRET", TEST_JWT_SECRET)
+    monkeypatch.setenv("AUTH_JWT_ALGORITHMS", "HS256")
+    monkeypatch.delenv("AUTH_JWT_ISSUER", raising=False)
+    monkeypatch.delenv("AUTH_JWT_AUDIENCE", raising=False)
+    monkeypatch.delenv("AUTH_JWKS_URL", raising=False)
 
     get_settings.cache_clear()
 
@@ -60,11 +60,11 @@ def test_password_hash_and_verify():
 
 
 def test_parse_authorization_header_revoked_token(monkeypatch):
-    monkeypatch.setenv("KD_AUTH_JWT_SECRET", TEST_JWT_SECRET)
-    monkeypatch.setenv("KD_AUTH_JWT_ALGORITHMS", "HS256")
-    monkeypatch.delenv("KD_AUTH_JWT_ISSUER", raising=False)
-    monkeypatch.delenv("KD_AUTH_JWT_AUDIENCE", raising=False)
-    monkeypatch.delenv("KD_AUTH_JWKS_URL", raising=False)
+    monkeypatch.setenv("AUTH_JWT_SECRET", TEST_JWT_SECRET)
+    monkeypatch.setenv("AUTH_JWT_ALGORITHMS", "HS256")
+    monkeypatch.delenv("AUTH_JWT_ISSUER", raising=False)
+    monkeypatch.delenv("AUTH_JWT_AUDIENCE", raising=False)
+    monkeypatch.delenv("AUTH_JWKS_URL", raising=False)
 
     get_settings.cache_clear()
 
@@ -83,11 +83,11 @@ def test_parse_authorization_header_revoked_token(monkeypatch):
 
 
 def test_parse_authorization_header_accepts_jwt(monkeypatch):
-    monkeypatch.setenv("KD_AUTH_JWT_SECRET", TEST_JWT_SECRET)
-    monkeypatch.setenv("KD_AUTH_JWT_ALGORITHMS", "HS256")
-    monkeypatch.delenv("KD_AUTH_JWT_ISSUER", raising=False)
-    monkeypatch.delenv("KD_AUTH_JWT_AUDIENCE", raising=False)
-    monkeypatch.delenv("KD_AUTH_JWKS_URL", raising=False)
+    monkeypatch.setenv("AUTH_JWT_SECRET", TEST_JWT_SECRET)
+    monkeypatch.setenv("AUTH_JWT_ALGORITHMS", "HS256")
+    monkeypatch.delenv("AUTH_JWT_ISSUER", raising=False)
+    monkeypatch.delenv("AUTH_JWT_AUDIENCE", raising=False)
+    monkeypatch.delenv("AUTH_JWKS_URL", raising=False)
 
     get_settings.cache_clear()
 
@@ -103,11 +103,11 @@ def test_parse_authorization_header_accepts_jwt(monkeypatch):
 
 
 def test_parse_authorization_header_prefers_real_token_when_placeholder_exists(monkeypatch):
-    monkeypatch.setenv("KD_AUTH_JWT_SECRET", TEST_JWT_SECRET)
-    monkeypatch.setenv("KD_AUTH_JWT_ALGORITHMS", "HS256")
-    monkeypatch.delenv("KD_AUTH_JWT_ISSUER", raising=False)
-    monkeypatch.delenv("KD_AUTH_JWT_AUDIENCE", raising=False)
-    monkeypatch.delenv("KD_AUTH_JWKS_URL", raising=False)
+    monkeypatch.setenv("AUTH_JWT_SECRET", TEST_JWT_SECRET)
+    monkeypatch.setenv("AUTH_JWT_ALGORITHMS", "HS256")
+    monkeypatch.delenv("AUTH_JWT_ISSUER", raising=False)
+    monkeypatch.delenv("AUTH_JWT_AUDIENCE", raising=False)
+    monkeypatch.delenv("AUTH_JWKS_URL", raising=False)
     get_settings.cache_clear()
 
     token = jwt.encode(
@@ -121,11 +121,11 @@ def test_parse_authorization_header_prefers_real_token_when_placeholder_exists(m
 
 
 def test_parse_authorization_header_rejects_placeholder_token(monkeypatch):
-    monkeypatch.setenv("KD_AUTH_JWT_SECRET", TEST_JWT_SECRET)
-    monkeypatch.setenv("KD_AUTH_JWT_ALGORITHMS", "HS256")
-    monkeypatch.delenv("KD_AUTH_JWT_ISSUER", raising=False)
-    monkeypatch.delenv("KD_AUTH_JWT_AUDIENCE", raising=False)
-    monkeypatch.delenv("KD_AUTH_JWKS_URL", raising=False)
+    monkeypatch.setenv("AUTH_JWT_SECRET", TEST_JWT_SECRET)
+    monkeypatch.setenv("AUTH_JWT_ALGORITHMS", "HS256")
+    monkeypatch.delenv("AUTH_JWT_ISSUER", raising=False)
+    monkeypatch.delenv("AUTH_JWT_AUDIENCE", raising=False)
+    monkeypatch.delenv("AUTH_JWKS_URL", raising=False)
     get_settings.cache_clear()
 
     with pytest.raises(HTTPException) as exc:
@@ -136,10 +136,10 @@ def test_parse_authorization_header_rejects_placeholder_token(monkeypatch):
 
 
 def test_issue_access_token_contains_tenant_claim(monkeypatch):
-    monkeypatch.setenv("KD_AUTH_JWT_SECRET", TEST_JWT_SECRET)
-    monkeypatch.setenv("KD_AUTH_JWT_ALGORITHMS", "HS256")
-    monkeypatch.delenv("KD_AUTH_JWT_ISSUER", raising=False)
-    monkeypatch.delenv("KD_AUTH_JWT_AUDIENCE", raising=False)
+    monkeypatch.setenv("AUTH_JWT_SECRET", TEST_JWT_SECRET)
+    monkeypatch.setenv("AUTH_JWT_ALGORITHMS", "HS256")
+    monkeypatch.delenv("AUTH_JWT_ISSUER", raising=False)
+    monkeypatch.delenv("AUTH_JWT_AUDIENCE", raising=False)
     get_settings.cache_clear()
 
     user = User(
@@ -158,12 +158,12 @@ def test_issue_access_token_contains_tenant_claim(monkeypatch):
 
 
 def test_single_session_new_login_invalidates_old_token(monkeypatch):
-    monkeypatch.setenv("KD_AUTH_JWT_SECRET", TEST_JWT_SECRET)
-    monkeypatch.setenv("KD_AUTH_JWT_ALGORITHMS", "HS256")
-    monkeypatch.delenv("KD_AUTH_JWT_ISSUER", raising=False)
-    monkeypatch.delenv("KD_AUTH_JWT_AUDIENCE", raising=False)
-    monkeypatch.delenv("KD_AUTH_JWKS_URL", raising=False)
-    monkeypatch.delenv("KD_REDIS_URL", raising=False)
+    monkeypatch.setenv("AUTH_JWT_SECRET", TEST_JWT_SECRET)
+    monkeypatch.setenv("AUTH_JWT_ALGORITHMS", "HS256")
+    monkeypatch.delenv("AUTH_JWT_ISSUER", raising=False)
+    monkeypatch.delenv("AUTH_JWT_AUDIENCE", raising=False)
+    monkeypatch.delenv("AUTH_JWKS_URL", raising=False)
+    monkeypatch.delenv("REDIS_URL", raising=False)
     get_settings.cache_clear()
 
     user = User(
