@@ -3,7 +3,7 @@
 from datetime import datetime
 from uuid import UUID
 
-from sqlalchemy import DateTime, String, UniqueConstraint
+from sqlalchemy import DateTime, Index, String, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from tkp_api.models.base import Base, TimestampMixin, UUIDPrimaryKeyMixin
@@ -14,11 +14,19 @@ class Tenant(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     """租户实体，系统最高数据隔离边界。"""
 
     __tablename__ = "tenants"
+    __table_args__ = (
+        Index(
+            "idx_tenants_slug_active_unique",
+            "slug",
+            unique=True,
+            postgresql_where=(f"status != '{TenantStatus.DELETED}'"),
+        ),
+    )
 
     # 面向用户展示的租户名称。
     name: Mapped[str] = mapped_column(String(128), nullable=False)
     # 全局唯一短标识，常用于 URL 或配置引用。
-    slug: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
+    slug: Mapped[str] = mapped_column(String(64), nullable=False)
     # 数据隔离级别，当前默认 shared，后续可扩展到独立资源池。
     isolation_level: Mapped[str] = mapped_column(String(32), nullable=False, default="shared")
     # 租户生命周期状态（active/suspended/deleted）。

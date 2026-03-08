@@ -2,7 +2,7 @@
 
 from uuid import UUID
 
-from sqlalchemy import String, Text, UniqueConstraint
+from sqlalchemy import Index, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from tkp_api.models.base import Base, TimestampMixin, UUIDPrimaryKeyMixin
@@ -13,7 +13,15 @@ class Workspace(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     """工作空间实体，承载知识库和文档的协作隔离边界。"""
 
     __tablename__ = "workspaces"
-    __table_args__ = (UniqueConstraint("tenant_id", "slug", name="uk_workspace_slug"),)
+    __table_args__ = (
+        Index(
+            "idx_workspace_slug_active_unique",
+            "tenant_id",
+            "slug",
+            unique=True,
+            postgresql_where=(f"status != '{WorkspaceStatus.ARCHIVED}'"),
+        ),
+    )
 
     # 所属租户 ID。
     tenant_id: Mapped[UUID] = mapped_column(nullable=False, index=True)

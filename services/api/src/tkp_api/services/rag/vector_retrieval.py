@@ -76,23 +76,20 @@ class VectorRetriever:
         # 安全地构建向量字面量（仅包含数字）
         vector_literal = "[" + ",".join(f"{float(v):.6f}" for v in query_embedding) + "]"
 
-        # 构建 SQL 查询
         if kb_ids:
             kb_filter = "AND dc.kb_id = ANY(:kb_ids)"
-            params = {
+            base_params = {
                 "tenant_id": str(tenant_id),
                 "kb_ids": [str(kb_id) for kb_id in kb_ids],
                 "query_vector": vector_literal,
                 "top_k": self.top_k,
-                "similarity_threshold": self.similarity_threshold,
             }
         else:
             kb_filter = ""
-            params = {
+            base_params = {
                 "tenant_id": str(tenant_id),
                 "query_vector": vector_literal,
                 "top_k": self.top_k,
-                "similarity_threshold": self.similarity_threshold,
             }
 
         stmt = text(
@@ -105,24 +102,36 @@ class VectorRetriever:
                 dc.chunk_no,
                 dc.content,
                 dc.metadata,
-                dc.embedding_model,
+                e.embedding_model,
                 dc.parent_chunk_id,
                 d.title AS document_title,
                 kb.name AS kb_name,
-                1 - (dc.embedding <=> CAST(:query_vector AS vector)) AS similarity
+                1 - (e.vector <=> CAST(:query_vector AS vector)) AS similarity
             FROM document_chunks dc
+            JOIN chunk_embeddings e ON e.chunk_id = dc.id
             JOIN documents d ON d.id = dc.document_id
             JOIN knowledge_bases kb ON kb.id = dc.kb_id
             WHERE dc.tenant_id = :tenant_id
-              AND dc.embedding IS NOT NULL
+              AND e.tenant_id = :tenant_id
+              AND e.vector IS NOT NULL
               {kb_filter}
-              AND 1 - (dc.embedding <=> CAST(:query_vector AS vector)) >= :similarity_threshold
-            ORDER BY dc.embedding <=> CAST(:query_vector AS vector)
+              AND 1 - (e.vector <=> CAST(:query_vector AS vector)) >= :similarity_threshold
+            ORDER BY e.vector <=> CAST(:query_vector AS vector)
             LIMIT :top_k
             """
         )
 
-        rows = conn.execute(stmt, params).mappings().all()
+        def _execute_with_threshold(threshold: float):
+            params = {**base_params, "similarity_threshold": threshold}
+            return conn.execute(stmt, params).mappings().all()
+
+        rows = _execute_with_threshold(self.similarity_threshold)
+        if not rows and self.similarity_threshold > 0:
+            logger.info(
+                "no vector hits under threshold %.2f, retry with relaxed threshold 0.0",
+                self.similarity_threshold,
+            )
+            rows = _execute_with_threshold(0.0)
 
         results = []
         for row in rows:

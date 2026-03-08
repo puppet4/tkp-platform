@@ -18,9 +18,11 @@ CREATE TABLE IF NOT EXISTS tenants (
     status VARCHAR(32) NOT NULL DEFAULT 'active',
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    CONSTRAINT uk_tenants_slug UNIQUE (slug),
     CONSTRAINT ck_tenants_status CHECK (status IN ('active', 'suspended', 'deleted'))
 );
+
+-- 部分唯一索引：只对非删除状态生效
+CREATE UNIQUE INDEX IF NOT EXISTS idx_tenants_slug_active_unique ON tenants (slug) WHERE status != 'deleted';
 
 CREATE TABLE IF NOT EXISTS users (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -58,9 +60,11 @@ CREATE TABLE IF NOT EXISTS workspaces (
     status VARCHAR(32) NOT NULL DEFAULT 'active',
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    CONSTRAINT uk_workspace_slug UNIQUE (tenant_id, slug),
     CONSTRAINT ck_workspaces_status CHECK (status IN ('active', 'archived'))
 );
+
+-- 部分唯一索引：只对非归档状态生效
+CREATE UNIQUE INDEX IF NOT EXISTS idx_workspace_slug_active_unique ON workspaces (tenant_id, slug) WHERE status != 'archived';
 
 CREATE TABLE IF NOT EXISTS workspace_memberships (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -88,9 +92,11 @@ CREATE TABLE IF NOT EXISTS knowledge_bases (
     created_by UUID NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    CONSTRAINT uk_kb_name UNIQUE (tenant_id, workspace_id, name),
     CONSTRAINT ck_knowledge_bases_status CHECK (status IN ('active', 'archived'))
 );
+
+-- 部分唯一索引：只对非归档状态生效
+CREATE UNIQUE INDEX IF NOT EXISTS idx_kb_name_active_unique ON knowledge_bases (tenant_id, workspace_id, name) WHERE status != 'archived';
 
 CREATE TABLE IF NOT EXISTS kb_memberships (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),

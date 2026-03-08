@@ -8,7 +8,7 @@ from typing import Any
 from uuid import UUID
 
 from pgvector.sqlalchemy import Vector  # type: ignore[import-untyped]
-from sqlalchemy import Boolean, DateTime, Integer, String, Text, UniqueConstraint, func
+from sqlalchemy import Boolean, DateTime, Index, Integer, String, Text, UniqueConstraint, func
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -28,7 +28,16 @@ class KnowledgeBase(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     """知识库实体，归属租户与工作空间。"""
 
     __tablename__ = "knowledge_bases"
-    __table_args__ = (UniqueConstraint("tenant_id", "workspace_id", "name", name="uk_kb_name"),)
+    __table_args__ = (
+        Index(
+            "idx_kb_name_active_unique",
+            "tenant_id",
+            "workspace_id",
+            "name",
+            unique=True,
+            postgresql_where=(f"status != '{KBStatus.ARCHIVED}'"),
+        ),
+    )
 
     # 冗余租户 ID，用于多租户隔离过滤。
     tenant_id: Mapped[UUID] = mapped_column(nullable=False, index=True)
