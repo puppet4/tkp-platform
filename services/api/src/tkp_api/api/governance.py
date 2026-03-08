@@ -70,6 +70,32 @@ async def create_deletion_request(
         ) from exc
 
 
+@router.get("/deletion/requests")
+async def list_deletion_requests(
+    status_filter: str | None = None,
+    limit: int = 50,
+    offset: int = 0,
+    ctx: RequestContext = Depends(get_request_context),
+    db: Session = Depends(get_db),
+):
+    """分页查询数据删除请求。"""
+    service = DeletionService(db)
+    try:
+        data = service.list_deletion_requests(
+            tenant_id=ctx.tenant_id,
+            status=status_filter,
+            limit=limit,
+            offset=offset,
+        )
+        return {"requests": data, "total": len(data), "limit": limit, "offset": offset}
+    except Exception as exc:
+        logger.exception("failed to list deletion requests: %s", exc)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to list deletion requests",
+        ) from exc
+
+
 @router.post("/deletion/requests/{request_id}/approve")
 async def approve_deletion_request(
     request_id: UUID,

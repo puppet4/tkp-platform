@@ -3,7 +3,8 @@
 from datetime import datetime, timezone
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Path, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request, status
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from tkp_api.core.config import get_settings
@@ -21,6 +22,43 @@ from tkp_api.services.quota import QuotaMetric, enforce_quota, resolve_workspace
 from tkp_api.utils.response import success
 
 router = APIRouter(prefix="/agent", tags=["agent"])
+
+
+@router.get(
+    "/runs",
+    summary="查询智能体任务列表",
+    description="分页返回当前用户在当前租户下创建的智能体任务。",
+    status_code=status.HTTP_200_OK,
+    response_model=SuccessResponse[list[AgentRunData]],
+    responses={401: {"model": ErrorResponse}, 403: {"model": ErrorResponse}},
+)
+def list_agent_runs(
+    request: Request,
+    status_filter: str | None = Query(default=None, alias="status", description="任务状态筛选。"),
+    limit: int = Query(default=20, ge=1, le=200, description="返回条数上限。"),
+    offset: int = Query(default=0, ge=0, description="分页偏移。"),
+    ctx=Depends(get_request_context),
+    db: Session = Depends(get_db),
+):
+    """分页查询当前用户任务列表。"""
+    require_tenant_action(
+        db,
+        tenant_id=ctx.tenant_id,
+        tenant_role=ctx.tenant_role,
+        action=PermissionAction.AGENT_RUN_READ,
+    )
+    stmt = (
+        select(AgentRun)
+        .where(AgentRun.tenant_id == ctx.tenant_id, AgentRun.user_id == ctx.user_id)
+        .order_by(AgentRun.created_at.desc())
+        .limit(limit)
+        .offset(offset)
+    )
+    if status_filter:
+        stmt = stmt.where(AgentRun.status == status_filter)
+    runs = db.execute(stmt).scalars().all()
+    data = [{"run_id": run.id, "status": run.status} for run in runs]
+    return success(request, data)
 
 
 @router.post(

@@ -387,6 +387,61 @@ class DeletionService:
             proof_hash=row.proof_hash,
         )
 
+    def list_deletion_requests(
+        self,
+        *,
+        tenant_id: UUID,
+        status: str | None = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> list[dict[str, Any]]:
+        """分页查询删除请求列表。"""
+        try:
+            sql = """
+                SELECT id, tenant_id, user_id, resource_type, resource_id, reason,
+                       status, requested_at, approved_by, approved_at,
+                       rejected_by, rejected_at, reject_reason, executed_by, executed_at
+                FROM deletion_requests
+                WHERE tenant_id = :tenant_id
+            """
+            params: dict[str, Any] = {
+                "tenant_id": str(tenant_id),
+                "limit": max(1, min(limit, 200)),
+                "offset": max(0, offset),
+            }
+            if status:
+                sql += " AND status = :status"
+                params["status"] = status
+            sql += " ORDER BY requested_at DESC LIMIT :limit OFFSET :offset"
+            rows = self.db.execute(text(sql), params).fetchall()
+        except (OperationalError, ProgrammingError) as exc:
+            if _is_missing_table_error(exc):
+                self.db.rollback()
+                logger.warning("skip list deletion requests because governance tables are not initialized: %s", exc)
+                return []
+            raise
+
+        return [
+            {
+                "request_id": str(row.id),
+                "tenant_id": str(row.tenant_id),
+                "user_id": str(row.user_id),
+                "resource_type": row.resource_type,
+                "resource_id": str(row.resource_id),
+                "reason": row.reason,
+                "status": row.status,
+                "requested_at": row.requested_at.isoformat() if row.requested_at else None,
+                "approved_by": str(row.approved_by) if row.approved_by else None,
+                "approved_at": row.approved_at.isoformat() if row.approved_at else None,
+                "rejected_by": str(row.rejected_by) if row.rejected_by else None,
+                "rejected_at": row.rejected_at.isoformat() if row.rejected_at else None,
+                "reject_reason": row.reject_reason,
+                "executed_by": str(row.executed_by) if row.executed_by else None,
+                "executed_at": row.executed_at.isoformat() if row.executed_at else None,
+            }
+            for row in rows
+        ]
+
     def _resource_exists_in_tenant(self, resource_type: str, resource_id: UUID, tenant_id: UUID) -> bool:
         if resource_type == "document":
             row = self.db.execute(
