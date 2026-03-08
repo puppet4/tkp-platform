@@ -15,6 +15,7 @@ class EmbeddingService:
         self,
         *,
         api_key: str,
+        base_url: str | None = None,
         model: str = "text-embedding-3-small",
         dimensions: int = 1536,
         batch_size: int = 100,
@@ -23,6 +24,7 @@ class EmbeddingService:
 
         Args:
             api_key: OpenAI API 密钥
+            base_url: OpenAI API 基础 URL（可选）
             model: 嵌入模型名称
             dimensions: 向量维度
             batch_size: 批处理大小
@@ -32,7 +34,7 @@ class EmbeddingService:
         except ImportError as exc:
             raise RuntimeError("Embedding service requires 'openai' package") from exc
 
-        self.client = OpenAI(api_key=api_key)
+        self.client = OpenAI(api_key=api_key, base_url=base_url if base_url else None)
         self.model = model
         self.dimensions = dimensions
         self.batch_size = batch_size
@@ -123,14 +125,20 @@ class EmbeddingService:
             return len(encoding.encode(text))
 
 
-def create_embedding_service(*, api_key: str, model: str = "text-embedding-3-small") -> EmbeddingService:
+def create_embedding_service(
+    *,
+    api_key: str,
+    base_url: str | None = None,
+    model: str = "text-embedding-3-small",
+) -> EmbeddingService:
     """创建嵌入服务实例的工厂函数。
 
     Args:
         api_key: OpenAI API 密钥
+        base_url: OpenAI API 基础 URL（可选）
         model: 嵌入模型名称
 
     Returns:
         EmbeddingService 实例
     """
-    return EmbeddingService(api_key=api_key, model=model)
+    return EmbeddingService(api_key=api_key, base_url=base_url, model=model)

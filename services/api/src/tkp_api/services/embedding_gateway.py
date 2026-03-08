@@ -154,9 +154,14 @@ class EmbeddingProvider:
 class OpenAIEmbeddingProvider(EmbeddingProvider):
     """OpenAI Embedding 提供者。"""
 
-    def __init__(self, api_key: str, model: str = "text-embedding-3-small"):
+    def __init__(
+        self,
+        api_key: str,
+        model: str = "text-embedding-3-small",
+        base_url: str | None = None,
+    ):
         """初始化 OpenAI 提供者。"""
-        self.client = OpenAI(api_key=api_key)
+        self.client = OpenAI(api_key=api_key, base_url=base_url if base_url else None)
         self.model = model
 
     def generate(self, texts: list[str], **kwargs) -> list[list[float]]:
@@ -365,9 +370,11 @@ def create_embedding_gateway(
     primary_provider_type: str = "openai",
     primary_api_key: str | None = None,
     primary_model: str | None = None,
+    primary_base_url: str | None = None,
     fallback_provider_type: str | None = None,
     fallback_api_key: str | None = None,
     fallback_model: str | None = None,
+    fallback_base_url: str | None = None,
     redis_client=None,
     cache_ttl: int = 86400,
     rate_limit_max: int = 100,
@@ -395,6 +402,7 @@ def create_embedding_gateway(
         primary_provider = OpenAIEmbeddingProvider(
             api_key=primary_api_key,
             model=primary_model or "text-embedding-3-small",
+            base_url=primary_base_url,
         )
     elif primary_provider_type == "cohere":
         primary_provider = CohereEmbeddingProvider(
@@ -415,6 +423,7 @@ def create_embedding_gateway(
             fallback_provider = OpenAIEmbeddingProvider(
                 api_key=fallback_api_key,
                 model=fallback_model or "text-embedding-3-small",
+                base_url=fallback_base_url,
             )
         elif fallback_provider_type == "cohere":
             fallback_provider = CohereEmbeddingProvider(

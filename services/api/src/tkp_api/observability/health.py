@@ -109,7 +109,7 @@ def check_elasticsearch(es_client) -> tuple[bool, str]:
         return False, f"elasticsearch connection failed: {exc}"
 
 
-def check_openai_api(api_key: str) -> tuple[bool, str]:
+def check_openai_api(api_key: str, base_url: str | None = None) -> tuple[bool, str]:
     """检查 OpenAI API 连接。"""
     try:
         if not api_key:
@@ -117,7 +117,7 @@ def check_openai_api(api_key: str) -> tuple[bool, str]:
 
         from openai import OpenAI
 
-        client = OpenAI(api_key=api_key)
+        client = OpenAI(api_key=api_key, base_url=base_url if base_url else None)
         # 简单调用测试连接
         models = client.models.list()
         return True, f"openai api ok, {len(list(models.data))} models available"
@@ -144,6 +144,7 @@ def init_health_checks(
     redis_client=None,
     es_client=None,
     openai_api_key: str | None = None,
+    openai_api_base: str | None = None,
 ):
     """初始化健康检查。"""
     checker = get_health_checker()
@@ -161,6 +162,6 @@ def init_health_checks(
 
     # 注册 OpenAI API 检查
     if openai_api_key:
-        checker.register_check("openai", lambda: check_openai_api(openai_api_key))
+        checker.register_check("openai", lambda: check_openai_api(openai_api_key, openai_api_base))
 
     logger.info("health checks initialized")

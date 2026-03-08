@@ -552,6 +552,7 @@ def main() -> None:
     # 初始化服务
     embedding_service = create_embedding_service(
         api_key=settings.openai_api_key,
+        base_url=settings.openai_api_base,
         model=settings.openai_embedding_model,
     )
     chunker = create_chunker(

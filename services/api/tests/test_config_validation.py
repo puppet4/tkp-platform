@@ -41,3 +41,17 @@ def test_api_settings_accept_valid_minio_and_rag_config():
 def test_api_settings_reject_empty_agent_allowed_tools():
     with pytest.raises(ValidationError):
         Settings(agent_allowed_tools="  ,   ")
+
+
+def test_api_settings_accept_standard_openai_env_names(monkeypatch):
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-standard-key")
+    monkeypatch.setenv("OPENAI_BASE_URL", "https://api.openai.com/v1")
+    monkeypatch.setenv("OPENAI_MODEL", "gpt-4.1-mini")
+    monkeypatch.setenv("OPENAI_EMBEDDING_MODEL", "text-embedding-3-large")
+
+    cfg = Settings()
+
+    assert cfg.openai_api_key.get_secret_value() == "sk-standard-key"
+    assert cfg.openai_api_base == "https://api.openai.com/v1"
+    assert cfg.openai_chat_model == "gpt-4.1-mini"
+    assert cfg.openai_embedding_model == "text-embedding-3-large"

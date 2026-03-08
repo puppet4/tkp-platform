@@ -88,6 +88,7 @@ def _create_provider(provider_type: str, settings):
         return OpenAIEmbeddingProvider(
             api_key=api_key,
             model=settings.openai_embedding_model,
+            base_url=settings.openai_api_base,
         )
     elif provider_type == "cohere":
         api_key = settings.cohere_api_key.get_secret_value() if settings.cohere_api_key else ""

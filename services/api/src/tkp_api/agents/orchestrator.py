@@ -44,6 +44,7 @@ class AgentOrchestrator:
         self,
         *,
         openai_api_key: str,
+        openai_api_base: str | None = None,
         model: str = "gpt-4o-mini",
         allowed_tools: list[str] | None = None,
         enable_sandbox: bool = True,
@@ -54,6 +55,7 @@ class AgentOrchestrator:
 
         Args:
             openai_api_key: OpenAI API 密钥
+            openai_api_base: OpenAI API 基础 URL（可选）
             model: 使用的模型
             allowed_tools: 允许的工具列表
             enable_sandbox: 是否启用沙箱
@@ -62,7 +64,7 @@ class AgentOrchestrator:
         """
         from openai import OpenAI
 
-        self.client = OpenAI(api_key=openai_api_key)
+        self.client = OpenAI(api_key=openai_api_key, base_url=openai_api_base if openai_api_base else None)
         self.model = model
         self.max_iterations = max_iterations
 
@@ -259,6 +261,7 @@ _orchestrator = None
 def get_orchestrator(
     *,
     openai_api_key: str,
+    openai_api_base: str | None = None,
     model: str = "gpt-4o-mini",
     allowed_tools: list[str] | None = None,
 ) -> AgentOrchestrator:
@@ -267,6 +270,7 @@ def get_orchestrator(
     if _orchestrator is None:
         _orchestrator = AgentOrchestrator(
             openai_api_key=openai_api_key,
+            openai_api_base=openai_api_base,
             model=model,
             allowed_tools=allowed_tools,
         )

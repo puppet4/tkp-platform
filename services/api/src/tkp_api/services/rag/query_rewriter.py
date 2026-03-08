@@ -16,6 +16,7 @@ class QueryRewriter:
         self,
         *,
         api_key: str,
+        base_url: str | None = None,
         model: str = "gpt-4o-mini",
         strategy: str = "expansion",
     ):
@@ -23,6 +24,7 @@ class QueryRewriter:
 
         Args:
             api_key: OpenAI API 密钥
+            base_url: OpenAI API 基础 URL（可选）
             model: 使用的模型
             strategy: 改写策略（expansion/multi_query/synonym）
         """
@@ -31,7 +33,7 @@ class QueryRewriter:
         except ImportError as exc:
             raise RuntimeError("Query rewriter requires 'openai' package") from exc
 
-        self.client = OpenAI(api_key=api_key)
+        self.client = OpenAI(api_key=api_key, base_url=base_url if base_url else None)
         self.model = model
         self.strategy = strategy
         logger.info("initialized query rewriter: model=%s, strategy=%s", model, strategy)
@@ -166,12 +168,14 @@ class QueryRewriter:
 def create_query_rewriter(
     *,
     api_key: str,
+    base_url: str | None = None,
     model: str = "gpt-4o-mini",
     strategy: str = "expansion",
 ) -> QueryRewriter:
     """创建查询改写器的工厂函数。"""
     return QueryRewriter(
         api_key=api_key,
+        base_url=base_url,
         model=model,
         strategy=strategy,
     )

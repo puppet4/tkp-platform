@@ -17,6 +17,7 @@ class LLMGenerator:
         self,
         *,
         api_key: str,
+        base_url: str | None = None,
         model: str = "gpt-4o-mini",
         temperature: float = 0.7,
         max_tokens: int = 2000,
@@ -25,6 +26,7 @@ class LLMGenerator:
 
         Args:
             api_key: OpenAI API 密钥
+            base_url: OpenAI API 基础 URL（可选）
             model: 聊天模型名称
             temperature: 生成温度
             max_tokens: 最大生成 token 数
@@ -34,7 +36,7 @@ class LLMGenerator:
         except ImportError as exc:
             raise RuntimeError("LLM generator requires 'openai' package") from exc
 
-        self.client = OpenAI(api_key=api_key)
+        self.client = OpenAI(api_key=api_key, base_url=base_url if base_url else None)
         self.model = model
         self.temperature = temperature
         self.max_tokens = max_tokens
@@ -278,6 +280,7 @@ class LLMGenerator:
 def create_generator(
     *,
     api_key: str,
+    base_url: str | None = None,
     model: str = "gpt-4o-mini",
     temperature: float = 0.7,
     max_tokens: int = 2000,
@@ -285,6 +288,7 @@ def create_generator(
     """创建生成器的工厂函数。"""
     return LLMGenerator(
         api_key=api_key,
+        base_url=base_url,
         model=model,
         temperature=temperature,
         max_tokens=max_tokens,

@@ -80,6 +80,7 @@ class RAGServicesSingleton:
                     settings = get_settings()
                     cls._embedding_service = create_embedding_service(
                         api_key=settings.openai_api_key.get_secret_value(),
+                        base_url=settings.openai_api_base,
                         model=settings.openai_embedding_model,
                     )
         return cls._embedding_service
@@ -107,6 +108,7 @@ class RAGServicesSingleton:
                     settings = get_settings()
                     cls._generator = create_generator(
                         api_key=settings.openai_api_key.get_secret_value(),
+                        base_url=settings.openai_api_base,
                         model=settings.openai_chat_model,
                         temperature=settings.openai_chat_temperature,
                         max_tokens=settings.openai_chat_max_tokens,

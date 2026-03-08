@@ -43,6 +43,7 @@ class HybridRetrieverSingleton:
         # 创建向量检索器
         embedding_service = create_embedding_service(
             api_key=settings.openai_api_key.get_secret_value(),
+            base_url=settings.openai_api_base,
             model=settings.openai_embedding_model,
         )
         vector_retriever = create_retriever(
@@ -94,6 +95,7 @@ class HybridRetrieverSingleton:
 
                 query_rewriter = create_query_rewriter(
                     api_key=settings.openai_api_key.get_secret_value(),
+                    base_url=settings.openai_api_base,
                     model=settings.openai_chat_model,
                     strategy=settings.query_rewrite_strategy,
                 )
