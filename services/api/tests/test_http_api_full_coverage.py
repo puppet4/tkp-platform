@@ -24,6 +24,7 @@ from tkp_api.db.session import engine as app_engine
 from tkp_api.db.session import get_db
 from tkp_api.main import app
 from tkp_api.models.base import Base
+from tkp_api.services.local_auth import generate_totp_code
 
 
 @compiles(JSONB, "sqlite")
@@ -779,6 +780,71 @@ class WorkflowRunner:
 
         me_data = self.success("GET", "/api/auth/me", token=self.ctx.owner_token)
         self._assert_auth_me_data(me_data, expected_email=self.ctx.owner_email, expected_user_id=self.ctx.owner_user_id)
+
+        # 覆盖 MFA/TOTP 全链路：状态 -> setup -> enable -> challenge login -> disable。
+        mfa_status_before = self.success("GET", "/api/auth/mfa/totp/status", token=self.ctx.owner_token)
+        _require_keys(mfa_status_before, ["enrolled", "enabled", "backup_codes_remaining"], "auth.mfa.status.before")
+        assert mfa_status_before["enabled"] is False
+
+        mfa_setup = self.success(
+            "POST",
+            "/api/auth/mfa/totp/setup",
+            token=self.ctx.owner_token,
+            json={"password": self.ctx.pwd},
+        )
+        _require_keys(mfa_setup, ["enrolled", "enabled", "secret", "otpauth_uri"], "auth.mfa.setup")
+        assert mfa_setup["enrolled"] is True
+        assert mfa_setup["enabled"] is False
+        _assert_non_empty_str(mfa_setup["secret"], "auth.mfa.setup.secret")
+        _assert_non_empty_str(mfa_setup["otpauth_uri"], "auth.mfa.setup.otpauth_uri")
+
+        mfa_enable_code = generate_totp_code(mfa_setup["secret"])
+        mfa_enabled = self.success(
+            "POST",
+            "/api/auth/mfa/totp/enable",
+            token=self.ctx.owner_token,
+            json={"code": mfa_enable_code},
+        )
+        _require_keys(mfa_enabled, ["enabled", "backup_codes"], "auth.mfa.enable")
+        assert mfa_enabled["enabled"] is True
+        assert isinstance(mfa_enabled["backup_codes"], list) and len(mfa_enabled["backup_codes"]) > 0
+        backup_code = mfa_enabled["backup_codes"][0]
+        _assert_non_empty_str(backup_code, "auth.mfa.backup_code")
+
+        mfa_required_error = self.expect_error(
+            "POST",
+            "/api/auth/login",
+            expected_status=401,
+            expected_code="LOGIN_MFA_REQUIRED",
+            json={"email": self.ctx.owner_email, "password": self.ctx.pwd},
+        )
+        challenge_token = (mfa_required_error.get("details") or {}).get("challenge_token")
+        _assert_non_empty_str(challenge_token, "auth.mfa.challenge_token")
+
+        mfa_login = self.success(
+            "POST",
+            "/api/auth/login/mfa",
+            json={"challenge_token": challenge_token, "otp_code": generate_totp_code(mfa_setup["secret"])},
+        )
+        self._assert_auth_login_data(mfa_login)
+        self.ctx.owner_token = mfa_login["access_token"]
+
+        mfa_status_enabled = self.success("GET", "/api/auth/mfa/totp/status", token=self.ctx.owner_token)
+        _require_keys(mfa_status_enabled, ["enrolled", "enabled", "backup_codes_remaining"], "auth.mfa.status.enabled")
+        assert mfa_status_enabled["enabled"] is True
+
+        mfa_disabled = self.success(
+            "POST",
+            "/api/auth/mfa/totp/disable",
+            token=self.ctx.owner_token,
+            json={"password": self.ctx.pwd, "backup_code": backup_code},
+        )
+        _require_keys(mfa_disabled, ["enabled"], "auth.mfa.disable")
+        assert mfa_disabled["enabled"] is False
+
+        mfa_status_after = self.success("GET", "/api/auth/mfa/totp/status", token=self.ctx.owner_token)
+        _require_keys(mfa_status_after, ["enrolled", "enabled", "backup_codes_remaining"], "auth.mfa.status.after")
+        assert mfa_status_after["enabled"] is False
 
         live_data = self.success("GET", "/api/health/live")
         assert live_data == {"status": "ok"}

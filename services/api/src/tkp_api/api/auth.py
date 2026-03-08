@@ -1,9 +1,13 @@
 """认证辅助接口。"""
 
+import hashlib
+import json
+import secrets
 from datetime import datetime, timezone
 from uuid import UUID
 from uuid import uuid4
 
+import jwt
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy import select
 from sqlalchemy.exc import DataError, IntegrityError, SQLAlchemyError
@@ -13,13 +17,21 @@ from tkp_api.core.config import get_settings
 from tkp_api.core.security import AuthenticatedPrincipal, activate_user_session, clear_user_session, revoke_token_jti
 from tkp_api.db.session import get_db
 from tkp_api.dependencies import get_current_principal, get_current_user
-from tkp_api.models.auth import UserCredential
+from tkp_api.models.auth import UserCredential, UserMfaTotp
 from tkp_api.models.enums import MembershipStatus, TenantRole, TenantStatus, WorkspaceRole
 from tkp_api.models.tenant import Tenant, TenantMembership, User
 from tkp_api.models.workspace import Workspace, WorkspaceMembership
 from tkp_api.schemas.auth import (
     AuthLoginData,
     AuthLoginRequest,
+    AuthMFALoginRequest,
+    AuthMFATotpDisableData,
+    AuthMFATotpDisableRequest,
+    AuthMFATotpEnableData,
+    AuthMFATotpEnableRequest,
+    AuthMFATotpSetupData,
+    AuthMFATotpSetupRequest,
+    AuthMFATotpStatusData,
     AuthLogoutData,
     AuthRegisterData,
     AuthRegisterRequest,
@@ -28,7 +40,15 @@ from tkp_api.schemas.auth import (
 from tkp_api.schemas.common import ErrorResponse, SuccessResponse
 from tkp_api.schemas.responses import AuthMeData
 from tkp_api.services import build_unique_tenant_slug, create_tenant_with_owner
-from tkp_api.services.local_auth import hash_password, issue_access_token, verify_password
+from tkp_api.services.local_auth import (
+    decode_mfa_challenge_token,
+    generate_totp_secret,
+    hash_password,
+    issue_access_token,
+    issue_mfa_challenge_token,
+    verify_password,
+    verify_totp_code,
+)
 from tkp_api.services.membership_sync import normalize_email
 from tkp_api.utils.response import success
 
@@ -108,6 +128,54 @@ def _resolve_user_default_tenant_id(db: Session, *, user_id: UUID) -> UUID | Non
         if tenant is not None and tenant.status != TenantStatus.DELETED:
             return tenant.id
     return None
+
+
+def _ensure_user_mfa_totp_table(db: Session) -> None:
+    """确保 MFA 表存在（兼容未跑迁移环境）。"""
+    UserMfaTotp.__table__.create(bind=db.get_bind(), checkfirst=True)
+
+
+def _get_mfa_record(db: Session, *, user_id: UUID) -> UserMfaTotp | None:
+    _ensure_user_mfa_totp_table(db)
+    return db.execute(select(UserMfaTotp).where(UserMfaTotp.user_id == user_id)).scalar_one_or_none()
+
+
+def _credential_or_403(db: Session, *, user_id: UUID) -> UserCredential:
+    credential = db.execute(select(UserCredential).where(UserCredential.user_id == user_id)).scalar_one_or_none()
+    if not credential or credential.status != "active":
+        raise _login_error(
+            status_code=status.HTTP_403_FORBIDDEN,
+            code="MFA_CREDENTIAL_NOT_ACTIVE",
+            message="MFA 操作失败：登录凭据不可用。",
+            reason="credential_not_active",
+            suggestion="请先恢复本地登录凭据状态后重试。",
+        )
+    return credential
+
+
+def _hash_backup_code(*, user_id: UUID, code: str) -> str:
+    raw = f"{user_id}:{code}:{settings.auth_jwt_secret.get_secret_value()}".encode("utf-8")
+    return hashlib.sha256(raw).hexdigest()
+
+
+def _generate_backup_codes(*, count: int = 8) -> list[str]:
+    alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+    codes: list[str] = []
+    for _ in range(count):
+        left = "".join(secrets.choice(alphabet) for _ in range(4))
+        right = "".join(secrets.choice(alphabet) for _ in range(4))
+        codes.append(f"{left}-{right}")
+    return codes
+
+
+def _parse_backup_hashes(record: UserMfaTotp) -> list[str]:
+    try:
+        data = json.loads(record.backup_codes_hashes or "[]")
+    except json.JSONDecodeError:
+        return []
+    if not isinstance(data, list):
+        return []
+    return [str(item) for item in data]
 
 
 @router.post(
@@ -356,6 +424,26 @@ def login(
         if not verify_password(payload.password, credential.password_hash):
             raise _invalid_credentials()
 
+        mfa_record = _get_mfa_record(db, user_id=UUID(str(user.id)))
+        if mfa_record and mfa_record.enabled:
+            challenge_token, exp_ts = issue_mfa_challenge_token(
+                user,
+                tenant_id=_resolve_user_default_tenant_id(db, user_id=UUID(str(user.id))),
+            )
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail={
+                    "code": "LOGIN_MFA_REQUIRED",
+                    "message": "登录需要二次验证，请输入动态码。",
+                    "details": {
+                        "reason": "mfa_required",
+                        "suggestion": "请在验证器中输入 6 位动态码，或使用恢复码。",
+                        "challenge_token": challenge_token,
+                        "expires_in": max(0, exp_ts - int(datetime.now(timezone.utc).timestamp())),
+                    },
+                },
+            )
+
         default_tenant_id = _resolve_user_default_tenant_id(db, user_id=UUID(str(user.id)))
         token, exp_ts, expires_at, jti = issue_access_token(user, tenant_id=default_tenant_id)
         user.last_login_at = datetime.now(timezone.utc)
@@ -382,6 +470,316 @@ def login(
             "expires_at": expires_at,
             "expires_in": max(0, exp_ts - int(datetime.now(timezone.utc).timestamp())),
             "tenant_id": default_tenant_id,
+        },
+    )
+
+
+@router.get(
+    "/mfa/totp/status",
+    summary="查询 TOTP 状态",
+    status_code=status.HTTP_200_OK,
+    response_model=SuccessResponse[AuthMFATotpStatusData],
+    responses={401: {"model": ErrorResponse}},
+)
+def get_totp_mfa_status(
+    request: Request,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """查询当前用户 TOTP 状态。"""
+    record = _get_mfa_record(db, user_id=UUID(str(user.id)))
+    if not record:
+        return success(request, {"enrolled": False, "enabled": False, "backup_codes_remaining": 0})
+    return success(
+        request,
+        {
+            "enrolled": True,
+            "enabled": bool(record.enabled),
+            "backup_codes_remaining": len(_parse_backup_hashes(record)),
+        },
+    )
+
+
+@router.post(
+    "/mfa/totp/setup",
+    summary="初始化 TOTP 密钥",
+    status_code=status.HTTP_200_OK,
+    response_model=SuccessResponse[AuthMFATotpSetupData],
+    responses={401: {"model": ErrorResponse}, 403: {"model": ErrorResponse}},
+)
+def setup_totp_mfa(
+    payload: AuthMFATotpSetupRequest,
+    request: Request,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """校验密码后生成/更新 TOTP 密钥。"""
+    credential = _credential_or_403(db, user_id=UUID(str(user.id)))
+    if not verify_password(payload.password, credential.password_hash):
+        raise _invalid_credentials()
+
+    record = _get_mfa_record(db, user_id=UUID(str(user.id)))
+    secret = generate_totp_secret()
+    if record:
+        record.secret_base32 = secret
+        record.enabled = False
+        record.verified_at = None
+        record.backup_codes_hashes = "[]"
+        record.last_used_counter = None
+    else:
+        record = UserMfaTotp(
+            user_id=UUID(str(user.id)),
+            secret_base32=secret,
+            enabled=False,
+            backup_codes_hashes="[]",
+        )
+        db.add(record)
+    db.commit()
+
+    issuer = settings.app_name or "TKP"
+    account_name = user.email.replace(":", "")
+    otpauth_uri = f"otpauth://totp/{issuer}:{account_name}?secret={secret}&issuer={issuer}&algorithm=SHA1&digits=6&period=30"
+    return success(
+        request,
+        {
+            "enrolled": True,
+            "enabled": False,
+            "secret": secret,
+            "otpauth_uri": otpauth_uri,
+        },
+    )
+
+
+@router.post(
+    "/mfa/totp/enable",
+    summary="启用 TOTP",
+    status_code=status.HTTP_200_OK,
+    response_model=SuccessResponse[AuthMFATotpEnableData],
+    responses={401: {"model": ErrorResponse}, 403: {"model": ErrorResponse}},
+)
+def enable_totp_mfa(
+    payload: AuthMFATotpEnableRequest,
+    request: Request,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """校验动态码后正式启用 TOTP。"""
+    record = _get_mfa_record(db, user_id=UUID(str(user.id)))
+    if not record:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={
+                "code": "MFA_SETUP_REQUIRED",
+                "message": "请先完成 TOTP 密钥初始化。",
+                "details": {"reason": "setup_required", "suggestion": "先调用 /auth/mfa/totp/setup 初始化密钥。"},
+            },
+        )
+
+    passed, matched_counter = verify_totp_code(
+        record.secret_base32,
+        code=payload.code,
+        last_used_counter=record.last_used_counter,
+    )
+    if not passed or matched_counter is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail={
+                "code": "MFA_CODE_INVALID",
+                "message": "动态码无效或已过期。",
+                "details": {"reason": "otp_invalid", "suggestion": "请检查设备时间并输入最新 6 位动态码。"},
+            },
+        )
+
+    backup_codes = _generate_backup_codes()
+    record.backup_codes_hashes = json.dumps(
+        [_hash_backup_code(user_id=UUID(str(user.id)), code=item) for item in backup_codes],
+        ensure_ascii=False,
+    )
+    record.enabled = True
+    record.verified_at = datetime.now(timezone.utc)
+    # 启用阶段的校验码用于“绑定设备确认”，不应占用后续登录的首个时间窗验证码。
+    record.last_used_counter = None
+    db.commit()
+    return success(request, {"enabled": True, "backup_codes": backup_codes})
+
+
+@router.post(
+    "/mfa/totp/disable",
+    summary="停用 TOTP",
+    status_code=status.HTTP_200_OK,
+    response_model=SuccessResponse[AuthMFATotpDisableData],
+    responses={401: {"model": ErrorResponse}, 403: {"model": ErrorResponse}},
+)
+def disable_totp_mfa(
+    payload: AuthMFATotpDisableRequest,
+    request: Request,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """使用密码+动态码/恢复码停用 TOTP。"""
+    credential = _credential_or_403(db, user_id=UUID(str(user.id)))
+    if not verify_password(payload.password, credential.password_hash):
+        raise _invalid_credentials()
+
+    record = _get_mfa_record(db, user_id=UUID(str(user.id)))
+    if not record or not record.enabled:
+        return success(request, {"enabled": False})
+
+    if payload.otp_code:
+        passed, matched_counter = verify_totp_code(
+            record.secret_base32,
+            code=payload.otp_code,
+            last_used_counter=record.last_used_counter,
+        )
+        if not passed or matched_counter is None:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail={
+                    "code": "MFA_CODE_INVALID",
+                    "message": "动态码无效或已过期。",
+                    "details": {"reason": "otp_invalid", "suggestion": "请检查设备时间并输入最新 6 位动态码。"},
+                },
+            )
+        record.last_used_counter = matched_counter
+    elif payload.backup_code:
+        current_hashes = _parse_backup_hashes(record)
+        target_hash = _hash_backup_code(user_id=UUID(str(user.id)), code=payload.backup_code)
+        if target_hash not in current_hashes:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail={
+                    "code": "MFA_BACKUP_CODE_INVALID",
+                    "message": "恢复码无效。",
+                    "details": {"reason": "backup_code_invalid", "suggestion": "请确认恢复码输入无误。"},
+                },
+            )
+        current_hashes.remove(target_hash)
+        record.backup_codes_hashes = json.dumps(current_hashes, ensure_ascii=False)
+    else:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={
+                "code": "MFA_VERIFICATION_REQUIRED",
+                "message": "停用 2FA 需要动态码或恢复码。",
+                "details": {
+                    "reason": "otp_or_backup_required",
+                    "suggestion": "请填写 otp_code 或 backup_code。",
+                },
+            },
+        )
+
+    record.enabled = False
+    db.commit()
+    return success(request, {"enabled": False})
+
+
+@router.post(
+    "/login/mfa",
+    summary="MFA 二阶段登录",
+    status_code=status.HTTP_200_OK,
+    response_model=SuccessResponse[AuthLoginData],
+    responses={401: {"model": ErrorResponse}, 400: {"model": ErrorResponse}},
+)
+def login_mfa_totp(
+    payload: AuthMFALoginRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    """使用挑战令牌 + 动态码完成登录。"""
+    try:
+        claims = decode_mfa_challenge_token(payload.challenge_token)
+    except jwt.InvalidTokenError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail={
+                "code": "MFA_CHALLENGE_INVALID",
+                "message": "MFA 挑战令牌无效或已过期。",
+                "details": {"reason": "challenge_invalid", "suggestion": "请重新发起登录。"},
+            },
+        ) from exc
+
+    user_id_raw = claims.get("tkp_uid")
+    if not isinstance(user_id_raw, str):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="unauthorized")
+    try:
+        user_id = UUID(user_id_raw)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="unauthorized") from exc
+
+    user = db.get(User, user_id)
+    if not user or user.status != "active":
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="unauthorized")
+
+    record = _get_mfa_record(db, user_id=user_id)
+    if not record or not record.enabled:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="mfa not enabled")
+
+    if payload.otp_code:
+        passed, matched_counter = verify_totp_code(
+            record.secret_base32,
+            code=payload.otp_code,
+            last_used_counter=record.last_used_counter,
+        )
+        if not passed or matched_counter is None:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail={
+                    "code": "MFA_CODE_INVALID",
+                    "message": "动态码无效或已过期。",
+                    "details": {"reason": "otp_invalid", "suggestion": "请检查设备时间并输入最新 6 位动态码。"},
+                },
+            )
+        record.last_used_counter = matched_counter
+    elif payload.backup_code:
+        current_hashes = _parse_backup_hashes(record)
+        target_hash = _hash_backup_code(user_id=user_id, code=payload.backup_code)
+        if target_hash not in current_hashes:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail={
+                    "code": "MFA_BACKUP_CODE_INVALID",
+                    "message": "恢复码无效。",
+                    "details": {"reason": "backup_code_invalid", "suggestion": "请确认恢复码输入无误。"},
+                },
+            )
+        current_hashes.remove(target_hash)
+        record.backup_codes_hashes = json.dumps(current_hashes, ensure_ascii=False)
+    else:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={
+                "code": "MFA_VERIFICATION_REQUIRED",
+                "message": "请提供动态码或恢复码。",
+                "details": {
+                    "reason": "otp_or_backup_required",
+                    "suggestion": "请填写 otp_code 或 backup_code。",
+                },
+            },
+        )
+
+    tenant_id_claim = claims.get("tenant_id")
+    tenant_id: UUID | None = None
+    if isinstance(tenant_id_claim, str):
+        try:
+            tenant_id = UUID(tenant_id_claim)
+        except ValueError:
+            tenant_id = None
+    if tenant_id is None:
+        tenant_id = _resolve_user_default_tenant_id(db, user_id=user_id)
+
+    token, exp_ts, expires_at, jti = issue_access_token(user, tenant_id=tenant_id)
+    user.last_login_at = datetime.now(timezone.utc)
+    db.commit()
+    activate_user_session(user_session_id=str(user.id), jti=jti, exp_ts=exp_ts)
+
+    return success(
+        request,
+        {
+            "access_token": token,
+            "token_type": "bearer",
+            "expires_at": expires_at,
+            "expires_in": max(0, exp_ts - int(datetime.now(timezone.utc).timestamp())),
+            "tenant_id": tenant_id,
         },
     )
 

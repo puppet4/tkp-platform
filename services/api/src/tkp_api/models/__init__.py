@@ -3,7 +3,7 @@
 from tkp_api.models.agent import AgentRun
 from tkp_api.models.agent_checkpoint import AgentCheckpoint, AgentRecovery
 from tkp_api.models.audit import AuditLog
-from tkp_api.models.auth import UserCredential
+from tkp_api.models.auth import UserCredential, UserMfaTotp
 from tkp_api.models.conversation import Conversation, Message
 from tkp_api.models.feedback import FeedbackReplay, UserFeedback
 from tkp_api.models.knowledge import (
@@ -49,6 +49,7 @@ __all__ = [
     "OpsReleaseRollout",
     "QuotaPolicy",
     "UserCredential",
+    "UserMfaTotp",
     "UserFeedback",
     "Tenant",
     "TenantMembership",
