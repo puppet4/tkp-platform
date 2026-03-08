@@ -63,6 +63,18 @@ class EmbeddingService:
             return embedding
         except Exception as exc:
             logger.exception("failed to generate embedding for text: %s", text[:100])
+            error_text = str(exc)
+            if "405 Not Allowed" in error_text or "405 not allowed" in error_text:
+                raise RuntimeError(
+                    "Embedding endpoint returned 405 Not Allowed. "
+                    "Please verify OPENAI_EMBEDDING_BASE_URL points to an OpenAI-compatible API root "
+                    "(for Zhipu BigModel use: https://open.bigmodel.cn/api/paas/v4)."
+                ) from exc
+            if "model_not_found" in error_text:
+                raise RuntimeError(
+                    "Embedding model not available on current OPENAI_EMBEDDING_BASE_URL. "
+                    "Please set OPENAI_EMBEDDING_MODEL to a supported embedding model."
+                ) from exc
             raise RuntimeError(f"Embedding generation failed: {exc}") from exc
 
     def embed_batch(self, texts: list[str]) -> list[list[float]]:
@@ -99,6 +111,18 @@ class EmbeddingService:
             return all_embeddings
         except Exception as exc:
             logger.exception("failed to generate batch embeddings: batch_size=%d", len(texts))
+            error_text = str(exc)
+            if "405 Not Allowed" in error_text or "405 not allowed" in error_text:
+                raise RuntimeError(
+                    "Embedding endpoint returned 405 Not Allowed. "
+                    "Please verify OPENAI_EMBEDDING_BASE_URL points to an OpenAI-compatible API root "
+                    "(for Zhipu BigModel use: https://open.bigmodel.cn/api/paas/v4)."
+                ) from exc
+            if "model_not_found" in error_text:
+                raise RuntimeError(
+                    "Embedding model not available on current OPENAI_EMBEDDING_BASE_URL. "
+                    "Please set OPENAI_EMBEDDING_MODEL to a supported embedding model."
+                ) from exc
             raise RuntimeError(f"Batch embedding generation failed: {exc}") from exc
 
     def count_tokens(self, text: str) -> int:

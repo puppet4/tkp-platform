@@ -2920,12 +2920,11 @@ dependencies = [
     { name = "python-pptx" },
     { name = "sqlalchemy" },
     { name = "tabula-py" },
-    { name = "tiktoken" },
 ]
 
 [package.metadata]
 requires-dist = [
-    { name = "camelot-py", extras = ["cv"], specifier = ">=0.11.0" },
+    { name = "camelot-py", specifier = ">=0.11.0" },
     { name = "minio", specifier = ">=7.2.18" },
     { name = "openai", specifier = ">=1.54.0" },
     { name = "oss2", specifier = ">=2.19.1" },
@@ -2940,7 +2939,6 @@ requires-dist = [
     { name = "python-pptx", specifier = ">=1.0.2" },
     { name = "sqlalchemy", specifier = ">=2.0.43" },
     { name = "tabula-py", specifier = ">=2.9.0" },
-    { name = "tiktoken", specifier = ">=0.7.0" },
 ]
 
 [[package]]

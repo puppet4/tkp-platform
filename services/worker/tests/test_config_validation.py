@@ -15,18 +15,27 @@ def test_worker_settings_accept_valid_minio_config():
         storage_endpoint="127.0.0.1:9000",
         storage_access_key="minioadmin",
         storage_secret_key="minioadmin",
-        openai_api_key="test-key",
+        openai_embedding_api_key="test-key",
     )
     assert cfg.storage_backend == "minio"
 
 
-def test_worker_settings_accept_standard_openai_env_names(monkeypatch):
-    monkeypatch.setenv("OPENAI_API_KEY", "sk-standard-key")
-    monkeypatch.setenv("OPENAI_BASE_URL", "https://api.openai.com/v1")
+def test_worker_settings_support_split_embedding_openai_env_names(monkeypatch):
+    monkeypatch.setenv("OPENAI_EMBEDDING_API_KEY", "sk-embed-key")
+    monkeypatch.setenv("OPENAI_EMBEDDING_BASE_URL", "https://embed.example.com/v1")
     monkeypatch.setenv("OPENAI_EMBEDDING_MODEL", "text-embedding-3-large")
 
     cfg = Settings()
 
-    assert cfg.openai_api_key == "sk-standard-key"
-    assert cfg.openai_api_base == "https://api.openai.com/v1"
+    assert cfg.resolved_openai_embedding_api_key == "sk-embed-key"
+    assert cfg.resolved_openai_embedding_base_url == "https://embed.example.com/v1"
     assert cfg.openai_embedding_model == "text-embedding-3-large"
+
+
+def test_worker_settings_reject_legacy_shared_openai_env_without_embedding_key(monkeypatch):
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-shared-key")
+    monkeypatch.setenv("OPENAI_BASE_URL", "https://shared.example.com/v1")
+    monkeypatch.setenv("OPENAI_EMBEDDING_API_KEY", "")
+
+    with pytest.raises(ValidationError):
+        Settings(openai_embedding_api_key="")

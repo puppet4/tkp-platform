@@ -210,8 +210,19 @@ def _mark_failure(
     error_message: str,
 ) -> None:
     """按重试策略处理失败任务。"""
-
-    should_retry = attempt_count < max_attempts
+    error_lower = error_message.lower()
+    non_retryable_markers = (
+        "model_not_found",
+        "405 not allowed",
+        "invalid api key",
+        "incorrect api key",
+        "authentication",
+        "unauthorized",
+        "permission denied",
+        "quota exceeded",
+    )
+    is_non_retryable = any(marker in error_lower for marker in non_retryable_markers)
+    should_retry = (attempt_count < max_attempts) and (not is_non_retryable)
     delay = min(base_seconds * (2 ** max(0, attempt_count - 1)), max_seconds)
 
     if should_retry:
@@ -260,7 +271,10 @@ def _mark_failure(
                 "error_message": error_message,
             },
         )
-        logger.error("job moved to dead_letter: id=%s, attempts=%d", job_id, attempt_count)
+        if is_non_retryable:
+            logger.error("job moved to dead_letter (non-retryable): id=%s, attempts=%d", job_id, attempt_count)
+        else:
+            logger.error("job moved to dead_letter: id=%s, attempts=%d", job_id, attempt_count)
 
     conn.execute(
         text(
@@ -303,7 +317,8 @@ def _process_job_with_real_embeddings(
         text(
             """
             SELECT d.tenant_id, d.workspace_id, d.kb_id, d.metadata AS document_metadata,
-                   dv.object_key, dv.filename
+                   dv.object_key,
+                   COALESCE(NULLIF(d.source_uri, ''), d.title) AS filename
             FROM document_versions dv
             JOIN documents d ON d.id = dv.document_id
             WHERE dv.id = :document_version_id
@@ -551,8 +566,8 @@ def main() -> None:
 
     # 初始化服务
     embedding_service = create_embedding_service(
-        api_key=settings.openai_api_key,
-        base_url=settings.openai_api_base,
+        api_key=settings.resolved_openai_embedding_api_key,
+        base_url=settings.resolved_openai_embedding_base_url,
         model=settings.openai_embedding_model,
     )
     chunker = create_chunker(

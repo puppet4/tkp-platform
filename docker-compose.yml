@@ -171,10 +171,12 @@ services:
       ELASTICSEARCH_ENABLED: "true"
       ELASTICSEARCH_HOSTS: elasticsearch:9200
 
-      # OpenAI (set your API key)
-      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
-      OPENAI_BASE_URL: ${OPENAI_BASE_URL:-}
-      OPENAI_MODEL: ${OPENAI_MODEL:-gpt-4o-mini}
+      # OpenAI (chat / embedding split)
+      OPENAI_CHAT_API_KEY: ${OPENAI_CHAT_API_KEY:-}
+      OPENAI_CHAT_BASE_URL: ${OPENAI_CHAT_BASE_URL:-}
+      OPENAI_CHAT_MODEL: ${OPENAI_CHAT_MODEL:-gpt-4o-mini}
+      OPENAI_EMBEDDING_API_KEY: ${OPENAI_EMBEDDING_API_KEY:-}
+      OPENAI_EMBEDDING_BASE_URL: ${OPENAI_EMBEDDING_BASE_URL:-}
       OPENAI_EMBEDDING_MODEL: ${OPENAI_EMBEDDING_MODEL:-text-embedding-3-small}
 
       # Auth
@@ -223,9 +225,9 @@ services:
       STORAGE_BUCKET: tkp-documents
       STORAGE_SECURE: "false"
 
-      # OpenAI
-      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
-      OPENAI_BASE_URL: ${OPENAI_BASE_URL:-}
+      # OpenAI (embedding split)
+      OPENAI_EMBEDDING_API_KEY: ${OPENAI_EMBEDDING_API_KEY:-}
+      OPENAI_EMBEDDING_BASE_URL: ${OPENAI_EMBEDDING_BASE_URL:-}
       OPENAI_EMBEDDING_MODEL: ${OPENAI_EMBEDDING_MODEL:-text-embedding-3-small}
 
       # Worker

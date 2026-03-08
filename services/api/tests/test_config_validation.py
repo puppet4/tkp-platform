@@ -43,15 +43,44 @@ def test_api_settings_reject_empty_agent_allowed_tools():
         Settings(agent_allowed_tools="  ,   ")
 
 
-def test_api_settings_accept_standard_openai_env_names(monkeypatch):
-    monkeypatch.setenv("OPENAI_API_KEY", "sk-standard-key")
-    monkeypatch.setenv("OPENAI_BASE_URL", "https://api.openai.com/v1")
-    monkeypatch.setenv("OPENAI_MODEL", "gpt-4.1-mini")
+def test_api_settings_support_split_openai_chat_and_embedding(monkeypatch):
+    monkeypatch.setenv("OPENAI_CHAT_API_KEY", "sk-chat-key")
+    monkeypatch.setenv("OPENAI_CHAT_BASE_URL", "https://chat.example.com/v1")
+    monkeypatch.setenv("OPENAI_CHAT_MODEL", "gpt-4.1-mini")
+    monkeypatch.setenv("OPENAI_EMBEDDING_API_KEY", "sk-embed-key")
+    monkeypatch.setenv("OPENAI_EMBEDDING_BASE_URL", "https://embed.example.com/v1")
     monkeypatch.setenv("OPENAI_EMBEDDING_MODEL", "text-embedding-3-large")
 
     cfg = Settings()
 
-    assert cfg.openai_api_key.get_secret_value() == "sk-standard-key"
-    assert cfg.openai_api_base == "https://api.openai.com/v1"
+    assert cfg.resolved_openai_chat_api_key == "sk-chat-key"
+    assert cfg.resolved_openai_chat_base_url == "https://chat.example.com/v1"
     assert cfg.openai_chat_model == "gpt-4.1-mini"
+    assert cfg.resolved_openai_embedding_api_key == "sk-embed-key"
+    assert cfg.resolved_openai_embedding_base_url == "https://embed.example.com/v1"
     assert cfg.openai_embedding_model == "text-embedding-3-large"
+
+
+def test_api_settings_chat_model_prefers_chat_specific_env(monkeypatch):
+    monkeypatch.setenv("OPENAI_MODEL", "legacy-model-should-be-ignored")
+    monkeypatch.setenv("OPENAI_CHAT_MODEL", "gpt-4.1-mini")
+
+    cfg = Settings()
+
+    assert cfg.openai_chat_model == "gpt-4.1-mini"
+
+
+def test_api_settings_does_not_fallback_to_legacy_shared_openai_env(monkeypatch):
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-shared-key")
+    monkeypatch.setenv("OPENAI_BASE_URL", "https://shared.example.com/v1")
+    monkeypatch.delenv("OPENAI_CHAT_API_KEY", raising=False)
+    monkeypatch.delenv("OPENAI_CHAT_BASE_URL", raising=False)
+    monkeypatch.delenv("OPENAI_EMBEDDING_API_KEY", raising=False)
+    monkeypatch.delenv("OPENAI_EMBEDDING_BASE_URL", raising=False)
+
+    cfg = Settings()
+
+    assert cfg.resolved_openai_chat_api_key == ""
+    assert cfg.resolved_openai_chat_base_url is None
+    assert cfg.resolved_openai_embedding_api_key == ""
+    assert cfg.resolved_openai_embedding_base_url is None

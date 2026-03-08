@@ -38,17 +38,17 @@ class Settings(BaseSettings):
     ingestion_retry_max_seconds: int = Field(default=1800, description="重试退避最大秒数。")
 
     # OpenAI 配置
-    openai_api_key: str = Field(
+    openai_embedding_api_key: str = Field(
         default="",
-        description="OpenAI API 密钥，用于生成文本向量。",
+        description="OpenAI Embedding API 密钥。",
     )
-    openai_api_base: str | None = Field(
+    openai_embedding_base_url: str | None = Field(
         default=None,
-        description="OpenAI API 基础 URL（可选，用于代理或兼容网关）。",
+        description="OpenAI Embedding API 基础 URL（优先）。",
         validation_alias=AliasChoices(
-            "openai_api_base",
-            "OPENAI_BASE_URL",
-            "OPENAI_API_BASE",
+            "openai_embedding_base_url",
+            "OPENAI_EMBEDDING_BASE_URL",
+            "OPENAI_EMBEDDING_API_BASE",
         ),
     )
     openai_embedding_model: str = Field(
@@ -82,6 +82,17 @@ class Settings(BaseSettings):
     table_extraction_enabled: bool = Field(default=False, description="是否启用表格提取。")
     table_extraction_method: str = Field(default="camelot", description="表格提取方法（camelot/tabula）。")
 
+    @property
+    def resolved_openai_embedding_api_key(self) -> str:
+        """返回 Embedding API Key。"""
+        return self.openai_embedding_api_key.strip()
+
+    @property
+    def resolved_openai_embedding_base_url(self) -> str | None:
+        """返回 Embedding Base URL。"""
+        embedding_base = (self.openai_embedding_base_url or "").strip()
+        return embedding_base or None
+
     @model_validator(mode="after")
     def validate_runtime_contract(self) -> "Settings":
         """运行时关键配置校验。"""
@@ -98,8 +109,8 @@ class Settings(BaseSettings):
             if missing:
                 raise ValueError(f"storage backend '{self.storage_backend}' requires: {', '.join(missing)}")
 
-        if not self.openai_api_key or self.openai_api_key.strip() == "":
-            raise ValueError("OPENAI_API_KEY is required for embedding generation")
+        if not self.resolved_openai_embedding_api_key:
+            raise ValueError("OPENAI_EMBEDDING_API_KEY is required for embedding generation")
 
         if self.chunk_overlap >= self.chunk_size:
             raise ValueError("chunk_overlap must be less than chunk_size")

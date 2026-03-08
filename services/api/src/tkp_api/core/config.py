@@ -83,17 +83,24 @@ class Settings(BaseSettings):
     )
 
     # OpenAI API 配置（用于内置 RAG 功能）
-    openai_api_key: SecretStr = Field(
-        default=SecretStr(""),
-        description="OpenAI API 密钥。",
-    )
-    openai_api_base: str | None = Field(
+    openai_chat_api_key: SecretStr = Field(default=SecretStr(""), description="OpenAI Chat API 密钥。")
+    openai_chat_base_url: str | None = Field(
         default=None,
-        description="OpenAI API 基础 URL（可选，用于代理）。",
+        description="OpenAI Chat API 基础 URL（优先）。",
         validation_alias=AliasChoices(
-            "openai_api_base",
-            "OPENAI_BASE_URL",
-            "OPENAI_API_BASE",
+            "openai_chat_base_url",
+            "OPENAI_CHAT_BASE_URL",
+            "OPENAI_CHAT_API_BASE",
+        ),
+    )
+    openai_embedding_api_key: SecretStr = Field(default=SecretStr(""), description="OpenAI Embedding API 密钥。")
+    openai_embedding_base_url: str | None = Field(
+        default=None,
+        description="OpenAI Embedding API 基础 URL（优先）。",
+        validation_alias=AliasChoices(
+            "openai_embedding_base_url",
+            "OPENAI_EMBEDDING_BASE_URL",
+            "OPENAI_EMBEDDING_API_BASE",
         ),
     )
     openai_embedding_model: str = Field(
@@ -105,7 +112,6 @@ class Settings(BaseSettings):
         description="OpenAI 聊天模型。",
         validation_alias=AliasChoices(
             "openai_chat_model",
-            "OPENAI_MODEL",
             "OPENAI_CHAT_MODEL",
         ),
     )
@@ -270,6 +276,28 @@ class Settings(BaseSettings):
         """返回规范化后的 Agent 工具白名单。"""
         return [item.strip() for item in self.agent_allowed_tools.split(",") if item.strip()]
 
+    @property
+    def resolved_openai_chat_api_key(self) -> str:
+        """返回 Chat API Key。"""
+        return self.openai_chat_api_key.get_secret_value().strip()
+
+    @property
+    def resolved_openai_chat_base_url(self) -> str | None:
+        """返回 Chat Base URL。"""
+        chat_base = (self.openai_chat_base_url or "").strip()
+        return chat_base or None
+
+    @property
+    def resolved_openai_embedding_api_key(self) -> str:
+        """返回 Embedding API Key。"""
+        return self.openai_embedding_api_key.get_secret_value().strip()
+
+    @property
+    def resolved_openai_embedding_base_url(self) -> str | None:
+        """返回 Embedding Base URL。"""
+        embedding_base = (self.openai_embedding_base_url or "").strip()
+        return embedding_base or None
+
     @model_validator(mode="after")
     def validate_runtime_contract(self) -> "Settings":
         """运行时关键配置校验（启动前失败，避免带病运行）。"""
@@ -292,10 +320,11 @@ class Settings(BaseSettings):
                     "Please set a strong random token."
                 )
 
-            openai_key = self.openai_api_key.get_secret_value()
-            if not openai_key or openai_key.startswith("sk-your-"):
+            embedding_key = self.resolved_openai_embedding_api_key
+            if not embedding_key or embedding_key.startswith("sk-your-"):
                 raise ValueError(
-                    "Production environment detected: OPENAI_API_KEY must be configured with a valid API key."
+                    "Production environment detected: OPENAI_EMBEDDING_API_KEY "
+                    "must be configured with a valid API key."
                 )
 
         if self.storage_backend in {"minio", "oss"}:

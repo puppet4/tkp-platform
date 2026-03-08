@@ -51,8 +51,8 @@ class EmbeddingService:
         """初始化嵌入服务。"""
         self.settings = get_settings()
         self.client = OpenAI(
-            api_key=self.settings.openai_api_key.get_secret_value(),
-            base_url=self.settings.openai_api_base if self.settings.openai_api_base else None,
+            api_key=self.settings.resolved_openai_embedding_api_key,
+            base_url=self.settings.resolved_openai_embedding_base_url,
             timeout=self.settings.openai_embedding_timeout,
         )
         self.model = self.settings.openai_embedding_model
