@@ -1,9 +1,11 @@
 """用户管理接口。"""
 
+import json
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Request, status
-from sqlalchemy import select
+from pydantic import BaseModel, Field
+from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
 from tkp_api.db.session import get_db
@@ -19,6 +21,43 @@ from tkp_api.services.membership_sync import disable_workspace_memberships_for_t
 from tkp_api.utils.response import success
 
 router = APIRouter(prefix="/users", tags=["users"])
+
+
+class UserPreferencesUpsertRequest(BaseModel):
+    """用户偏好设置请求体。"""
+
+    theme: str = Field(default="light", description="主题（light/dark）。")
+    language: str = Field(default="zh-CN", description="界面语言。")
+    timezone: str = Field(default="Asia/Shanghai", description="时区。")
+    notifications: dict[str, bool] = Field(default_factory=dict, description="通知偏好。")
+    security: dict[str, bool] = Field(default_factory=dict, description="安全偏好。")
+
+
+def _ensure_user_preferences_table(db: Session) -> None:
+    """确保用户偏好表存在（兼容本地未跑迁移环境）。"""
+    db.execute(
+        text(
+            """
+            CREATE TABLE IF NOT EXISTS user_preferences (
+                tenant_id VARCHAR(36) NOT NULL,
+                user_id VARCHAR(36) NOT NULL,
+                payload TEXT NOT NULL,
+                created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (tenant_id, user_id)
+            )
+            """
+        )
+    )
+    db.commit()
+
+
+def _is_user_pref_admin(role: str) -> bool:
+    return role in {TenantRole.OWNER, TenantRole.ADMIN, TenantRole.OWNER.value, TenantRole.ADMIN.value}
+
+
+def _can_access_preferences(*, ctx, user_id: UUID) -> bool:
+    return ctx.user_id == user_id or _is_user_pref_admin(ctx.tenant_role)
 
 
 @router.get(
@@ -298,5 +337,126 @@ def remove_user(
             "user_status": user.status,
             "tenant_role": membership.role,
             "membership_status": membership.status,
+        },
+    )
+
+
+@router.get(
+    "/{user_id}/preferences",
+    summary="查询用户偏好设置",
+    description="返回指定用户在当前租户下的界面与通知偏好。",
+    status_code=status.HTTP_200_OK,
+    response_model=SuccessResponse,
+    responses={401: {"model": ErrorResponse}, 403: {"model": ErrorResponse}, 404: {"model": ErrorResponse}},
+)
+def get_user_preferences(
+    request: Request,
+    user_id: UUID = Path(..., description="目标用户 ID。"),
+    ctx=Depends(get_request_context),
+    db: Session = Depends(get_db),
+):
+    """查询用户偏好设置。"""
+    if not _can_access_preferences(ctx=ctx, user_id=user_id):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="forbidden")
+
+    _ensure_user_preferences_table(db)
+    row = db.execute(
+        text(
+            """
+            SELECT payload
+            FROM user_preferences
+            WHERE tenant_id = :tenant_id
+              AND user_id = :user_id
+            """
+        ),
+        {"tenant_id": str(ctx.tenant_id), "user_id": str(user_id)},
+    ).fetchone()
+    payload: dict = {}
+    if row and isinstance(row.payload, str):
+        try:
+            parsed = json.loads(row.payload)
+            if isinstance(parsed, dict):
+                payload = parsed
+        except json.JSONDecodeError:
+            payload = {}
+
+    return success(
+        request,
+        {
+            "theme": payload.get("theme", "light"),
+            "language": payload.get("language", "zh-CN"),
+            "timezone": payload.get("timezone", "Asia/Shanghai"),
+            "notifications": payload.get(
+                "notifications",
+                {"email": True, "browser": True, "alerts": True},
+            ),
+            "security": payload.get(
+                "security",
+                {"password_reset_email": True, "two_factor_enabled": False},
+            ),
+        },
+    )
+
+
+@router.put(
+    "/{user_id}/preferences",
+    summary="更新用户偏好设置",
+    description="更新指定用户在当前租户下的界面与通知偏好。",
+    status_code=status.HTTP_200_OK,
+    response_model=SuccessResponse,
+    responses={401: {"model": ErrorResponse}, 403: {"model": ErrorResponse}, 404: {"model": ErrorResponse}},
+)
+def upsert_user_preferences(
+    payload: UserPreferencesUpsertRequest,
+    request: Request,
+    user_id: UUID = Path(..., description="目标用户 ID。"),
+    ctx=Depends(get_request_context),
+    db: Session = Depends(get_db),
+):
+    """更新用户偏好设置。"""
+    if not _can_access_preferences(ctx=ctx, user_id=user_id):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="forbidden")
+
+    _ensure_user_preferences_table(db)
+    encoded_payload = json.dumps(
+        {
+            "theme": payload.theme,
+            "language": payload.language,
+            "timezone": payload.timezone,
+            "notifications": payload.notifications,
+            "security": payload.security,
+        },
+        ensure_ascii=False,
+    )
+    update_result = db.execute(
+        text(
+            """
+            UPDATE user_preferences
+            SET payload = :payload, updated_at = CURRENT_TIMESTAMP
+            WHERE tenant_id = :tenant_id
+              AND user_id = :user_id
+            """
+        ),
+        {"payload": encoded_payload, "tenant_id": str(ctx.tenant_id), "user_id": str(user_id)},
+    )
+    if int(getattr(update_result, "rowcount", 0) or 0) == 0:
+        db.execute(
+            text(
+                """
+                INSERT INTO user_preferences (tenant_id, user_id, payload)
+                VALUES (:tenant_id, :user_id, :payload)
+                """
+            ),
+            {"tenant_id": str(ctx.tenant_id), "user_id": str(user_id), "payload": encoded_payload},
+        )
+    db.commit()
+    return success(
+        request,
+        {
+            "theme": payload.theme,
+            "language": payload.language,
+            "timezone": payload.timezone,
+            "notifications": payload.notifications,
+            "security": payload.security,
         },
     )
