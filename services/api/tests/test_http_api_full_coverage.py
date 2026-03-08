@@ -1087,6 +1087,10 @@ class WorkflowRunner:
         _assert_uuid(self.ctx.run_id, "agent.run_id")
         _assert_non_empty_str(run_data["status"], "agent.status")
 
+        run_list = self.success("GET", "/api/agent/runs", token=self.ctx.owner_token)
+        assert isinstance(run_list, list)
+        _find_one(run_list, where="agent.run.list", run_id=self.ctx.run_id)
+
         forbidden_tool_error = self.expect_error(
             "POST",
             "/api/agent/runs",
@@ -1477,6 +1481,56 @@ class WorkflowRunner:
             token=self.ctx.owner_token,
         )
         assert member_user_after_update["display_name"] == "Member Updated"
+
+        member_preferences_default = self.success(
+            "GET",
+            "/api/users/{user_id}/preferences",
+            actual_path=f"/api/users/{self.ctx.member_user_id}/preferences",
+            token=self.ctx.owner_token,
+        )
+        _require_keys(
+            member_preferences_default,
+            ["theme", "language", "timezone", "notifications", "security"],
+            "user.preferences.default",
+        )
+        assert isinstance(member_preferences_default["notifications"], dict)
+        assert isinstance(member_preferences_default["security"], dict)
+
+        member_preferences_updated = self.success(
+            "PUT",
+            "/api/users/{user_id}/preferences",
+            actual_path=f"/api/users/{self.ctx.member_user_id}/preferences",
+            token=self.ctx.owner_token,
+            json={
+                "theme": "dark",
+                "language": "en-US",
+                "timezone": "UTC",
+                "notifications": {"email": True, "browser": False, "alerts": True},
+                "security": {"password_reset_email": True, "two_factor_enabled": True},
+            },
+        )
+        _require_keys(
+            member_preferences_updated,
+            ["theme", "language", "timezone", "notifications", "security"],
+            "user.preferences.updated",
+        )
+        assert member_preferences_updated["theme"] == "dark"
+        assert member_preferences_updated["language"] == "en-US"
+        assert member_preferences_updated["timezone"] == "UTC"
+        assert member_preferences_updated["notifications"]["browser"] is False
+        assert member_preferences_updated["security"]["two_factor_enabled"] is True
+
+        member_preferences_after_update = self.success(
+            "GET",
+            "/api/users/{user_id}/preferences",
+            actual_path=f"/api/users/{self.ctx.member_user_id}/preferences",
+            token=self.ctx.owner_token,
+        )
+        assert member_preferences_after_update["theme"] == "dark"
+        assert member_preferences_after_update["language"] == "en-US"
+        assert member_preferences_after_update["timezone"] == "UTC"
+        assert member_preferences_after_update["notifications"]["browser"] is False
+        assert member_preferences_after_update["security"]["two_factor_enabled"] is True
 
         ws1 = self.success(
             "POST",
@@ -2858,6 +2912,24 @@ class WorkflowRunner:
                 "reason": "coverage request",
             },
         )
+        deletion_requests_list = self.call(
+            "GET",
+            "/api/governance/deletion/requests",
+            actual_path="/api/governance/deletion/requests",
+            token=self.ctx.owner_token,
+            expected_status=200,
+        )
+        deletion_requests_payload = deletion_requests_list.json()
+        _require_keys(
+            deletion_requests_payload,
+            ["requests", "total", "limit", "offset"],
+            "governance.deletion.requests.list",
+        )
+        assert isinstance(deletion_requests_payload["requests"], list)
+        assert isinstance(deletion_requests_payload["total"], int)
+        assert isinstance(deletion_requests_payload["limit"], int)
+        assert isinstance(deletion_requests_payload["offset"], int)
+
         random_request_id = uuid4()
         self.call(
             "POST",
