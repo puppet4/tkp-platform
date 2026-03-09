@@ -475,9 +475,6 @@ def _process_job_with_real_embeddings(
             content,
             token_count,
             metadata,
-            embedding,
-            embedding_model,
-            embedded_at,
             created_at
         ) VALUES (
             :id,
@@ -490,9 +487,25 @@ def _process_job_with_real_embeddings(
             :content,
             :token_count,
             CAST(:metadata AS jsonb),
-            CAST(:embedding AS vector),
+            now()
+        )
+        """
+    )
+    insert_embedding_stmt = text(
+        """
+        INSERT INTO chunk_embeddings (
+            chunk_id,
+            tenant_id,
+            kb_id,
+            embedding_model,
+            vector,
+            created_at
+        ) VALUES (
+            :chunk_id,
+            :tenant_id,
+            :kb_id,
             :embedding_model,
-            now(),
+            CAST(:embedding AS vector),
             now()
         )
         """
@@ -510,10 +523,11 @@ def _process_job_with_real_embeddings(
         # 将向量转换为 pgvector 格式
         vector_str = "[" + ",".join(str(v) for v in embedding_vector) + "]"
 
+        chunk_id = str(uuid4())
         conn.execute(
             insert_stmt,
             {
-                "id": str(uuid4()),
+                "id": chunk_id,
                 "tenant_id": str(tenant_id),
                 "workspace_id": str(workspace_id),
                 "kb_id": str(kb_id),
@@ -523,8 +537,16 @@ def _process_job_with_real_embeddings(
                 "content": chunk_text,
                 "token_count": token_count,
                 "metadata": json.dumps(chunk_metadata),
-                "embedding": vector_str,
+            },
+        )
+        conn.execute(
+            insert_embedding_stmt,
+            {
+                "chunk_id": chunk_id,
+                "tenant_id": str(tenant_id),
+                "kb_id": str(kb_id),
                 "embedding_model": settings.openai_embedding_model,
+                "embedding": vector_str,
             },
         )
 
