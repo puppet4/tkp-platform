@@ -142,12 +142,15 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
 
 async def business_exception_handler(request: Request, exc: BusinessException):
     """处理业务异常，返回结构化错误信息。"""
+    # 优先使用 user_message_zh，如果没有则使用 message
+    display_message = getattr(exc, "user_message_zh", None) or exc.message
+
     return JSONResponse(
         status_code=exc.status_code,
         content=error_payload(
             request,
             code=exc.code,
-            message=exc.message,
+            message=display_message,
             details={
                 "status_code": exc.status_code,
                 "reason": exc.code.lower(),

@@ -329,6 +329,77 @@ def get_document(
 
 
 @router.get(
+    "/documents/{document_id}/ingestion-status",
+    summary="查询文档入库状态",
+    description="返回文档的入库任务状态、进度和错误信息。",
+    status_code=status.HTTP_200_OK,
+    response_model=SuccessResponse[dict],
+    responses={401: {"model": ErrorResponse}, 403: {"model": ErrorResponse}, 404: {"model": ErrorResponse}},
+)
+def get_document_ingestion_status(
+    request: Request,
+    document_id: UUID = Path(..., description="文档 ID。"),
+    ctx=Depends(get_request_context),
+    db: Session = Depends(get_db),
+):
+    """查询文档入库状态和进度。"""
+    require_tenant_action(
+        db,
+        tenant_id=ctx.tenant_id,
+        tenant_role=ctx.tenant_role,
+        action=PermissionAction.DOCUMENT_READ,
+    )
+    document, _ = ensure_document_read_access(
+        db,
+        tenant_id=ctx.tenant_id,
+        document_id=document_id,
+        user_id=ctx.user_id,
+    )
+
+    # 查询最新的入库任务
+    latest_job = (
+        db.execute(
+            select(IngestionJob)
+            .where(IngestionJob.tenant_id == ctx.tenant_id)
+            .where(IngestionJob.document_id == document_id)
+            .order_by(IngestionJob.created_at.desc())
+            .limit(1)
+        )
+        .scalar_one_or_none()
+    )
+
+    if not latest_job:
+        return success(
+            request,
+            {
+                "document_id": str(document_id),
+                "status": "no_job",
+                "message": "暂无入库任务",
+            },
+        )
+
+    # 任务模型已内置 stage/progress/error/finished_at 字段，直接对齐返回。
+    progress = latest_job.progress
+    if latest_job.status == IngestionJobStatus.COMPLETED:
+        progress = 100
+    progress = max(0, min(100, int(progress)))
+
+    return success(
+        request,
+        {
+            "document_id": str(document_id),
+            "job_id": str(latest_job.id),
+            "status": latest_job.status,
+            "stage": latest_job.stage or "queued",
+            "progress": progress,
+            "error": latest_job.error,
+            "created_at": latest_job.created_at.isoformat() if latest_job.created_at else None,
+            "completed_at": latest_job.finished_at.isoformat() if latest_job.finished_at else None,
+        },
+    )
+
+
+@router.get(
     "/documents/{document_id}/versions",
     summary="查询文档版本列表",
     description="按文档 ID 返回所有版本信息（按版本号倒序）。",

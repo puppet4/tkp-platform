@@ -244,6 +244,46 @@ def ensure_document_read_access(
     return document, kb
 
 
+def ensure_document_write_access(
+    db: Session,
+    *,
+    tenant_id: UUID,
+    document_id: UUID,
+    user_id: UUID,
+) -> tuple[Document, KnowledgeBase]:
+    """校验文档写权限（文档 -> 知识库 -> 工作空间）。"""
+    document = db.get(Document, document_id)
+    if not document or document.tenant_id != tenant_id:
+        raise ResourceNotFoundException("文档", str(document_id))
+    if document.status == DocumentStatus.DELETED:
+        raise ResourceNotFoundException("文档", str(document_id))
+
+    kb, _, _ = ensure_kb_write_access(
+        db,
+        tenant_id=tenant_id,
+        kb_id=document.kb_id,
+        user_id=user_id,
+    )
+    return document, kb
+
+
+def ensure_document_delete_access(
+    db: Session,
+    *,
+    tenant_id: UUID,
+    document_id: UUID,
+    user_id: UUID,
+) -> tuple[Document, KnowledgeBase]:
+    """校验文档删除权限（文档 -> 知识库 -> 工作空间）。"""
+    # 删除权限与写权限相同
+    return ensure_document_write_access(
+        db,
+        tenant_id=tenant_id,
+        document_id=document_id,
+        user_id=user_id,
+    )
+
+
 def filter_readable_kb_ids(
     db: Session,
     *,

@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy.orm import Session
 
 from tkp_api.db.session import get_db
@@ -14,6 +14,7 @@ from tkp_api.governance.deletion import DeletionService
 from tkp_api.governance.pii import get_pii_masker
 from tkp_api.governance.retention import RetentionService
 from tkp_api.models.enums import TenantRole
+from tkp_api.utils.response import success
 
 logger = logging.getLogger("tkp_api.api.governance")
 
@@ -39,6 +40,7 @@ async def create_deletion_request(
     resource_type: str,
     resource_id: UUID,
     reason: str,
+    request: Request,
     ctx: RequestContext = Depends(get_request_context),
     db: Session = Depends(get_db),
 ):
@@ -46,18 +48,21 @@ async def create_deletion_request(
     service = DeletionService(db)
 
     try:
-        request = service.create_deletion_request(
+        req = service.create_deletion_request(
             tenant_id=ctx.tenant_id,
             user_id=ctx.user_id,
             resource_type=resource_type,
             resource_id=resource_id,
             reason=reason,
         )
-        return {
-            "request_id": str(request.request_id),
-            "status": request.status,
-            "requested_at": request.requested_at.isoformat(),
-        }
+        return success(
+            request,
+            {
+                "request_id": str(req.request_id),
+                "status": req.status,
+                "requested_at": req.requested_at.isoformat(),
+            },
+        )
     except ValueError as exc:
         detail = str(exc)
         code = HTTP_422_UNPROCESSABLE if "unsupported resource type" in detail else status.HTTP_404_NOT_FOUND
@@ -87,7 +92,12 @@ async def list_deletion_requests(
             limit=limit,
             offset=offset,
         )
-        return {"requests": data, "total": len(data), "limit": limit, "offset": offset}
+        return {
+            "requests": data,
+            "total": len(data),
+            "limit": limit,
+            "offset": offset,
+        }
     except Exception as exc:
         logger.exception("failed to list deletion requests: %s", exc)
         raise HTTPException(
@@ -99,6 +109,7 @@ async def list_deletion_requests(
 @router.post("/deletion/requests/{request_id}/approve")
 async def approve_deletion_request(
     request_id: UUID,
+    request: Request,
     ctx: RequestContext = Depends(get_request_context),
     db: Session = Depends(get_db),
 ):
@@ -107,17 +118,17 @@ async def approve_deletion_request(
     service = DeletionService(db)
 
     try:
-        success = service.approve_deletion_request(
+        result = service.approve_deletion_request(
             request_id=request_id,
             tenant_id=ctx.tenant_id,
             approved_by=ctx.user_id,
         )
-        if not success:
+        if not result:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Deletion request not found or already processed",
             )
-        return {"status": "approved"}
+        return success(request, {"status": "approved"})
     except HTTPException:
         raise
     except Exception as exc:
@@ -132,6 +143,7 @@ async def approve_deletion_request(
 async def reject_deletion_request(
     request_id: UUID,
     reject_reason: str,
+    request: Request,
     ctx: RequestContext = Depends(get_request_context),
     db: Session = Depends(get_db),
 ):
@@ -140,18 +152,18 @@ async def reject_deletion_request(
     service = DeletionService(db)
 
     try:
-        success = service.reject_deletion_request(
+        result = service.reject_deletion_request(
             request_id=request_id,
             tenant_id=ctx.tenant_id,
             rejected_by=ctx.user_id,
             reject_reason=reject_reason,
         )
-        if not success:
+        if not result:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Deletion request not found or already processed",
             )
-        return {"status": "rejected"}
+        return success(request, {"status": "rejected"})
     except HTTPException:
         raise
     except Exception as exc:
@@ -165,6 +177,7 @@ async def reject_deletion_request(
 @router.post("/deletion/requests/{request_id}/execute")
 async def execute_deletion(
     request_id: UUID,
+    request: Request,
     ctx: RequestContext = Depends(get_request_context),
     db: Session = Depends(get_db),
 ):
@@ -184,11 +197,14 @@ async def execute_deletion(
                 detail="Deletion request not found or not approved",
             )
 
-        return {
-            "proof_id": str(proof.proof_id),
-            "deleted_at": proof.deleted_at.isoformat(),
-            "proof_hash": proof.proof_hash,
-        }
+        return success(
+            request,
+            {
+                "proof_id": str(proof.proof_id),
+                "deleted_at": proof.deleted_at.isoformat(),
+                "proof_hash": proof.proof_hash,
+            },
+        )
     except HTTPException:
         raise
     except Exception as exc:
@@ -202,6 +218,7 @@ async def execute_deletion(
 @router.get("/deletion/proofs/{proof_id}")
 async def get_deletion_proof(
     proof_id: UUID,
+    request: Request,
     ctx: RequestContext = Depends(get_request_context),
     db: Session = Depends(get_db),
 ):
@@ -216,15 +233,18 @@ async def get_deletion_proof(
                 detail="Deletion proof not found",
             )
 
-        return {
-            "proof_id": str(proof.proof_id),
-            "request_id": str(proof.request_id),
-            "resource_type": proof.resource_type,
-            "resource_id": str(proof.resource_id),
-            "deleted_at": proof.deleted_at.isoformat(),
-            "data_hash": proof.data_hash,
-            "proof_hash": proof.proof_hash,
-        }
+        return success(
+            request,
+            {
+                "proof_id": str(proof.proof_id),
+                "request_id": str(proof.request_id),
+                "resource_type": proof.resource_type,
+                "resource_id": str(proof.resource_id),
+                "deleted_at": proof.deleted_at.isoformat(),
+                "data_hash": proof.data_hash,
+                "proof_hash": proof.proof_hash,
+            },
+        )
     except HTTPException:
         raise
     except Exception as exc:
@@ -238,6 +258,7 @@ async def get_deletion_proof(
 @router.post("/retention/cleanup")
 async def cleanup_expired_data(
     resource_type: str,
+    request: Request,
     dry_run: bool = True,
     ctx: RequestContext = Depends(get_request_context),
     db: Session = Depends(get_db),
@@ -254,7 +275,7 @@ async def cleanup_expired_data(
         )
         if "error" in result:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(result["error"]))
-        return result
+        return success(request, result)
     except HTTPException:
         raise
     except Exception as exc:
@@ -268,6 +289,7 @@ async def cleanup_expired_data(
 @router.post("/pii/mask")
 async def mask_pii_data(
     text: str,
+    request: Request,
     pii_types: list[str] | None = None,
     _: RequestContext = Depends(get_request_context),
 ):

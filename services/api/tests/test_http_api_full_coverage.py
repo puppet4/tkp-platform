@@ -2038,6 +2038,15 @@ class WorkflowRunner:
         _assert_uuid(reindex_data["job_id"], "document.reindex.job_id")
         _assert_non_empty_str(reindex_data["status"], "document.reindex.status")
 
+        ingestion_status_data = self.success(
+            "GET",
+            "/api/documents/{document_id}/ingestion-status",
+            actual_path=f"/api/documents/{self.ctx.document_id}/ingestion-status",
+            token=self.ctx.owner_token,
+        )
+        _require_keys(ingestion_status_data, ["document_id", "status"], "document.ingestion-status.data")
+        assert ingestion_status_data["document_id"] == self.ctx.document_id
+
         job_detail = self.success(
             "GET",
             "/api/ingestion-jobs/{job_id}",
