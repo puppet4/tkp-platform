@@ -2981,7 +2981,7 @@ class WorkflowRunner:
             actual_path="/api/governance/deletion/requests",
             token=self.ctx.owner_token,
             expected_status=404,
-            params={
+            json={
                 "resource_type": "conversation",
                 "resource_id": str(uuid4()),
                 "reason": "coverage request",
@@ -2997,13 +2997,23 @@ class WorkflowRunner:
         deletion_requests_payload = deletion_requests_list.json()
         _require_keys(
             deletion_requests_payload,
-            ["requests", "total", "limit", "offset"],
+            ["data", "meta"],
             "governance.deletion.requests.list",
         )
-        assert isinstance(deletion_requests_payload["requests"], list)
-        assert isinstance(deletion_requests_payload["total"], int)
-        assert isinstance(deletion_requests_payload["limit"], int)
-        assert isinstance(deletion_requests_payload["offset"], int)
+        _require_keys(
+            deletion_requests_payload["data"],
+            ["requests"],
+            "governance.deletion.requests.list.data",
+        )
+        _require_keys(
+            deletion_requests_payload["meta"],
+            ["total", "limit", "offset"],
+            "governance.deletion.requests.list.meta",
+        )
+        assert isinstance(deletion_requests_payload["data"]["requests"], list)
+        assert isinstance(deletion_requests_payload["meta"]["total"], int)
+        assert isinstance(deletion_requests_payload["meta"]["limit"], int)
+        assert isinstance(deletion_requests_payload["meta"]["offset"], int)
 
         random_request_id = uuid4()
         self.call(
@@ -3019,7 +3029,14 @@ class WorkflowRunner:
             actual_path=f"/api/governance/deletion/requests/{random_request_id}/reject",
             token=self.ctx.owner_token,
             expected_status=404,
-            params={"reject_reason": "coverage reject"},
+            json={"reason": "coverage reject"},
+        )
+        self.call(
+            "POST",
+            "/api/governance/deletion/requests/{request_id}/cancel",
+            actual_path=f"/api/governance/deletion/requests/{random_request_id}/cancel",
+            token=self.ctx.owner_token,
+            expected_status=404,
         )
         self.call(
             "POST",
@@ -3056,8 +3073,13 @@ class WorkflowRunner:
             params={"text": "contact me at demo@example.com", "pii_types": ["email"]},
         )
         pii_payload = pii_resp.json()
-        _require_keys(pii_payload, ["original_length", "masked_text", "masked_length"], "governance.pii.mask")
-        assert pii_payload["masked_length"] >= 0
+        pii_data = self._assert_success_envelope(
+            pii_payload,
+            method="POST",
+            path="/api/governance/pii/mask",
+        )
+        _require_keys(pii_data, ["original_length", "masked_text", "masked_length"], "governance.pii.mask.data")
+        assert pii_data["masked_length"] >= 0
 
         metrics_resp = self.call(
             "GET",

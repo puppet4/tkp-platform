@@ -5,7 +5,8 @@ from __future__ import annotations
 import logging
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from tkp_api.db.session import get_db
@@ -14,6 +15,7 @@ from tkp_api.governance.deletion import DeletionService
 from tkp_api.governance.pii import get_pii_masker
 from tkp_api.governance.retention import RetentionService
 from tkp_api.models.enums import TenantRole
+from tkp_api.services import PermissionAction, require_tenant_action
 from tkp_api.utils.response import success
 
 logger = logging.getLogger("tkp_api.api.governance")
@@ -26,34 +28,45 @@ HTTP_422_UNPROCESSABLE = getattr(
 )
 
 
-def require_admin_role(ctx: RequestContext) -> None:
-    """检查用户是否有管理员权限。"""
-    if ctx.tenant_role not in {TenantRole.OWNER, TenantRole.ADMIN, TenantRole.OWNER.value, TenantRole.ADMIN.value}:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="需要管理员权限才能执行此操作",
-        )
+class DeletionRequestCreate(BaseModel):
+    """创建删除请求的请求体。"""
+    resource_type: str
+    resource_id: UUID
+    reason: str
+
+
+class DeletionRequestReject(BaseModel):
+    """拒绝删除请求的请求体。"""
+    reason: str
+
+
+def _is_admin_role(ctx: RequestContext) -> bool:
+    return ctx.tenant_role in {TenantRole.OWNER, TenantRole.ADMIN, TenantRole.OWNER.value, TenantRole.ADMIN.value}
 
 
 @router.post("/deletion/requests")
 async def create_deletion_request(
-    resource_type: str,
-    resource_id: UUID,
-    reason: str,
+    payload: DeletionRequestCreate,
     request: Request,
     ctx: RequestContext = Depends(get_request_context),
     db: Session = Depends(get_db),
 ):
     """创建数据删除请求。"""
+    require_tenant_action(
+        db,
+        tenant_id=ctx.tenant_id,
+        tenant_role=ctx.tenant_role,
+        action=PermissionAction.GOVERNANCE_DELETION_REQUEST_CREATE,
+    )
     service = DeletionService(db)
 
     try:
         req = service.create_deletion_request(
             tenant_id=ctx.tenant_id,
             user_id=ctx.user_id,
-            resource_type=resource_type,
-            resource_id=resource_id,
-            reason=reason,
+            resource_type=payload.resource_type,
+            resource_id=payload.resource_id,
+            reason=payload.reason,
         )
         return success(
             request,
@@ -77,27 +90,36 @@ async def create_deletion_request(
 
 @router.get("/deletion/requests")
 async def list_deletion_requests(
-    status_filter: str | None = None,
+    request: Request,
+    status: str | None = Query(default=None),
+    status_filter: str | None = Query(default=None),
     limit: int = 50,
     offset: int = 0,
     ctx: RequestContext = Depends(get_request_context),
     db: Session = Depends(get_db),
 ):
     """分页查询数据删除请求。"""
+    require_tenant_action(
+        db,
+        tenant_id=ctx.tenant_id,
+        tenant_role=ctx.tenant_role,
+        action=PermissionAction.GOVERNANCE_DELETION_REQUEST_READ,
+    )
     service = DeletionService(db)
     try:
+        effective_status = status or status_filter
         data = service.list_deletion_requests(
             tenant_id=ctx.tenant_id,
-            status=status_filter,
+            status=effective_status,
             limit=limit,
             offset=offset,
+            requester_user_id=None if _is_admin_role(ctx) else ctx.user_id,
         )
-        return {
-            "requests": data,
-            "total": len(data),
-            "limit": limit,
-            "offset": offset,
-        }
+        return success(
+            request,
+            {"requests": data},
+            meta={"total": len(data), "limit": limit, "offset": offset},
+        )
     except Exception as exc:
         logger.exception("failed to list deletion requests: %s", exc)
         raise HTTPException(
@@ -114,7 +136,12 @@ async def approve_deletion_request(
     db: Session = Depends(get_db),
 ):
     """批准数据删除请求（需要管理员权限）。"""
-    require_admin_role(ctx)
+    require_tenant_action(
+        db,
+        tenant_id=ctx.tenant_id,
+        tenant_role=ctx.tenant_role,
+        action=PermissionAction.GOVERNANCE_DELETION_REQUEST_REVIEW,
+    )
     service = DeletionService(db)
 
     try:
@@ -124,10 +151,10 @@ async def approve_deletion_request(
             approved_by=ctx.user_id,
         )
         if not result:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Deletion request not found or already processed",
-            )
+            state = service.get_deletion_request_state(request_id=request_id, tenant_id=ctx.tenant_id)
+            if state is None:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Deletion request not found")
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=f"Deletion request is already {state}")
         return success(request, {"status": "approved"})
     except HTTPException:
         raise
@@ -142,13 +169,18 @@ async def approve_deletion_request(
 @router.post("/deletion/requests/{request_id}/reject")
 async def reject_deletion_request(
     request_id: UUID,
-    reject_reason: str,
+    payload: DeletionRequestReject,
     request: Request,
     ctx: RequestContext = Depends(get_request_context),
     db: Session = Depends(get_db),
 ):
     """拒绝数据删除请求（需要管理员权限）。"""
-    require_admin_role(ctx)
+    require_tenant_action(
+        db,
+        tenant_id=ctx.tenant_id,
+        tenant_role=ctx.tenant_role,
+        action=PermissionAction.GOVERNANCE_DELETION_REQUEST_REVIEW,
+    )
     service = DeletionService(db)
 
     try:
@@ -156,13 +188,13 @@ async def reject_deletion_request(
             request_id=request_id,
             tenant_id=ctx.tenant_id,
             rejected_by=ctx.user_id,
-            reject_reason=reject_reason,
+            reject_reason=payload.reason,
         )
         if not result:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Deletion request not found or already processed",
-            )
+            state = service.get_deletion_request_state(request_id=request_id, tenant_id=ctx.tenant_id)
+            if state is None:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Deletion request not found")
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=f"Deletion request is already {state}")
         return success(request, {"status": "rejected"})
     except HTTPException:
         raise
@@ -182,7 +214,12 @@ async def execute_deletion(
     db: Session = Depends(get_db),
 ):
     """执行数据删除并生成证明（需要管理员权限）。"""
-    require_admin_role(ctx)
+    require_tenant_action(
+        db,
+        tenant_id=ctx.tenant_id,
+        tenant_role=ctx.tenant_role,
+        action=PermissionAction.GOVERNANCE_DELETION_EXECUTE,
+    )
     service = DeletionService(db)
 
     try:
@@ -192,10 +229,12 @@ async def execute_deletion(
             executed_by=ctx.user_id,
         )
         if not proof:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Deletion request not found or not approved",
-            )
+            state = service.get_deletion_request_state(request_id=request_id, tenant_id=ctx.tenant_id)
+            if state is None:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Deletion request not found")
+            if state != "approved":
+                raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=f"Deletion request is {state}")
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Deletion execution failed")
 
         return success(
             request,
@@ -212,6 +251,45 @@ async def execute_deletion(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to execute deletion",
+        ) from exc
+
+
+@router.post("/deletion/requests/{request_id}/cancel")
+async def cancel_deletion_request(
+    request_id: UUID,
+    request: Request,
+    ctx: RequestContext = Depends(get_request_context),
+    db: Session = Depends(get_db),
+):
+    """取消待处理删除请求。管理员可取消任意请求，普通用户仅可取消自己的请求。"""
+    require_tenant_action(
+        db,
+        tenant_id=ctx.tenant_id,
+        tenant_role=ctx.tenant_role,
+        action=PermissionAction.GOVERNANCE_DELETION_REQUEST_CREATE,
+    )
+    service = DeletionService(db)
+    is_admin = _is_admin_role(ctx)
+    try:
+        result = service.cancel_deletion_request(
+            request_id=request_id,
+            tenant_id=ctx.tenant_id,
+            requester_user_id=ctx.user_id,
+            is_admin=is_admin,
+        )
+        if not result:
+            state = service.get_deletion_request_state(request_id=request_id, tenant_id=ctx.tenant_id)
+            if state is None:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Deletion request not found")
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=f"Deletion request is already {state}")
+        return success(request, {"status": "cancelled"})
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.exception("failed to cancel deletion request: %s", exc)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to cancel deletion request",
         ) from exc
 
 
@@ -264,7 +342,12 @@ async def cleanup_expired_data(
     db: Session = Depends(get_db),
 ):
     """清理过期数据（需要管理员权限）。"""
-    require_admin_role(ctx)
+    require_tenant_action(
+        db,
+        tenant_id=ctx.tenant_id,
+        tenant_role=ctx.tenant_role,
+        action=PermissionAction.GOVERNANCE_RETENTION_CLEANUP,
+    )
     service = RetentionService(db)
 
     try:
@@ -291,17 +374,27 @@ async def mask_pii_data(
     text: str,
     request: Request,
     pii_types: list[str] | None = None,
-    _: RequestContext = Depends(get_request_context),
+    ctx: RequestContext = Depends(get_request_context),
+    db: Session = Depends(get_db),
 ):
     """脱敏文本中的 PII。"""
+    require_tenant_action(
+        db,
+        tenant_id=ctx.tenant_id,
+        tenant_role=ctx.tenant_role,
+        action=PermissionAction.GOVERNANCE_PII_MASK,
+    )
     try:
         masker = get_pii_masker()
         masked_text = masker.mask_text(text, pii_types)
-        return {
-            "original_length": len(text),
-            "masked_text": masked_text,
-            "masked_length": len(masked_text),
-        }
+        return success(
+            request,
+            {
+                "original_length": len(text),
+                "masked_text": masked_text,
+                "masked_length": len(masked_text),
+            },
+        )
     except Exception as exc:
         logger.exception("failed to mask PII: %s", exc)
         raise HTTPException(

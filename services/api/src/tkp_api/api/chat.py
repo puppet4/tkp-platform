@@ -262,6 +262,7 @@ def update_conversation(
         {
             "conversation_id": str(conversation.id),
             "title": conversation.title,
+            "created_at": conversation.created_at.isoformat(),
             "updated_at": conversation.updated_at.isoformat(),
         },
     )

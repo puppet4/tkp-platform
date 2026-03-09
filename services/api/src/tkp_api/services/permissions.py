@@ -55,6 +55,13 @@ class PermissionAction(StrEnum):
     AGENT_RUN_READ = "api.agent.run.read"
     AGENT_RUN_CANCEL = "api.agent.run.cancel"
 
+    GOVERNANCE_DELETION_REQUEST_CREATE = "api.governance.deletion.request.create"
+    GOVERNANCE_DELETION_REQUEST_READ = "api.governance.deletion.request.read"
+    GOVERNANCE_DELETION_REQUEST_REVIEW = "api.governance.deletion.request.review"
+    GOVERNANCE_DELETION_EXECUTE = "api.governance.deletion.execute"
+    GOVERNANCE_RETENTION_CLEANUP = "api.governance.retention.cleanup"
+    GOVERNANCE_PII_MASK = "api.governance.pii.mask"
+
 
 _ACTION_VALUES = {action.value for action in PermissionAction}
 _LEGACY_TO_API_ACTIONS = {
@@ -90,6 +97,12 @@ _ADMIN_ACTIONS = {
     PermissionAction.AGENT_RUN_CREATE.value,
     PermissionAction.AGENT_RUN_READ.value,
     PermissionAction.AGENT_RUN_CANCEL.value,
+    PermissionAction.GOVERNANCE_DELETION_REQUEST_CREATE.value,
+    PermissionAction.GOVERNANCE_DELETION_REQUEST_READ.value,
+    PermissionAction.GOVERNANCE_DELETION_REQUEST_REVIEW.value,
+    PermissionAction.GOVERNANCE_DELETION_EXECUTE.value,
+    PermissionAction.GOVERNANCE_RETENTION_CLEANUP.value,
+    PermissionAction.GOVERNANCE_PII_MASK.value,
 }
 _MEMBER_ACTIONS = {
     PermissionAction.TENANT_READ.value,
@@ -102,6 +115,9 @@ _MEMBER_ACTIONS = {
     PermissionAction.AGENT_RUN_CREATE.value,
     PermissionAction.AGENT_RUN_READ.value,
     PermissionAction.AGENT_RUN_CANCEL.value,
+    PermissionAction.GOVERNANCE_DELETION_REQUEST_CREATE.value,
+    PermissionAction.GOVERNANCE_DELETION_REQUEST_READ.value,
+    PermissionAction.GOVERNANCE_PII_MASK.value,
 }
 _VIEWER_ACTIONS = {
     PermissionAction.TENANT_READ.value,
@@ -113,6 +129,9 @@ _VIEWER_ACTIONS = {
     PermissionAction.AGENT_RUN_CREATE.value,
     PermissionAction.AGENT_RUN_READ.value,
     PermissionAction.AGENT_RUN_CANCEL.value,
+    PermissionAction.GOVERNANCE_DELETION_REQUEST_CREATE.value,
+    PermissionAction.GOVERNANCE_DELETION_REQUEST_READ.value,
+    PermissionAction.GOVERNANCE_PII_MASK.value,
 }
 
 DEFAULT_UI_PERMISSIONS: list[str] = [

@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -16,6 +16,7 @@ from sqlalchemy.orm import Session
 logger = logging.getLogger("tkp_api.governance.deletion")
 
 _SUPPORTED_RESOURCE_TYPES = {"document", "user", "conversation"}
+_PENDING_REQUEST_EXPIRY_DAYS = 30
 
 
 def _utcnow() -> datetime:
@@ -180,6 +181,54 @@ class DeletionService:
             logger.info("deletion request approved: request_id=%s tenant_id=%s", request_id, tenant_id)
         return success
 
+    def cancel_deletion_request(
+        self,
+        *,
+        request_id: UUID,
+        tenant_id: UUID,
+        requester_user_id: UUID,
+        is_admin: bool,
+    ) -> bool:
+        """取消删除请求。"""
+        try:
+            now = _utcnow()
+            where_clause = """
+                WHERE id = :request_id
+                  AND tenant_id = :tenant_id
+                  AND status = 'pending'
+            """
+            params: dict[str, Any] = {
+                "request_id": str(request_id),
+                "tenant_id": str(tenant_id),
+                "updated_at": now,
+            }
+            if not is_admin:
+                where_clause += " AND user_id = :requester_user_id"
+                params["requester_user_id"] = str(requester_user_id)
+
+            result = self.db.execute(
+                text(
+                    f"""
+                    UPDATE deletion_requests
+                    SET status = 'cancelled',
+                        updated_at = :updated_at
+                    {where_clause}
+                """
+                ),
+                params,
+            )
+        except (OperationalError, ProgrammingError) as exc:
+            if _is_missing_table_error(exc):
+                self.db.rollback()
+                logger.warning("skip cancel deletion request because governance tables are not initialized: %s", exc)
+                return False
+            raise
+        self.db.commit()
+        success = int(getattr(result, "rowcount", 0) or 0) > 0
+        if success:
+            logger.info("deletion request cancelled: request_id=%s tenant_id=%s", request_id, tenant_id)
+        return success
+
     def reject_deletion_request(
         self,
         *,
@@ -255,11 +304,13 @@ class DeletionService:
         resource_id = UUID(str(row.resource_id))
         data_snapshot = self._get_resource_snapshot(resource_type=resource_type, resource_id=resource_id, tenant_id=tenant_id)
         if not data_snapshot:
+            self._mark_request_failed(request_id=request_id, tenant_id=tenant_id)
             logger.error("resource not found in tenant: %s/%s tenant=%s", resource_type, resource_id, tenant_id)
             return None
 
         data_hash = self._calculate_hash(data_snapshot)
         if not self._delete_resource(resource_type=resource_type, resource_id=resource_id, tenant_id=tenant_id):
+            self._mark_request_failed(request_id=request_id, tenant_id=tenant_id)
             logger.error("failed to delete resource: %s/%s tenant=%s", resource_type, resource_id, tenant_id)
             return None
 
@@ -302,6 +353,7 @@ class DeletionService:
                     SET status = 'completed',
                         executed_by = :executed_by,
                         executed_at = :executed_at,
+                        proof_id = :proof_id,
                         updated_at = :updated_at
                     WHERE id = :request_id
                       AND tenant_id = :tenant_id
@@ -313,6 +365,7 @@ class DeletionService:
                     "tenant_id": str(tenant_id),
                     "executed_by": str(executed_by),
                     "executed_at": deleted_at,
+                    "proof_id": str(proof_id),
                     "updated_at": deleted_at,
                 },
             )
@@ -321,6 +374,7 @@ class DeletionService:
                 self.db.rollback()
                 logger.warning("skip save deletion proof because governance tables are not initialized: %s", exc)
                 return None
+            self._mark_request_failed(request_id=request_id, tenant_id=tenant_id)
             raise
 
         self.db.commit()
@@ -394,13 +448,15 @@ class DeletionService:
         status: str | None = None,
         limit: int = 50,
         offset: int = 0,
+        requester_user_id: UUID | None = None,
     ) -> list[dict[str, Any]]:
         """分页查询删除请求列表。"""
         try:
+            self._expire_pending_requests(tenant_id=tenant_id)
             sql = """
                 SELECT id, tenant_id, user_id, resource_type, resource_id, reason,
                        status, requested_at, approved_by, approved_at,
-                       rejected_by, rejected_at, reject_reason, executed_by, executed_at
+                       rejected_by, rejected_at, reject_reason, executed_by, executed_at, proof_id
                 FROM deletion_requests
                 WHERE tenant_id = :tenant_id
             """
@@ -409,6 +465,9 @@ class DeletionService:
                 "limit": max(1, min(limit, 200)),
                 "offset": max(0, offset),
             }
+            if requester_user_id is not None:
+                sql += " AND user_id = :requester_user_id"
+                params["requester_user_id"] = str(requester_user_id)
             if status:
                 sql += " AND status = :status"
                 params["status"] = status
@@ -438,9 +497,75 @@ class DeletionService:
                 "reject_reason": row.reject_reason,
                 "executed_by": str(row.executed_by) if row.executed_by else None,
                 "executed_at": row.executed_at.isoformat() if row.executed_at else None,
+                "proof_id": str(row.proof_id) if row.proof_id else None,
             }
             for row in rows
         ]
+
+    def get_deletion_request_state(self, *, request_id: UUID, tenant_id: UUID) -> str | None:
+        """查询删除请求当前状态。"""
+        try:
+            row = self.db.execute(
+                text(
+                    """
+                    SELECT status
+                    FROM deletion_requests
+                    WHERE id = :request_id
+                      AND tenant_id = :tenant_id
+                """
+                ),
+                {"request_id": str(request_id), "tenant_id": str(tenant_id)},
+            ).fetchone()
+        except (OperationalError, ProgrammingError) as exc:
+            if _is_missing_table_error(exc):
+                self.db.rollback()
+                logger.warning("skip get deletion request state because governance tables are not initialized: %s", exc)
+                return None
+            raise
+        return str(row.status) if row else None
+
+    def _expire_pending_requests(self, *, tenant_id: UUID) -> None:
+        """将超时未处理的请求标记为 expired。"""
+        expires_before = _utcnow() - timedelta(days=_PENDING_REQUEST_EXPIRY_DAYS)
+        self.db.execute(
+            text(
+                """
+                UPDATE deletion_requests
+                SET status = 'expired',
+                    updated_at = :updated_at
+                WHERE tenant_id = :tenant_id
+                  AND status = 'pending'
+                  AND requested_at < :expires_before
+            """
+            ),
+            {
+                "tenant_id": str(tenant_id),
+                "updated_at": _utcnow(),
+                "expires_before": expires_before,
+            },
+        )
+        self.db.flush()
+
+    def _mark_request_failed(self, *, request_id: UUID, tenant_id: UUID) -> None:
+        """在执行删除失败时标记请求为 failed。"""
+        self.db.execute(
+            text(
+                """
+                UPDATE deletion_requests
+                SET status = 'failed',
+                    updated_at = :updated_at
+                WHERE id = :request_id
+                  AND tenant_id = :tenant_id
+                  AND status = 'approved'
+            """
+            ),
+            {
+                "request_id": str(request_id),
+                "tenant_id": str(tenant_id),
+                "updated_at": _utcnow(),
+            },
+        )
+        self.db.commit()
 
     def _resource_exists_in_tenant(self, resource_type: str, resource_id: UUID, tenant_id: UUID) -> bool:
         if resource_type == "document":

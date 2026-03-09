@@ -475,6 +475,43 @@ ON CONFLICT (tenant_id, role, permission_code) DO NOTHING;
 
 COMMIT;
 
+-- 来自: migrations/20260309_160000_add_governance_permissions.sql
+BEGIN;
+
+WITH role_actions(role, permission_code) AS (
+    VALUES
+        ('owner', 'api.governance.deletion.request.create'),
+        ('owner', 'api.governance.deletion.request.read'),
+        ('owner', 'api.governance.deletion.request.review'),
+        ('owner', 'api.governance.deletion.execute'),
+        ('owner', 'api.governance.retention.cleanup'),
+        ('owner', 'api.governance.pii.mask'),
+        ('admin', 'api.governance.deletion.request.create'),
+        ('admin', 'api.governance.deletion.request.read'),
+        ('admin', 'api.governance.deletion.request.review'),
+        ('admin', 'api.governance.deletion.execute'),
+        ('admin', 'api.governance.retention.cleanup'),
+        ('admin', 'api.governance.pii.mask'),
+        ('member', 'api.governance.deletion.request.create'),
+        ('member', 'api.governance.deletion.request.read'),
+        ('member', 'api.governance.pii.mask'),
+        ('viewer', 'api.governance.deletion.request.create'),
+        ('viewer', 'api.governance.deletion.request.read'),
+        ('viewer', 'api.governance.pii.mask')
+),
+tenant_roles AS (
+    SELECT DISTINCT tenant_id, role
+    FROM tenant_role_permissions
+    WHERE role IN ('owner', 'admin', 'member', 'viewer')
+)
+INSERT INTO tenant_role_permissions (id, tenant_id, role, permission_code, created_at, updated_at)
+SELECT gen_random_uuid(), tr.tenant_id, ra.role, ra.permission_code, NOW(), NOW()
+FROM role_actions AS ra
+JOIN tenant_roles AS tr ON tr.role = ra.role
+ON CONFLICT (tenant_id, role, permission_code) DO NOTHING;
+
+COMMIT;
+
 -- 来自: migrations/20260305_160000_add_retrieval_eval_tables.sql
 BEGIN;
 
@@ -990,6 +1027,7 @@ CREATE TABLE IF NOT EXISTS deletion_requests (
     reject_reason TEXT,
     executed_by UUID,
     executed_at TIMESTAMP,
+    proof_id UUID,
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
@@ -1007,7 +1045,7 @@ COMMENT ON COLUMN deletion_requests.user_id IS '请求用户 ID';
 COMMENT ON COLUMN deletion_requests.resource_type IS '资源类型（document/user/conversation）';
 COMMENT ON COLUMN deletion_requests.resource_id IS '资源 ID';
 COMMENT ON COLUMN deletion_requests.reason IS '删除原因';
-COMMENT ON COLUMN deletion_requests.status IS '状态（pending/approved/rejected/completed）';
+COMMENT ON COLUMN deletion_requests.status IS '状态（pending/approved/rejected/cancelled/expired/failed/completed）';
 
 -- 数据删除证明表
 CREATE TABLE IF NOT EXISTS deletion_proofs (
@@ -1476,6 +1514,12 @@ WITH role_defaults(role, permission_code) AS (
         ('owner', 'api.agent.run.create'),
         ('owner', 'api.agent.run.read'),
         ('owner', 'api.agent.run.cancel'),
+        ('owner', 'api.governance.deletion.request.create'),
+        ('owner', 'api.governance.deletion.request.read'),
+        ('owner', 'api.governance.deletion.request.review'),
+        ('owner', 'api.governance.deletion.execute'),
+        ('owner', 'api.governance.retention.cleanup'),
+        ('owner', 'api.governance.pii.mask'),
         ('owner', 'menu.tenant'),
         ('owner', 'menu.workspace'),
         ('owner', 'menu.kb'),
@@ -1520,6 +1564,12 @@ WITH role_defaults(role, permission_code) AS (
         ('admin', 'api.agent.run.create'),
         ('admin', 'api.agent.run.read'),
         ('admin', 'api.agent.run.cancel'),
+        ('admin', 'api.governance.deletion.request.create'),
+        ('admin', 'api.governance.deletion.request.read'),
+        ('admin', 'api.governance.deletion.request.review'),
+        ('admin', 'api.governance.deletion.execute'),
+        ('admin', 'api.governance.retention.cleanup'),
+        ('admin', 'api.governance.pii.mask'),
         ('admin', 'menu.tenant'),
         ('admin', 'menu.workspace'),
         ('admin', 'menu.kb'),
@@ -1551,6 +1601,9 @@ WITH role_defaults(role, permission_code) AS (
         ('member', 'api.agent.run.create'),
         ('member', 'api.agent.run.read'),
         ('member', 'api.agent.run.cancel'),
+        ('member', 'api.governance.deletion.request.create'),
+        ('member', 'api.governance.deletion.request.read'),
+        ('member', 'api.governance.pii.mask'),
         ('member', 'menu.workspace'),
         ('member', 'menu.kb'),
         ('member', 'menu.document'),
@@ -1568,6 +1621,9 @@ WITH role_defaults(role, permission_code) AS (
         ('viewer', 'api.agent.run.create'),
         ('viewer', 'api.agent.run.read'),
         ('viewer', 'api.agent.run.cancel'),
+        ('viewer', 'api.governance.deletion.request.create'),
+        ('viewer', 'api.governance.deletion.request.read'),
+        ('viewer', 'api.governance.pii.mask'),
         ('viewer', 'menu.workspace'),
         ('viewer', 'menu.kb'),
         ('viewer', 'menu.document')
