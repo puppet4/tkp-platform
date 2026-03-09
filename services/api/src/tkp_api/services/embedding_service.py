@@ -21,6 +21,10 @@ logger = logging.getLogger(__name__)
 redis_module: Any | None = None
 REDIS_AVAILABLE = False
 
+# 缓存配置常量
+LOCAL_CACHE_MAX_SIZE = 1000
+REDIS_SOCKET_TIMEOUT = 5
+
 try:
     import redis as redis_module
     REDIS_AVAILABLE = True
@@ -68,16 +72,18 @@ class EmbeddingService:
                 self._redis_client = redis_module.Redis.from_url(
                     self.settings.redis_url,
                     decode_responses=False,  # 存储二进制数据
-                    socket_connect_timeout=5,
-                    socket_timeout=5,
+                    socket_connect_timeout=REDIS_SOCKET_TIMEOUT,
+                    socket_timeout=REDIS_SOCKET_TIMEOUT,
                 )
                 # 测试连接
                 self._redis_client.ping()
-            except Exception:
+                logger.info("Redis cache initialized successfully")
+            except Exception as exc:
+                logger.warning(f"Failed to initialize Redis cache, falling back to local cache: {exc}")
                 self._redis_client = None
 
         # 使用线程安全的 LRU 缓存（回退方案）
-        self._local_cache: LRUCache = LRUCache(maxsize=1000)
+        self._local_cache: LRUCache = LRUCache(maxsize=LOCAL_CACHE_MAX_SIZE)
         self._cache_lock = threading.Lock()
 
     def _get_cache_key(self, text: str) -> str:

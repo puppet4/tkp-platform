@@ -50,19 +50,21 @@ def create_feedback(
 ):
     """提交用户反馈。"""
     service = FeedbackReplayService()
-
-    feedback = service.collect_feedback(
-        db,
-        tenant_id=ctx.tenant_id,
-        user_id=ctx.user_id,
-        feedback_type=payload.feedback_type,
-        feedback_value=payload.feedback_value,
-        comment=payload.comment,
-        tags=payload.tags,
-        conversation_id=payload.conversation_id,
-        message_id=payload.message_id,
-        retrieval_log_id=payload.retrieval_log_id,
-    )
+    try:
+        feedback = service.collect_feedback(
+            db,
+            tenant_id=ctx.tenant_id,
+            user_id=ctx.user_id,
+            feedback_type=payload.feedback_type,
+            feedback_value=payload.feedback_value,
+            comment=payload.comment,
+            tags=payload.tags,
+            conversation_id=payload.conversation_id,
+            message_id=payload.message_id,
+            retrieval_log_id=payload.retrieval_log_id,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
 
     return success(
         request,
@@ -93,6 +95,7 @@ def replay_feedback(
     try:
         replay = service.replay_feedback(
             db,
+            tenant_id=ctx.tenant_id,
             feedback_id=payload.feedback_id,
             replay_type=payload.replay_type,
         )

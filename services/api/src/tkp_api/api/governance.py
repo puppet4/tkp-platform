@@ -17,6 +17,7 @@ from tkp_api.governance.retention import RetentionService
 from tkp_api.models.enums import TenantRole
 from tkp_api.services import PermissionAction, require_tenant_action
 from tkp_api.utils.response import success
+from tkp_api.utils.permissions import is_admin_role
 
 logger = logging.getLogger("tkp_api.api.governance")
 
@@ -26,22 +27,6 @@ HTTP_422_UNPROCESSABLE = getattr(
     "HTTP_422_UNPROCESSABLE_CONTENT",
     status.HTTP_422_UNPROCESSABLE_ENTITY,
 )
-
-
-class DeletionRequestCreate(BaseModel):
-    """创建删除请求的请求体。"""
-    resource_type: str
-    resource_id: UUID
-    reason: str
-
-
-class DeletionRequestReject(BaseModel):
-    """拒绝删除请求的请求体。"""
-    reason: str
-
-
-def _is_admin_role(ctx: RequestContext) -> bool:
-    return ctx.tenant_role in {TenantRole.OWNER, TenantRole.ADMIN, TenantRole.OWNER.value, TenantRole.ADMIN.value}
 
 
 @router.post("/deletion/requests")
@@ -91,7 +76,7 @@ async def create_deletion_request(
 @router.get("/deletion/requests")
 async def list_deletion_requests(
     request: Request,
-    status: str | None = Query(default=None),
+    deletion_status: str | None = Query(default=None, alias="status"),
     status_filter: str | None = Query(default=None),
     limit: int = 50,
     offset: int = 0,
@@ -107,13 +92,13 @@ async def list_deletion_requests(
     )
     service = DeletionService(db)
     try:
-        effective_status = status or status_filter
+        effective_status = deletion_status or status_filter
         data = service.list_deletion_requests(
             tenant_id=ctx.tenant_id,
             status=effective_status,
             limit=limit,
             offset=offset,
-            requester_user_id=None if _is_admin_role(ctx) else ctx.user_id,
+            requester_user_id=None if is_admin_role(ctx) else ctx.user_id,
         )
         return success(
             request,
@@ -301,6 +286,12 @@ async def get_deletion_proof(
     db: Session = Depends(get_db),
 ):
     """获取数据删除证明。"""
+    require_tenant_action(
+        db,
+        tenant_id=ctx.tenant_id,
+        tenant_role=ctx.tenant_role,
+        action=PermissionAction.GOVERNANCE_DELETION_REQUEST_READ,
+    )
     service = DeletionService(db)
 
     try:
@@ -401,3 +392,111 @@ async def mask_pii_data(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to mask PII",
         ) from exc
+
+
+@router.get("/retention/policies")
+async def list_retention_policies(
+    request: Request,
+    ctx: RequestContext = Depends(get_request_context),
+    db: Session = Depends(get_db),
+):
+    """查询保留策略列表。"""
+    require_tenant_action(
+        db,
+        tenant_id=ctx.tenant_id,
+        tenant_role=ctx.tenant_role,
+        action=PermissionAction.GOVERNANCE_RETENTION_CLEANUP,
+    )
+    service = RetentionService(db)
+
+    policies = [
+        {
+            "resource_type": policy.resource_type,
+            "retention_days": policy.retention_days,
+            "auto_delete": policy.auto_delete,
+            "archive_before_delete": policy.archive_before_delete,
+        }
+        for policy in service.policies.values()
+    ]
+
+    return success(request, {"policies": policies})
+
+
+@router.post("/retention/policies")
+async def create_retention_policy(
+    resource_type: str,
+    retention_days: int,
+    request: Request,
+    auto_delete: bool = False,
+    archive_before_delete: bool = False,
+    ctx: RequestContext = Depends(get_request_context),
+    db: Session = Depends(get_db),
+):
+    """创建或更新保留策略。"""
+    require_tenant_action(
+        db,
+        tenant_id=ctx.tenant_id,
+        tenant_role=ctx.tenant_role,
+        action=PermissionAction.GOVERNANCE_RETENTION_CLEANUP,
+    )
+
+    from tkp_api.governance.retention import RetentionPolicy
+
+    service = RetentionService(db)
+    policy = RetentionPolicy(
+        resource_type=resource_type,
+        retention_days=retention_days,
+        auto_delete=auto_delete,
+        archive_before_delete=archive_before_delete,
+    )
+    service.set_policy(policy)
+
+    return success(
+        request,
+        {
+            "resource_type": policy.resource_type,
+            "retention_days": policy.retention_days,
+            "auto_delete": policy.auto_delete,
+            "archive_before_delete": policy.archive_before_delete,
+        },
+    )
+
+
+@router.put("/retention/policies/{resource_type}")
+async def update_retention_policy(
+    resource_type: str,
+    retention_days: int,
+    request: Request,
+    auto_delete: bool = False,
+    archive_before_delete: bool = False,
+    ctx: RequestContext = Depends(get_request_context),
+    db: Session = Depends(get_db),
+):
+    """更新保留策略。"""
+    require_tenant_action(
+        db,
+        tenant_id=ctx.tenant_id,
+        tenant_role=ctx.tenant_role,
+        action=PermissionAction.GOVERNANCE_RETENTION_CLEANUP,
+    )
+
+    from tkp_api.governance.retention import RetentionPolicy
+
+    service = RetentionService(db)
+    policy = RetentionPolicy(
+        resource_type=resource_type,
+        retention_days=retention_days,
+        auto_delete=auto_delete,
+        archive_before_delete=archive_before_delete,
+    )
+    service.set_policy(policy)
+
+    return success(
+        request,
+        {
+            "resource_type": policy.resource_type,
+            "retention_days": policy.retention_days,
+            "auto_delete": policy.auto_delete,
+            "archive_before_delete": policy.archive_before_delete,
+        },
+    )

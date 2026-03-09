@@ -19,6 +19,7 @@ class Settings(BaseSettings):
     app_log_level: str = Field(default="INFO", description="日志级别。")
     api_prefix: str = Field(default="/api", description="统一接口前缀。")
     rate_limit_default: str = Field(default="100/minute", description="默认限流策略。")
+    request_max_size_bytes: int = Field(default=10 * 1024 * 1024, description="请求体最大大小（字节），默认10MB。")
 
     # CORS 配置
     cors_origins: list[str] = Field(
@@ -41,8 +42,7 @@ class Settings(BaseSettings):
     auth_jwt_audience: str | None = Field(default=None, description="期望的受众。")
     auth_jwks_url: str | None = Field(default=None, description="可选密钥集合地址。")
     auth_jwt_secret: SecretStr = Field(
-        default=SecretStr("change-me-in-prod-secret-at-least-32b"),
-        description="未使用密钥集合时的对称密钥。",
+        description="未使用密钥集合时的对称密钥（必须通过环境变量设置，至少32字节）。",
     )
     auth_jwt_leeway_seconds: int = Field(default=30, description="令牌校验时钟容错秒数。")
     auth_access_token_ttl_seconds: int = Field(default=7200, description="本地登录签发的访问令牌有效期（秒）。")
@@ -74,8 +74,7 @@ class Settings(BaseSettings):
     rag_circuit_breaker_fail_threshold: int = Field(default=3, description="RAG 熔断失败阈值。")
     rag_circuit_breaker_open_seconds: int = Field(default=30, description="RAG 熔断打开时长（秒）。")
     internal_service_token: SecretStr = Field(
-        default=SecretStr("change-me-internal-token"),
-        description="内部服务间鉴权令牌。",
+        description="内部服务间鉴权令牌（必须通过环境变量设置）。",
     )
     agent_allowed_tools: str = Field(
         default="retrieval",

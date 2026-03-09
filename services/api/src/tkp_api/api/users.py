@@ -19,6 +19,7 @@ from tkp_api.schemas.user import UserUpdateRequest
 from tkp_api.services import PermissionAction, audit_log, require_tenant_action
 from tkp_api.services.membership_sync import disable_workspace_memberships_for_tenant_member
 from tkp_api.utils.response import success
+from tkp_api.utils.permissions import is_admin_role
 
 router = APIRouter(prefix="/users", tags=["users"])
 
@@ -52,12 +53,8 @@ def _ensure_user_preferences_table(db: Session) -> None:
     db.commit()
 
 
-def _is_user_pref_admin(role: str) -> bool:
-    return role in {TenantRole.OWNER, TenantRole.ADMIN, TenantRole.OWNER.value, TenantRole.ADMIN.value}
-
-
 def _can_access_preferences(*, ctx, user_id: UUID) -> bool:
-    return ctx.user_id == user_id or _is_user_pref_admin(ctx.tenant_role)
+    return ctx.user_id == user_id or is_admin_role(ctx)
 
 
 @router.get(

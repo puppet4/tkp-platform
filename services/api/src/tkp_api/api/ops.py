@@ -696,6 +696,48 @@ def post_alert_dispatch(
 
 
 @router.post(
+    "/alerts/{alert_id}/acknowledge",
+    summary="确认告警",
+    description="标记告警为已确认状态。",
+    status_code=status.HTTP_200_OK,
+    response_model=SuccessResponse,
+    responses={401: {"model": ErrorResponse}, 403: {"model": ErrorResponse}},
+)
+def post_acknowledge_alert(
+    alert_id: str,
+    request: Request,
+    ctx=Depends(require_tenant_roles(TenantRole.OWNER, TenantRole.ADMIN)),
+    db: Session = Depends(get_db),
+):
+    """确认告警。"""
+    from tkp_api.services.ops import acknowledge_alert
+    acknowledge_alert(db, tenant_id=ctx.tenant_id, alert_id=alert_id, user_id=ctx.user_id)
+    db.commit()
+    return success(request, {"alert_id": alert_id, "status": "acknowledged"})
+
+
+@router.post(
+    "/alerts/{alert_id}/resolve",
+    summary="解决告警",
+    description="标记告警为已解决状态。",
+    status_code=status.HTTP_200_OK,
+    response_model=SuccessResponse,
+    responses={401: {"model": ErrorResponse}, 403: {"model": ErrorResponse}},
+)
+def post_resolve_alert(
+    alert_id: str,
+    request: Request,
+    ctx=Depends(require_tenant_roles(TenantRole.OWNER, TenantRole.ADMIN)),
+    db: Session = Depends(get_db),
+):
+    """解决告警。"""
+    from tkp_api.services.ops import resolve_alert
+    resolve_alert(db, tenant_id=ctx.tenant_id, alert_id=alert_id, user_id=ctx.user_id)
+    db.commit()
+    return success(request, {"alert_id": alert_id, "status": "resolved"})
+
+
+@router.post(
     "/release/rollouts",
     summary="创建发布记录",
     description="创建一条可审计的灰度发布记录。",
@@ -918,3 +960,297 @@ def get_runbook(
 ):
     """查询运行手册摘要。"""
     return success(request, get_runbook_summary())
+
+
+@router.post(
+    "/alerts/{alert_id}/acknowledge",
+    summary="确认告警",
+    description="标记告警为已确认状态。",
+    status_code=status.HTTP_200_OK,
+    response_model=SuccessResponse,
+    responses={401: {"model": ErrorResponse}, 403: {"model": ErrorResponse}, 404: {"model": ErrorResponse}},
+)
+def acknowledge_alert(
+    request: Request,
+    alert_id: str,
+    ctx=Depends(require_tenant_roles(TenantRole.OWNER, TenantRole.ADMIN)),
+    db: Session = Depends(get_db),
+):
+    """确认告警。"""
+    from datetime import datetime, timezone
+    from tkp_api.models.ops import OpsAlertStatus
+    from sqlalchemy import select
+
+    # 查询或创建告警状态记录
+    stmt = select(OpsAlertStatus).where(
+        OpsAlertStatus.tenant_id == ctx.tenant_id,
+        OpsAlertStatus.alert_id == alert_id,
+    )
+    alert_status = db.execute(stmt).scalar_one_or_none()
+
+    if not alert_status:
+        # 创建新的告警状态记录
+        alert_status = OpsAlertStatus(
+            tenant_id=ctx.tenant_id,
+            alert_id=alert_id,
+            status="acknowledged",
+            acknowledged_by=ctx.user_id,
+            acknowledged_at=datetime.now(timezone.utc).isoformat(),
+        )
+        db.add(alert_status)
+    else:
+        # 更新现有记录
+        alert_status.status = "acknowledged"
+        alert_status.acknowledged_by = ctx.user_id
+        alert_status.acknowledged_at = datetime.now(timezone.utc).isoformat()
+
+    audit_log(
+        db,
+        request=request,
+        tenant_id=ctx.tenant_id,
+        actor_user_id=ctx.user_id,
+        action="ops.alert.acknowledge",
+        resource_type="alert",
+        resource_id=alert_id,
+        after_json={"status": "acknowledged"},
+    )
+    db.commit()
+    return success(request, {"alert_id": alert_id, "status": "acknowledged"})
+
+
+@router.post(
+    "/alerts/{alert_id}/resolve",
+    summary="解决告警",
+    description="标记告警为已解决状态。",
+    status_code=status.HTTP_200_OK,
+    response_model=SuccessResponse,
+    responses={401: {"model": ErrorResponse}, 403: {"model": ErrorResponse}, 404: {"model": ErrorResponse}},
+)
+def resolve_alert(
+    request: Request,
+    alert_id: str,
+    ctx=Depends(require_tenant_roles(TenantRole.OWNER, TenantRole.ADMIN)),
+    db: Session = Depends(get_db),
+):
+    """解决告警。"""
+    from datetime import datetime, timezone
+    from tkp_api.models.ops import OpsAlertStatus
+    from sqlalchemy import select
+
+    # 查询或创建告警状态记录
+    stmt = select(OpsAlertStatus).where(
+        OpsAlertStatus.tenant_id == ctx.tenant_id,
+        OpsAlertStatus.alert_id == alert_id,
+    )
+    alert_status = db.execute(stmt).scalar_one_or_none()
+
+    if not alert_status:
+        # 创建新的告警状态记录
+        alert_status = OpsAlertStatus(
+            tenant_id=ctx.tenant_id,
+            alert_id=alert_id,
+            status="resolved",
+            resolved_by=ctx.user_id,
+            resolved_at=datetime.now(timezone.utc).isoformat(),
+        )
+        db.add(alert_status)
+    else:
+        # 更新现有记录
+        alert_status.status = "resolved"
+        alert_status.resolved_by = ctx.user_id
+        alert_status.resolved_at = datetime.now(timezone.utc).isoformat()
+
+    audit_log(
+        db,
+        request=request,
+        tenant_id=ctx.tenant_id,
+        actor_user_id=ctx.user_id,
+        action="ops.alert.resolve",
+        resource_type="alert",
+        resource_id=alert_id,
+        after_json={"status": "resolved"},
+    )
+    db.commit()
+    return success(request, {"alert_id": alert_id, "status": "resolved"})
+
+
+@router.get(
+    "/ingestion/jobs",
+    summary="查询入库任务列表",
+    description="返回租户的入库任务列表，支持按状态筛选。",
+    status_code=status.HTTP_200_OK,
+    response_model=SuccessResponse,
+    responses={401: {"model": ErrorResponse}, 403: {"model": ErrorResponse}},
+)
+def list_ingestion_jobs(
+    request: Request,
+    status_filter: str | None = Query(default=None, description="任务状态筛选（pending/processing/completed/failed）"),
+    limit: int = Query(default=50, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
+    ctx=Depends(require_tenant_roles(TenantRole.OWNER, TenantRole.ADMIN)),
+    db: Session = Depends(get_db),
+):
+    """查询入库任务列表。"""
+    from tkp_api.models.knowledge import IngestionJob
+    from sqlalchemy import select, desc
+
+    stmt = (
+        select(IngestionJob)
+        .where(IngestionJob.tenant_id == ctx.tenant_id)
+        .order_by(desc(IngestionJob.created_at))
+        .limit(limit)
+        .offset(offset)
+    )
+
+    if status_filter:
+        stmt = stmt.where(IngestionJob.status == status_filter)
+
+    jobs = db.execute(stmt).scalars().all()
+
+    return success(
+        request,
+        {
+            "jobs": [
+                {
+                    "job_id": str(job.id),
+                    "document_id": str(job.document_id),
+                    "status": job.status,
+                    "progress": job.progress,
+                    "error_message": job.error_message,
+                    "created_at": job.created_at.isoformat() if job.created_at else None,
+                    "updated_at": job.updated_at.isoformat() if job.updated_at else None,
+                }
+                for job in jobs
+            ],
+            "total": len(jobs),
+            "limit": limit,
+            "offset": offset,
+        },
+    )
+
+
+@router.post(
+    "/quotas",
+    summary="创建配额策略",
+    description="为租户创建新的配额策略。",
+    status_code=status.HTTP_200_OK,
+    response_model=SuccessResponse[QuotaPolicyData],
+    responses={401: {"model": ErrorResponse}, 403: {"model": ErrorResponse}, 422: {"model": ErrorResponse}},
+)
+def create_quota_policy(
+    payload: QuotaPolicyUpsertRequest,
+    request: Request,
+    ctx=Depends(require_tenant_roles(TenantRole.OWNER, TenantRole.ADMIN)),
+    db: Session = Depends(get_db),
+):
+    """创建配额策略。"""
+    data = upsert_quota_policy(
+        db,
+        tenant_id=ctx.tenant_id,
+        metric_code=payload.metric_code,
+        scope_type=payload.scope_type,
+        scope_id=payload.scope_id,
+        limit_value=payload.limit_value,
+        window_seconds=payload.window_seconds,
+        enabled=payload.enabled,
+    )
+    audit_log(
+        db,
+        request=request,
+        tenant_id=ctx.tenant_id,
+        actor_user_id=ctx.user_id,
+        action="ops.quota.create",
+        resource_type="quota_policy",
+        resource_id=data["policy_id"],
+        after_json=_json_safe(data),
+    )
+    db.commit()
+    return success(request, data)
+
+
+@router.put(
+    "/quotas/{policy_id}",
+    summary="更新配额策略",
+    description="更新现有配额策略的限制值或启用状态。",
+    status_code=status.HTTP_200_OK,
+    response_model=SuccessResponse[QuotaPolicyData],
+    responses={401: {"model": ErrorResponse}, 403: {"model": ErrorResponse}, 404: {"model": ErrorResponse}, 422: {"model": ErrorResponse}},
+)
+def update_quota_policy(
+    policy_id: UUID,
+    payload: QuotaPolicyUpsertRequest,
+    request: Request,
+    ctx=Depends(require_tenant_roles(TenantRole.OWNER, TenantRole.ADMIN)),
+    db: Session = Depends(get_db),
+):
+    """更新配额策略。"""
+    data = upsert_quota_policy(
+        db,
+        tenant_id=ctx.tenant_id,
+        metric_code=payload.metric_code,
+        scope_type=payload.scope_type,
+        scope_id=payload.scope_id,
+        limit_value=payload.limit_value,
+        window_seconds=payload.window_seconds,
+        enabled=payload.enabled,
+    )
+    audit_log(
+        db,
+        request=request,
+        tenant_id=ctx.tenant_id,
+        actor_user_id=ctx.user_id,
+        action="ops.quota.update",
+        resource_type="quota_policy",
+        resource_id=str(policy_id),
+        after_json=_json_safe(data),
+    )
+    db.commit()
+    return success(request, data)
+
+
+@router.delete(
+    "/alerts/webhooks/{webhook_id}",
+    summary="删除告警 webhook",
+    description="删除指定的 webhook 配置。",
+    status_code=status.HTTP_200_OK,
+    response_model=SuccessResponse,
+    responses={401: {"model": ErrorResponse}, 403: {"model": ErrorResponse}, 404: {"model": ErrorResponse}},
+)
+def delete_alert_webhook(
+    webhook_id: UUID,
+    request: Request,
+    ctx=Depends(require_tenant_roles(TenantRole.OWNER, TenantRole.ADMIN)),
+    db: Session = Depends(get_db),
+):
+    """删除告警 webhook。"""
+    from tkp_api.models.ops import OpsAlertWebhook
+    from sqlalchemy import select
+
+    # 查询webhook
+    stmt = select(OpsAlertWebhook).where(
+        OpsAlertWebhook.id == webhook_id,
+        OpsAlertWebhook.tenant_id == ctx.tenant_id,
+    )
+    webhook = db.execute(stmt).scalar_one_or_none()
+
+    if not webhook:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Webhook not found",
+        )
+
+    # 删除webhook
+    db.delete(webhook)
+
+    audit_log(
+        db,
+        request=request,
+        tenant_id=ctx.tenant_id,
+        actor_user_id=ctx.user_id,
+        action="ops.webhook.delete",
+        resource_type="alert_webhook",
+        resource_id=str(webhook_id),
+        after_json={"deleted": True},
+    )
+    db.commit()
+    return success(request, {"webhook_id": str(webhook_id), "deleted": True})

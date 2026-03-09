@@ -21,6 +21,9 @@ from tkp_api.utils.masking import default_masker
 logger = logging.getLogger(__name__)
 settings = get_settings()
 
+# 慢请求阈值（毫秒）
+SLOW_REQUEST_THRESHOLD_MS = 1000
+
 
 async def _rate_limit_exception_handler(request: Request, exc: Exception) -> Response:
     """为 FastAPI 提供通用异常签名的限流处理器。"""
@@ -53,19 +56,20 @@ async def request_id_middleware(request: Request, call_next):
     elapsed_ms = round(elapsed * 1000, 2)
     response.headers["X-Process-Time-Ms"] = str(elapsed_ms)
 
-    # 慢请求告警（超过 1 秒）
-    log_level = logging.WARNING if elapsed_ms > 1000 else logging.INFO
+    # 慢请求告警
+    is_slow = elapsed_ms > SLOW_REQUEST_THRESHOLD_MS
+    log_level = logging.WARNING if is_slow else logging.INFO
     logger.log(
         log_level,
         f"Request completed: {request.method} {request.url.path} - {response.status_code}"
-        + (f" [SLOW REQUEST]" if elapsed_ms > 1000 else ""),
+        + (f" [SLOW REQUEST]" if is_slow else ""),
         extra={
             "request_id": request.state.request_id,
             "method": request.method,
             "path": request.url.path,
             "status_code": response.status_code,
             "duration_ms": elapsed_ms,
-            "slow_request": elapsed_ms > 1000,
+            "slow_request": is_slow,
         }
     )
 
@@ -132,14 +136,14 @@ def register_middlewares(app: FastAPI) -> None:
     )
 
     # 2. 请求大小限制中间件（安全防护）
-    app.add_middleware(RequestSizeLimitMiddleware, max_size=10 * 1024 * 1024)
+    app.add_middleware(RequestSizeLimitMiddleware, max_size=settings.request_max_size_bytes)
 
     # 3. 事务管理中间件（在业务逻辑之前）
     app.add_middleware(TransactionMiddleware)
 
     # 4. 敏感数据脱敏中间件
-    if not settings.app_debug:  # 仅在生产环境启用
-        app.add_middleware(SensitiveDataMaskingMiddleware)
+    # 注意：响应脱敏会改变 API 契约（例如 access_token/email），破坏前端登录等核心流程。
+    # 这里不再挂载响应级脱敏中间件，敏感信息保护应通过日志脱敏与字段最小化实现。
 
     # 5. 请求 ID 和计时中间件
     app.middleware("http")(request_id_middleware)

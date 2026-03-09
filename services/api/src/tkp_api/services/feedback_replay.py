@@ -15,7 +15,7 @@ from uuid import UUID
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from tkp_api.models.conversation import Message
+from tkp_api.models.conversation import Conversation, Message
 from tkp_api.models.feedback import FeedbackReplay, UserFeedback
 from tkp_api.models.knowledge import RetrievalLog
 
@@ -69,6 +69,7 @@ class FeedbackReplayService:
         # 创建快照
         snapshot = self._create_snapshot(
             db,
+            tenant_id=tenant_id,
             conversation_id=conversation_id,
             message_id=message_id,
             retrieval_log_id=retrieval_log_id,
@@ -106,6 +107,7 @@ class FeedbackReplayService:
         self,
         db: Session,
         *,
+        tenant_id: UUID,
         feedback_id: UUID,
         replay_type: str = "full_pipeline",
     ) -> FeedbackReplay:
@@ -120,7 +122,10 @@ class FeedbackReplayService:
             回放记录
         """
         # 获取反馈
-        stmt = select(UserFeedback).where(UserFeedback.id == feedback_id)
+        stmt = select(UserFeedback).where(
+            UserFeedback.id == feedback_id,
+            UserFeedback.tenant_id == tenant_id,
+        )
         result = db.execute(stmt)
         feedback = result.scalar_one_or_none()
 
@@ -192,6 +197,7 @@ class FeedbackReplayService:
         self,
         db: Session,
         *,
+        tenant_id: UUID,
         conversation_id: UUID | None,
         message_id: UUID | None,
         retrieval_log_id: UUID | None,
@@ -199,31 +205,50 @@ class FeedbackReplayService:
         """创建快照。"""
         snapshot: dict[str, Any] = {}
 
+        # 校验会话归属（如果提供）。
+        if conversation_id:
+            conversation_stmt = select(Conversation).where(
+                Conversation.id == conversation_id,
+                Conversation.tenant_id == tenant_id,
+            )
+            conversation = db.execute(conversation_stmt).scalar_one_or_none()
+            if not conversation:
+                raise ValueError(f"conversation not found: {conversation_id}")
+
         # 保存消息快照
         if message_id:
-            message_stmt = select(Message).where(Message.id == message_id)
+            message_stmt = select(Message).where(
+                Message.id == message_id,
+                Message.tenant_id == tenant_id,
+            )
             message_result = db.execute(message_stmt)
             message = message_result.scalar_one_or_none()
-            if message:
-                snapshot["message"] = {
-                    "id": str(message.id),
-                    "role": message.role,
-                    "content": message.content,
-                    "metadata": message.metadata,
-                }
+            if not message:
+                raise ValueError(f"message not found: {message_id}")
+            snapshot["message"] = {
+                "id": str(message.id),
+                "role": message.role,
+                "content": message.content,
+                "citations": message.citations,
+                "usage": message.usage,
+            }
 
         # 保存检索日志快照
         if retrieval_log_id:
-            retrieval_stmt = select(RetrievalLog).where(RetrievalLog.id == retrieval_log_id)
+            retrieval_stmt = select(RetrievalLog).where(
+                RetrievalLog.id == retrieval_log_id,
+                RetrievalLog.tenant_id == tenant_id,
+            )
             retrieval_result = db.execute(retrieval_stmt)
             retrieval_log = retrieval_result.scalar_one_or_none()
-            if retrieval_log:
-                snapshot["retrieval"] = {
-                    "id": str(retrieval_log.id),
-                    "query": retrieval_log.query_text,
-                    "results": retrieval_log.result_chunks,
-                    "metadata": retrieval_log.filter_json,
-                }
+            if not retrieval_log:
+                raise ValueError(f"retrieval log not found: {retrieval_log_id}")
+            snapshot["retrieval"] = {
+                "id": str(retrieval_log.id),
+                "query": retrieval_log.query_text,
+                "results": retrieval_log.result_chunks,
+                "metadata": retrieval_log.filter_json,
+            }
 
         return snapshot
 

@@ -81,3 +81,18 @@ class OpsDeletionProof(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     deleted_at: Mapped[str] = mapped_column(String(64), nullable=False)
     ticket_id: Mapped[UUID | None] = mapped_column(index=True)
     proof_payload: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+
+
+class OpsAlertStatus(Base, UUIDPrimaryKeyMixin, TimestampMixin):
+    """告警状态记录。"""
+
+    __tablename__ = "ops_alert_status"
+
+    tenant_id: Mapped[UUID] = mapped_column(nullable=False, index=True)
+    alert_id: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="active")
+    acknowledged_by: Mapped[UUID | None] = mapped_column()
+    acknowledged_at: Mapped[str | None] = mapped_column(String(64))
+    resolved_by: Mapped[UUID | None] = mapped_column()
+    resolved_at: Mapped[str | None] = mapped_column(String(64))
+    notes: Mapped[str | None] = mapped_column(Text)

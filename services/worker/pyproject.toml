@@ -2,7 +2,7 @@
 name = "tkp-worker"
 version = "0.1.0"
 description = "Ingestion worker service for multi-tenant knowledge platform"
-requires-python = ">=3.12"
+requires-python = ">=3.12,<3.13"
 dependencies = [
     "minio>=7.2.18",
     "oss2>=2.19.1",

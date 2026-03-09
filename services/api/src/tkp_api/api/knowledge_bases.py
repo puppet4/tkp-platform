@@ -580,7 +580,11 @@ def list_kb_members(
     ):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="forbidden")
 
-    memberships = db.execute(select(KBMembership).where(KBMembership.kb_id == kb_id)).scalars().all()
+    memberships = db.execute(
+        select(KBMembership)
+        .where(KBMembership.tenant_id == ctx.tenant_id)
+        .where(KBMembership.kb_id == kb_id)
+    ).scalars().all()
     data = [
         {
             "kb_id": kb.id,
