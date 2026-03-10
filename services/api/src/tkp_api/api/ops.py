@@ -962,118 +962,6 @@ def get_runbook(
     return success(request, get_runbook_summary())
 
 
-@router.post(
-    "/alerts/{alert_id}/acknowledge",
-    summary="确认告警",
-    description="标记告警为已确认状态。",
-    status_code=status.HTTP_200_OK,
-    response_model=SuccessResponse,
-    responses={401: {"model": ErrorResponse}, 403: {"model": ErrorResponse}, 404: {"model": ErrorResponse}},
-)
-def acknowledge_alert(
-    request: Request,
-    alert_id: str,
-    ctx=Depends(require_tenant_roles(TenantRole.OWNER, TenantRole.ADMIN)),
-    db: Session = Depends(get_db),
-):
-    """确认告警。"""
-    from datetime import datetime, timezone
-    from tkp_api.models.ops import OpsAlertStatus
-    from sqlalchemy import select
-
-    # 查询或创建告警状态记录
-    stmt = select(OpsAlertStatus).where(
-        OpsAlertStatus.tenant_id == ctx.tenant_id,
-        OpsAlertStatus.alert_id == alert_id,
-    )
-    alert_status = db.execute(stmt).scalar_one_or_none()
-
-    if not alert_status:
-        # 创建新的告警状态记录
-        alert_status = OpsAlertStatus(
-            tenant_id=ctx.tenant_id,
-            alert_id=alert_id,
-            status="acknowledged",
-            acknowledged_by=ctx.user_id,
-            acknowledged_at=datetime.now(timezone.utc).isoformat(),
-        )
-        db.add(alert_status)
-    else:
-        # 更新现有记录
-        alert_status.status = "acknowledged"
-        alert_status.acknowledged_by = ctx.user_id
-        alert_status.acknowledged_at = datetime.now(timezone.utc).isoformat()
-
-    audit_log(
-        db,
-        request=request,
-        tenant_id=ctx.tenant_id,
-        actor_user_id=ctx.user_id,
-        action="ops.alert.acknowledge",
-        resource_type="alert",
-        resource_id=alert_id,
-        after_json={"status": "acknowledged"},
-    )
-    db.commit()
-    return success(request, {"alert_id": alert_id, "status": "acknowledged"})
-
-
-@router.post(
-    "/alerts/{alert_id}/resolve",
-    summary="解决告警",
-    description="标记告警为已解决状态。",
-    status_code=status.HTTP_200_OK,
-    response_model=SuccessResponse,
-    responses={401: {"model": ErrorResponse}, 403: {"model": ErrorResponse}, 404: {"model": ErrorResponse}},
-)
-def resolve_alert(
-    request: Request,
-    alert_id: str,
-    ctx=Depends(require_tenant_roles(TenantRole.OWNER, TenantRole.ADMIN)),
-    db: Session = Depends(get_db),
-):
-    """解决告警。"""
-    from datetime import datetime, timezone
-    from tkp_api.models.ops import OpsAlertStatus
-    from sqlalchemy import select
-
-    # 查询或创建告警状态记录
-    stmt = select(OpsAlertStatus).where(
-        OpsAlertStatus.tenant_id == ctx.tenant_id,
-        OpsAlertStatus.alert_id == alert_id,
-    )
-    alert_status = db.execute(stmt).scalar_one_or_none()
-
-    if not alert_status:
-        # 创建新的告警状态记录
-        alert_status = OpsAlertStatus(
-            tenant_id=ctx.tenant_id,
-            alert_id=alert_id,
-            status="resolved",
-            resolved_by=ctx.user_id,
-            resolved_at=datetime.now(timezone.utc).isoformat(),
-        )
-        db.add(alert_status)
-    else:
-        # 更新现有记录
-        alert_status.status = "resolved"
-        alert_status.resolved_by = ctx.user_id
-        alert_status.resolved_at = datetime.now(timezone.utc).isoformat()
-
-    audit_log(
-        db,
-        request=request,
-        tenant_id=ctx.tenant_id,
-        actor_user_id=ctx.user_id,
-        action="ops.alert.resolve",
-        resource_type="alert",
-        resource_id=alert_id,
-        after_json={"status": "resolved"},
-    )
-    db.commit()
-    return success(request, {"alert_id": alert_id, "status": "resolved"})
-
-
 @router.get(
     "/ingestion/jobs",
     summary="查询入库任务列表",
@@ -1109,23 +997,19 @@ def list_ingestion_jobs(
 
     return success(
         request,
-        {
-            "jobs": [
-                {
-                    "job_id": str(job.id),
-                    "document_id": str(job.document_id),
-                    "status": job.status,
-                    "progress": job.progress,
-                    "error_message": job.error_message,
-                    "created_at": job.created_at.isoformat() if job.created_at else None,
-                    "updated_at": job.updated_at.isoformat() if job.updated_at else None,
-                }
-                for job in jobs
-            ],
-            "total": len(jobs),
-            "limit": limit,
-            "offset": offset,
-        },
+        [
+            {
+                "job_id": str(job.id),
+                "document_id": str(job.document_id),
+                "status": job.status,
+                "progress": job.progress,
+                "error_message": job.error_message,
+                "created_at": job.created_at.isoformat() if job.created_at else None,
+                "updated_at": job.updated_at.isoformat() if job.updated_at else None,
+            }
+            for job in jobs
+        ],
+        meta={"total": len(jobs), "limit": limit, "offset": offset},
     )
 
 
@@ -1147,11 +1031,12 @@ def create_quota_policy(
     data = upsert_quota_policy(
         db,
         tenant_id=ctx.tenant_id,
+        user_id=ctx.user_id,
         metric_code=payload.metric_code,
         scope_type=payload.scope_type,
         scope_id=payload.scope_id,
         limit_value=payload.limit_value,
-        window_seconds=payload.window_seconds,
+        window_minutes=payload.window_minutes,
         enabled=payload.enabled,
     )
     audit_log(
@@ -1187,11 +1072,12 @@ def update_quota_policy(
     data = upsert_quota_policy(
         db,
         tenant_id=ctx.tenant_id,
+        user_id=ctx.user_id,
         metric_code=payload.metric_code,
         scope_type=payload.scope_type,
         scope_id=payload.scope_id,
         limit_value=payload.limit_value,
-        window_seconds=payload.window_seconds,
+        window_minutes=payload.window_minutes,
         enabled=payload.enabled,
     )
     audit_log(

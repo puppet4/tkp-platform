@@ -29,6 +29,18 @@ HTTP_422_UNPROCESSABLE = getattr(
 )
 
 
+class DeletionRequestCreate(BaseModel):
+    """创建删除请求的请求体。"""
+    resource_type: str
+    resource_id: str
+    reason: str
+
+
+class DeletionRequestReject(BaseModel):
+    """拒绝删除请求的请求体。"""
+    reason: str
+
+
 @router.post("/deletion/requests")
 async def create_deletion_request(
     payload: DeletionRequestCreate,
@@ -254,7 +266,7 @@ async def cancel_deletion_request(
         action=PermissionAction.GOVERNANCE_DELETION_REQUEST_CREATE,
     )
     service = DeletionService(db)
-    is_admin = _is_admin_role(ctx)
+    is_admin = is_admin_role(ctx)
     try:
         result = service.cancel_deletion_request(
             request_id=request_id,
@@ -324,11 +336,16 @@ async def get_deletion_proof(
         ) from exc
 
 
+class RetentionCleanupRequest(BaseModel):
+    """数据保留清理请求体。"""
+    resource_type: str
+    dry_run: bool = True
+
+
 @router.post("/retention/cleanup")
 async def cleanup_expired_data(
-    resource_type: str,
+    payload: RetentionCleanupRequest,
     request: Request,
-    dry_run: bool = True,
     ctx: RequestContext = Depends(get_request_context),
     db: Session = Depends(get_db),
 ):
@@ -343,9 +360,9 @@ async def cleanup_expired_data(
 
     try:
         result = service.delete_expired_records(
-            resource_type=resource_type,
+            resource_type=payload.resource_type,
             tenant_id=ctx.tenant_id,
-            dry_run=dry_run,
+            dry_run=payload.dry_run,
         )
         if "error" in result:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(result["error"]))
@@ -360,11 +377,16 @@ async def cleanup_expired_data(
         ) from exc
 
 
+class PIIMaskRequest(BaseModel):
+    """PII 脱敏请求体。"""
+    text: str
+    pii_types: list[str] | None = None
+
+
 @router.post("/pii/mask")
 async def mask_pii_data(
-    text: str,
+    payload: PIIMaskRequest,
     request: Request,
-    pii_types: list[str] | None = None,
     ctx: RequestContext = Depends(get_request_context),
     db: Session = Depends(get_db),
 ):
@@ -377,11 +399,11 @@ async def mask_pii_data(
     )
     try:
         masker = get_pii_masker()
-        masked_text = masker.mask_text(text, pii_types)
+        masked_text = masker.mask_text(payload.text, payload.pii_types)
         return success(
             request,
             {
-                "original_length": len(text),
+                "original_length": len(payload.text),
                 "masked_text": masked_text,
                 "masked_length": len(masked_text),
             },
@@ -422,13 +444,18 @@ async def list_retention_policies(
     return success(request, {"policies": policies})
 
 
+class RetentionPolicyRequest(BaseModel):
+    """保留策略请求体。"""
+    resource_type: str
+    retention_days: int
+    auto_delete: bool = False
+    archive_before_delete: bool = False
+
+
 @router.post("/retention/policies")
 async def create_retention_policy(
-    resource_type: str,
-    retention_days: int,
+    payload: RetentionPolicyRequest,
     request: Request,
-    auto_delete: bool = False,
-    archive_before_delete: bool = False,
     ctx: RequestContext = Depends(get_request_context),
     db: Session = Depends(get_db),
 ):
@@ -444,10 +471,10 @@ async def create_retention_policy(
 
     service = RetentionService(db)
     policy = RetentionPolicy(
-        resource_type=resource_type,
-        retention_days=retention_days,
-        auto_delete=auto_delete,
-        archive_before_delete=archive_before_delete,
+        resource_type=payload.resource_type,
+        retention_days=payload.retention_days,
+        auto_delete=payload.auto_delete,
+        archive_before_delete=payload.archive_before_delete,
     )
     service.set_policy(policy)
 
@@ -465,10 +492,8 @@ async def create_retention_policy(
 @router.put("/retention/policies/{resource_type}")
 async def update_retention_policy(
     resource_type: str,
-    retention_days: int,
+    payload: RetentionPolicyRequest,
     request: Request,
-    auto_delete: bool = False,
-    archive_before_delete: bool = False,
     ctx: RequestContext = Depends(get_request_context),
     db: Session = Depends(get_db),
 ):
@@ -485,9 +510,9 @@ async def update_retention_policy(
     service = RetentionService(db)
     policy = RetentionPolicy(
         resource_type=resource_type,
-        retention_days=retention_days,
-        auto_delete=auto_delete,
-        archive_before_delete=archive_before_delete,
+        retention_days=payload.retention_days,
+        auto_delete=payload.auto_delete,
+        archive_before_delete=payload.archive_before_delete,
     )
     service.set_policy(policy)
 
@@ -500,3 +525,38 @@ async def update_retention_policy(
             "archive_before_delete": policy.archive_before_delete,
         },
     )
+
+
+@router.post("/retention/execute")
+async def execute_retention(
+    request: Request,
+    ctx: RequestContext = Depends(get_request_context),
+    db: Session = Depends(get_db),
+):
+    """执行所有自动清理策略。"""
+    require_tenant_action(
+        db,
+        tenant_id=ctx.tenant_id,
+        tenant_role=ctx.tenant_role,
+        action=PermissionAction.GOVERNANCE_RETENTION_CLEANUP,
+    )
+    service = RetentionService(db)
+
+    try:
+        results = {}
+        for resource_type in service.policies.keys():
+            policy = service.policies[resource_type]
+            if policy.auto_delete:
+                result = service.delete_expired_records(
+                    resource_type=resource_type,
+                    tenant_id=ctx.tenant_id,
+                    dry_run=False,
+                )
+                results[resource_type] = result
+        return success(request, {"results": results})
+    except Exception as exc:
+        logger.exception("failed to execute retention: %s", exc)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to execute retention",
+        ) from exc
