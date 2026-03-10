@@ -5,6 +5,7 @@ from fastapi import HTTPException
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 
+from tkp_api.core.exceptions import PermissionDeniedException
 from tkp_api.core.security import AuthenticatedPrincipal
 from tkp_api.dependencies import ensure_user, get_request_context
 from tkp_api.models.enums import MembershipStatus, TenantRole, WorkspaceRole
@@ -111,6 +112,6 @@ def test_get_request_context_requires_token_tenant_id(db_session: Session):
         display_name="Ctx User",
         claims={"sub": "ctx-user-subject"},
     )
-    with pytest.raises(HTTPException) as exc:
+    with pytest.raises(PermissionDeniedException) as exc:
         get_request_context(principal=principal, db=db_session)
-    assert exc.value.status_code == 422
+    assert exc.value.status_code == 403

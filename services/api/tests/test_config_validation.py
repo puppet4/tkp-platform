@@ -77,8 +77,10 @@ def test_api_settings_does_not_fallback_to_legacy_shared_openai_env(monkeypatch)
     monkeypatch.delenv("OPENAI_CHAT_BASE_URL", raising=False)
     monkeypatch.delenv("OPENAI_EMBEDDING_API_KEY", raising=False)
     monkeypatch.delenv("OPENAI_EMBEDDING_BASE_URL", raising=False)
+    monkeypatch.setenv("AUTH_JWT_SECRET", "test-secret-at-least-32-bytes-long")
+    monkeypatch.setenv("INTERNAL_SERVICE_TOKEN", "test-internal-token")
 
-    cfg = Settings()
+    cfg = Settings(_env_file=None)
 
     assert cfg.resolved_openai_chat_api_key == ""
     assert cfg.resolved_openai_chat_base_url is None

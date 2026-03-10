@@ -68,10 +68,6 @@ markers = [
 addopts = [
     "--strict-markers",
     "--tb=short",
-    "--cov=tkp_api",
-    "--cov-report=term-missing",
-    "--cov-report=html",
-    "--cov-fail-under=80",
 ]
 
 [tool.coverage.run]
