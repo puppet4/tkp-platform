@@ -122,99 +122,103 @@ async def upload_document(
     validate_upload_file(file, content)
 
     checksum = hashlib.sha256(content).hexdigest()
-    source_uri = file.filename or "upload.bin"
+    source_uri = file.filename or “upload.bin”
 
-    # 以 tenant + workspace + kb + source_uri 识别同源文档，实现“同文件升级版本”语义。
-    document = (
-        db.execute(
-            select(Document)
-            .where(Document.tenant_id == ctx.tenant_id)
-            .where(Document.workspace_id == kb.workspace_id)
-            .where(Document.kb_id == kb_id)
-            .where(Document.source_type == SourceType.UPLOAD)
-            .where(Document.source_uri == source_uri)
-            .where(Document.status != DocumentStatus.DELETED)
+    try:
+        # 以 tenant + workspace + kb + source_uri 识别同源文档，实现”同文件升级版本”语义。
+        document = (
+            db.execute(
+                select(Document)
+                .where(Document.tenant_id == ctx.tenant_id)
+                .where(Document.workspace_id == kb.workspace_id)
+                .where(Document.kb_id == kb_id)
+                .where(Document.source_type == SourceType.UPLOAD)
+                .where(Document.source_uri == source_uri)
+                .where(Document.status != DocumentStatus.DELETED)
+            )
+            .scalar_one_or_none()
         )
-        .scalar_one_or_none()
-    )
 
-    if document:
-        # 命中已有文档：递增版本号并重置状态，触发新一轮入库。
-        document.current_version += 1
-        document.title = source_uri
-        document.status = DocumentStatus.PENDING
-        document.metadata_ = metadata_dict
-        version_no = document.current_version
-    else:
-        # 首次上传：创建文档主记录。
-        document = Document(
+        if document:
+            # 命中已有文档：递增版本号并重置状态，触发新一轮入库。
+            document.current_version += 1
+            document.title = source_uri
+            document.status = DocumentStatus.PENDING
+            document.metadata_ = metadata_dict
+            version_no = document.current_version
+        else:
+            # 首次上传：创建文档主记录。
+            document = Document(
+                tenant_id=ctx.tenant_id,
+                workspace_id=kb.workspace_id,
+                kb_id=kb_id,
+                title=source_uri,
+                source_type=SourceType.UPLOAD,
+                source_uri=source_uri,
+                current_version=1,
+                status=DocumentStatus.PENDING,
+                metadata_=metadata_dict,
+                created_by=ctx.user_id,
+            )
+            db.add(document)
+            db.flush()
+            version_no = 1
+
+        # 先落对象存储，再创建文档版本记录，确保版本可追溯到真实文件对象。
+        object_key = persist_upload(
+            tenant_id=ctx.tenant_id,
+            kb_id=kb_id,
+            document_id=document.id,
+            version=version_no,
+            filename=source_uri,
+            content=content,
+        )
+
+        doc_version = DocumentVersion(
+            tenant_id=ctx.tenant_id,
+            document_id=document.id,
+            version=version_no,
+            object_key=object_key,
+            parser_type=infer_parser_type(source_uri),
+            parse_status=ParseStatus.PENDING,
+            checksum=checksum,
+        )
+        db.add(doc_version)
+        db.flush()
+
+        # 创建异步入库任务（带幂等键），避免重复请求产生重复任务。
+        ingestion_job = enqueue_ingestion_job(
+            db=db,
             tenant_id=ctx.tenant_id,
             workspace_id=kb.workspace_id,
             kb_id=kb_id,
-            title=source_uri,
-            source_type=SourceType.UPLOAD,
-            source_uri=source_uri,
-            current_version=1,
-            status=DocumentStatus.PENDING,
-            metadata_=metadata_dict,
-            created_by=ctx.user_id,
+            document_id=document.id,
+            document_version_id=doc_version.id,
+            action=”upload”,
+            client_idempotency_key=idempotency_key,
         )
-        db.add(document)
-        db.flush()
-        version_no = 1
 
-    # 先落对象存储，再创建文档版本记录，确保版本可追溯到真实文件对象。
-    object_key = persist_upload(
-        tenant_id=ctx.tenant_id,
-        kb_id=kb_id,
-        document_id=document.id,
-        version=version_no,
-        filename=source_uri,
-        content=content,
-    )
+        audit_log(
+            db=db,
+            request=request,
+            tenant_id=ctx.tenant_id,
+            actor_user_id=ctx.user_id,
+            action=”document.upload”,
+            resource_type=”document”,
+            resource_id=str(document.id),
+            after_json={
+                “workspace_id”: str(kb.workspace_id),
+                “kb_id”: str(kb_id),
+                “version”: version_no,
+                “object_key”: object_key,
+                “job_id”: str(ingestion_job.id),
+            },
+        )
 
-    doc_version = DocumentVersion(
-        tenant_id=ctx.tenant_id,
-        document_id=document.id,
-        version=version_no,
-        object_key=object_key,
-        parser_type=infer_parser_type(source_uri),
-        parse_status=ParseStatus.PENDING,
-        checksum=checksum,
-    )
-    db.add(doc_version)
-    db.flush()
-
-    # 创建异步入库任务（带幂等键），避免重复请求产生重复任务。
-    ingestion_job = enqueue_ingestion_job(
-        db=db,
-        tenant_id=ctx.tenant_id,
-        workspace_id=kb.workspace_id,
-        kb_id=kb_id,
-        document_id=document.id,
-        document_version_id=doc_version.id,
-        action="upload",
-        client_idempotency_key=idempotency_key,
-    )
-
-    audit_log(
-        db=db,
-        request=request,
-        tenant_id=ctx.tenant_id,
-        actor_user_id=ctx.user_id,
-        action="document.upload",
-        resource_type="document",
-        resource_id=str(document.id),
-        after_json={
-            "workspace_id": str(kb.workspace_id),
-            "kb_id": str(kb_id),
-            "version": version_no,
-            "object_key": object_key,
-            "job_id": str(ingestion_job.id),
-        },
-    )
-
-    db.commit()
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
 
     return success(
         request,

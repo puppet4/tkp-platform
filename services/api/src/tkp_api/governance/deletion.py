@@ -102,6 +102,28 @@ class DeletionService:
         if not self._resource_exists_in_tenant(resource_type, resource_id, tenant_id):
             raise ValueError(f"resource not found in tenant: {resource_type}/{resource_id}")
 
+        # Check for existing pending requests for the same resource
+        existing = self.db.execute(
+            text(
+                """
+                SELECT id FROM deletion_requests
+                WHERE tenant_id = :tenant_id
+                  AND resource_type = :resource_type
+                  AND resource_id = :resource_id
+                  AND status = 'pending'
+                LIMIT 1
+            """
+            ),
+            {
+                "tenant_id": str(tenant_id),
+                "resource_type": resource_type,
+                "resource_id": str(resource_id),
+            },
+        ).first()
+
+        if existing:
+            raise ValueError(f"pending deletion request already exists for {resource_type}/{resource_id}")
+
         request_id = uuid4()
         requested_at = _utcnow()
 

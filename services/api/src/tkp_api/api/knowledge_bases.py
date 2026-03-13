@@ -149,6 +149,8 @@ def create_knowledge_base(
 def list_knowledge_bases(
     request: Request,
     workspace_id: UUID | None = Query(default=None, description="可选工作空间过滤条件。"),
+    limit: int = Query(default=100, ge=1, le=500, description="每页数量"),
+    offset: int = Query(default=0, ge=0, description="偏移量"),
     ctx=Depends(get_request_context),
     db: Session = Depends(get_db),
 ):
@@ -195,6 +197,8 @@ def list_knowledge_bases(
             .where(KnowledgeBase.workspace_id.in_(allowed_workspace_ids))
             .where(KnowledgeBase.id.in_(list(kb_role_map.keys())))
             .where(KnowledgeBase.status != KBStatus.ARCHIVED)
+            .limit(limit)
+            .offset(offset)
         )
         .scalars()
         .all()

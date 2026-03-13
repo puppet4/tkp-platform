@@ -90,8 +90,8 @@ async def list_deletion_requests(
     request: Request,
     deletion_status: str | None = Query(default=None, alias="status"),
     status_filter: str | None = Query(default=None),
-    limit: int = 50,
-    offset: int = 0,
+    limit: int = Query(default=50, ge=1, le=500),
+    offset: int = Query(default=0, ge=0),
     ctx: RequestContext = Depends(get_request_context),
     db: Session = Depends(get_db),
 ):

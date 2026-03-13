@@ -119,7 +119,9 @@ class RetentionService:
 
     def _resolve_table_name(self, resource_type: str) -> str | None:
         """将资源类型映射为受控表名，避免 SQL 注入。"""
-        return _RESOURCE_TABLES.get(resource_type)
+        if resource_type not in _RESOURCE_TABLES:
+            return None
+        return _RESOURCE_TABLES[resource_type]
 
     def find_expired_records(
         self,
