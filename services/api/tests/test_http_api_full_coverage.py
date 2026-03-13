@@ -3194,6 +3194,7 @@ def _truncate_all_tables_for_test(db_engine) -> None:
 def api_client(monkeypatch: pytest.MonkeyPatch, tmp_path) -> Generator[TestClient, None, None]:
     monkeypatch.setenv("AUTH_JWT_SECRET", "http-test-secret-key-at-least-32-bytes")
     monkeypatch.setenv("AUTH_JWT_ALGORITHMS", "HS256")
+    monkeypatch.setenv("INTERNAL_SERVICE_TOKEN", "test-internal-service-token-123")
     monkeypatch.setenv("STORAGE_ROOT", str(tmp_path / "storage"))
     monkeypatch.setenv("STORAGE_BACKEND", "local")
     monkeypatch.setenv("RAG_BASE_URL", "")

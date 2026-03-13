@@ -122,10 +122,10 @@ async def upload_document(
     validate_upload_file(file, content)
 
     checksum = hashlib.sha256(content).hexdigest()
-    source_uri = file.filename or “upload.bin”
+    source_uri = file.filename or "upload.bin"
 
     try:
-        # 以 tenant + workspace + kb + source_uri 识别同源文档，实现”同文件升级版本”语义。
+        # 以 tenant + workspace + kb + source_uri 识别同源文档，实现"同文件升级版本"语义。
         document = (
             db.execute(
                 select(Document)
@@ -194,7 +194,7 @@ async def upload_document(
             kb_id=kb_id,
             document_id=document.id,
             document_version_id=doc_version.id,
-            action=”upload”,
+            action="upload",
             client_idempotency_key=idempotency_key,
         )
 
@@ -203,15 +203,15 @@ async def upload_document(
             request=request,
             tenant_id=ctx.tenant_id,
             actor_user_id=ctx.user_id,
-            action=”document.upload”,
-            resource_type=”document”,
+            action="document.upload",
+            resource_type="document",
             resource_id=str(document.id),
             after_json={
-                “workspace_id”: str(kb.workspace_id),
-                “kb_id”: str(kb_id),
-                “version”: version_no,
-                “object_key”: object_key,
-                “job_id”: str(ingestion_job.id),
+                "workspace_id": str(kb.workspace_id),
+                "kb_id": str(kb_id),
+                "version": version_no,
+                "object_key": object_key,
+                "job_id": str(ingestion_job.id),
             },
         )
 
@@ -753,7 +753,7 @@ def reindex_document(
         user_id=ctx.user_id,
     )
 
-    # 仅对当前生效版本做重建，保持“查询到什么版本就重建什么版本”的一致性。
+    # 仅对当前生效版本做重建，保持"查询到什么版本就重建什么版本"的一致性。
     doc_version = (
         db.execute(
             select(DocumentVersion)
