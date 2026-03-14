@@ -218,6 +218,7 @@ class LLMGenerator:
         query: str,
         context_chunks: list[dict[str, Any]],
         system_prompt: str | None = None,
+        history_messages: list[dict[str, str]] | None = None,
     ):
         """流式生成回答（生成器函数）。
 
@@ -225,6 +226,7 @@ class LLMGenerator:
             query: 用户查询
             context_chunks: 检索到的文档块列表
             system_prompt: 可选的系统提示词
+            history_messages: 历史对话消息（用于上下文记忆）
 
         Yields:
             生成的文本片段
@@ -253,13 +255,22 @@ class LLMGenerator:
 
         messages = [
             {"role": "system", "content": system_prompt},
-            {
-                "role": "user",
-                "content": f"参考文档：\n\n{context_text}\n\n用户问题：{query}",
-            },
         ]
 
+        # 添加历史对话
+        if history_messages:
+            messages.extend(history_messages)
+
+        # 添加当前查询
+        messages.append({
+            "role": "user",
+            "content": f"参考文档：\n\n{context_text}\n\n用户问题：{query}",
+        })
+
         try:
+            logger.info(f"Starting streaming generation with model: {self.model}")
+            logger.debug(f"Messages: {messages}")
+
             stream = self.client.chat.completions.create(
                 model=self.model,
                 messages=messages,
@@ -268,9 +279,15 @@ class LLMGenerator:
                 stream=True,
             )
 
+            chunk_count = 0
             for chunk in stream:
                 if chunk.choices[0].delta.content:
-                    yield chunk.choices[0].delta.content
+                    chunk_count += 1
+                    content = chunk.choices[0].delta.content
+                    logger.debug(f"Chunk {chunk_count}: {content[:30]}...")
+                    yield content
+
+            logger.info(f"Streaming completed. Total chunks: {chunk_count}")
 
         except Exception as exc:
             logger.exception("failed to generate streaming answer: %s", exc)

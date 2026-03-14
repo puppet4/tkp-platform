@@ -171,8 +171,38 @@ def query_chunks(
 
         latency_ms = int((time.perf_counter() - start) * 1000)
 
+        # 转换 hits 格式以匹配 RetrievalHit schema
+        formatted_hits = []
+        for hit in result["hits"]:
+            similarity = hit.get("similarity", 0)
+            # RRF score 太小，使用 similarity 作为主分数
+            display_score = int(similarity * 100) if similarity else 0
+
+            formatted_hit = {
+                "chunk_id": hit["chunk_id"],
+                "document_id": hit["document_id"],
+                "document_version_id": hit["document_version_id"],
+                "kb_id": hit["kb_id"],
+                "chunk_no": hit["chunk_no"],
+                "title_path": hit.get("document_title"),
+                "score": display_score,
+                "match_type": hit.get("retrieval_method", "vector"),
+                "snippet": hit.get("content", "")[:200],  # 截取前200字符作为摘要
+                "metadata": hit.get("metadata"),
+                "citation": None,
+                "reason": f"相似度: {similarity:.2%}" if similarity else "匹配",
+                "matched_terms": [],
+                "score_breakdown": {
+                    "vector_score": int(similarity * 100) if similarity else 0,
+                    "keyword_score": 0,
+                    "rerank_bonus": 0,
+                    "final_score": display_score,
+                },
+            }
+            formatted_hits.append(formatted_hit)
+
         return {
-            "hits": result["hits"],
+            "hits": formatted_hits,
             "latency_ms": latency_ms,
             "retrieval_strategy": result["strategy"],
             "query_rewrite": result["query_rewrite"],
@@ -195,8 +225,37 @@ def query_chunks(
 
         latency_ms = int((time.perf_counter() - start) * 1000)
 
+        # 转换回退结果格式
+        formatted_hits = []
+        for hit in hits:
+            similarity = hit.get("similarity", 0)
+            display_score = int(similarity * 100) if similarity else 0
+
+            formatted_hit = {
+                "chunk_id": hit["chunk_id"],
+                "document_id": hit["document_id"],
+                "document_version_id": hit["document_version_id"],
+                "kb_id": hit["kb_id"],
+                "chunk_no": hit["chunk_no"],
+                "title_path": hit.get("document_title"),
+                "score": display_score,
+                "match_type": "vector",
+                "snippet": hit.get("content", "")[:200],
+                "metadata": hit.get("metadata"),
+                "citation": None,
+                "reason": f"相似度: {similarity:.2%}" if similarity else "匹配",
+                "matched_terms": [],
+                "score_breakdown": {
+                    "vector_score": int(similarity * 100) if similarity else 0,
+                    "keyword_score": 0,
+                    "rerank_bonus": 0,
+                    "final_score": display_score,
+                },
+            }
+            formatted_hits.append(formatted_hit)
+
         return {
-            "hits": hits,
+            "hits": formatted_hits,
             "latency_ms": latency_ms,
             "retrieval_strategy": "vector",
             "query_rewrite": {

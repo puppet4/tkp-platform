@@ -378,7 +378,7 @@ def get_document_ingestion_status(
             {
                 "document_id": str(document_id),
                 "status": "no_job",
-                "message": "暂无入库任务",
+                "current_version": document.current_version,
             },
         )
 
@@ -392,13 +392,16 @@ def get_document_ingestion_status(
         request,
         {
             "document_id": str(document_id),
-            "job_id": str(latest_job.id),
-            "status": latest_job.status,
-            "stage": latest_job.stage or "queued",
-            "progress": progress,
-            "error": latest_job.error,
-            "created_at": latest_job.created_at.isoformat() if latest_job.created_at else None,
-            "completed_at": latest_job.finished_at.isoformat() if latest_job.finished_at else None,
+            "status": document.status,
+            "current_version": document.current_version,
+            "latest_job": {
+                "job_id": str(latest_job.id),
+                "status": latest_job.status,
+                "progress": progress,
+                "error_message": latest_job.error,
+                "created_at": latest_job.created_at.isoformat() if latest_job.created_at else None,
+                "updated_at": latest_job.finished_at.isoformat() if latest_job.finished_at else None,
+            },
         },
     )
 

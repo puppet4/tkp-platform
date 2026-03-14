@@ -3,6 +3,7 @@
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import desc, func, select
 from sqlalchemy.orm import Session
@@ -27,6 +28,13 @@ router = APIRouter(prefix="/chat", tags=["chat"])
 
 
 # ============ 请求/响应模型 ============
+
+class ConversationCreateRequest(BaseModel):
+    """创建会话请求。"""
+
+    kb_ids: list[str] = Field(description="知识库 ID 列表", default_factory=list)
+    title: str = Field(description="会话标题", default="新会话", min_length=1, max_length=256)
+
 
 class ConversationUpdateRequest(BaseModel):
     """更新会话请求。"""
@@ -98,6 +106,69 @@ def list_conversations(
             "total": total,
             "limit": limit,
             "offset": offset,
+        },
+    )
+
+
+@router.post(
+    "/conversations",
+    summary="创建会话",
+    description="创建新的对话会话。",
+    status_code=status.HTTP_200_OK,
+    response_model=SuccessResponse,
+)
+def create_conversation(
+    request: Request,
+    payload: ConversationCreateRequest,
+    ctx=Depends(get_request_context),
+    db: Session = Depends(get_db),
+):
+    """创建新会话。"""
+    require_tenant_action(
+        db,
+        tenant_id=ctx.tenant_id,
+        tenant_role=ctx.tenant_role,
+        action=PermissionAction.CHAT_COMPLETION,
+    )
+
+    # 验证知识库访问权限
+    kb_ids = []
+    if payload.kb_ids:
+        from uuid import UUID as parse_uuid
+        try:
+            kb_ids = [parse_uuid(kb_id) for kb_id in payload.kb_ids]
+        except (ValueError, AttributeError):
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="invalid kb_ids format")
+
+        readable_kb_ids = filter_readable_kb_ids(
+            db,
+            tenant_id=ctx.tenant_id,
+            user_id=ctx.user_id,
+            kb_ids=kb_ids,
+        )
+        if not readable_kb_ids:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="no accessible knowledge bases")
+        kb_ids = readable_kb_ids
+
+    # 创建会话
+    conversation = Conversation(
+        tenant_id=ctx.tenant_id,
+        user_id=ctx.user_id,
+        title=payload.title,
+        kb_scope={"kb_ids": [str(kb_id) for kb_id in kb_ids]} if kb_ids else {},
+    )
+    db.add(conversation)
+    db.commit()
+    db.refresh(conversation)
+
+    return success(
+        request,
+        {
+            "conversation_id": str(conversation.id),
+            "title": conversation.title,
+            "kb_scope": conversation.kb_scope,
+            "created_at": conversation.created_at.isoformat(),
+            "updated_at": conversation.updated_at.isoformat(),
         },
     )
 
@@ -315,18 +386,11 @@ def delete_conversation(
 
 @router.post(
     "/completions",
-    summary="创建问答回复",
-    description="在授权知识库范围内检索并返回带引用的回答。支持会话上下文记忆。",
+    summary="创建问答回复（流式）",
+    description="在授权知识库范围内检索并返回带引用的回答。支持会话上下文记忆和流式输出。",
     status_code=status.HTTP_200_OK,
-    response_model=SuccessResponse[ChatCompletionData],
-    responses={
-        401: {"model": ErrorResponse},
-        403: {"model": ErrorResponse},
-        404: {"model": ErrorResponse},
-        422: {"model": ErrorResponse},
-    },
 )
-def chat_completions(
+async def chat_completions(
     payload: ChatCompletionRequest,
     request: Request,
     ctx=Depends(get_request_context),
@@ -392,23 +456,24 @@ def chat_completions(
     # 加载会话历史上下文（短期记忆）
     context_messages = []
     if payload.conversation_id:
-        # 获取最近 10 轮对话（20 条消息）
+        # 获取最近 5 轮对话（10 条消息）
         history_stmt = (
             select(Message)
             .where(Message.conversation_id == conversation.id)
             .order_by(desc(Message.created_at))
-            .limit(20)
+            .limit(10)
         )
         history_result = db.execute(history_stmt)
         history_messages = list(history_result.scalars().all())
         history_messages.reverse()  # 按时间正序
 
-        # 格式化为上下文
+        # 格式化为上下文，过滤空消息
         for msg in history_messages:
-            context_messages.append({
-                "role": msg.role,
-                "content": msg.content,
-            })
+            if msg.content and msg.content.strip():  # 只添加非空消息
+                context_messages.append({
+                    "role": msg.role,
+                    "content": msg.content[:2000],  # 限制长度，避免超长消息
+                })
 
     # 保存用户消息
     db.add(
@@ -421,38 +486,86 @@ def chat_completions(
             usage={},
         )
     )
-
-    # 生成回答（传入上下文）
-    rag_data = generate_chat_answer(
-        db,
-        tenant_id=ctx.tenant_id,
-        kb_ids=readable_kb_ids,
-        question=question,
-        top_k=6,
-        context_messages=context_messages,  # 传入历史上下文
-    )
-    answer_text = rag_data["answer"]
-    citations = rag_data["citations"]
-    usage = rag_data["usage"]
-
-    assistant_message = Message(
-        tenant_id=ctx.tenant_id,
-        conversation_id=UUID(str(conversation.id)),
-        role=MessageRole.ASSISTANT,
-        content=answer_text,
-        citations=citations,
-        usage=usage,
-    )
-    db.add(assistant_message)
     db.commit()
 
-    return success(
-        request,
-        {
-            "message_id": assistant_message.id,
-            "answer": answer_text,
-            "citations": citations,
-            "usage": usage,
-            "conversation_id": conversation.id,
-        },
-    )
+    # 保存会话ID和租户ID用于流式生成
+    conversation_id = conversation.id
+    tenant_id = ctx.tenant_id
+
+    # 流式生成
+    import json
+    from tkp_api.services.rag.retrieval_improved import search_chunks_improved, RAGServicesSingleton
+
+    async def generate_stream():
+        # 创建新的数据库会话用于异步操作
+        from tkp_api.db.session import SessionLocal
+        stream_db = SessionLocal()
+
+        try:
+            # 先检索
+            chunks = search_chunks_improved(
+                stream_db,
+                tenant_id=tenant_id,
+                kb_ids=readable_kb_ids,
+                query=question,
+                top_k=6,
+            )
+
+            # 发送引用信息
+            citations = []
+            for chunk in chunks:
+                citations.append({
+                    "chunk_id": str(chunk["chunk_id"]),
+                    "document_id": str(chunk["document_id"]),
+                    "document_version_id": str(chunk.get("document_version_id", "")),
+                    "document_title": chunk["document_title"],
+                    "kb_name": chunk["kb_name"],
+                    "similarity": chunk["similarity"],
+                    "snippet": chunk.get("snippet", ""),
+                    "content": chunk["content"],
+                })
+
+            yield f"data: {json.dumps({'type': 'citations', 'data': citations}, ensure_ascii=False)}\n\n"
+
+            # 流式生成回答
+            generator = RAGServicesSingleton.get_generator()
+            full_answer = ""
+
+            import logging
+            logger = logging.getLogger("tkp_api.chat")
+            logger.info(f"Starting streaming generation for question: {question[:50]}...")
+
+            chunk_count = 0
+            for chunk_text in generator.generate_streaming_answer(
+                query=question,
+                context_chunks=chunks,
+                history_messages=context_messages,
+            ):
+                chunk_count += 1
+                full_answer += chunk_text
+                logger.debug(f"Received chunk {chunk_count}: {chunk_text[:50]}...")
+                yield f"data: {json.dumps({'type': 'content', 'data': chunk_text}, ensure_ascii=False)}\n\n"
+
+            logger.info(f"Streaming completed. Total chunks: {chunk_count}, answer length: {len(full_answer)}")
+
+            # 保存助手消息
+            assistant_message = Message(
+                tenant_id=tenant_id,
+                conversation_id=UUID(str(conversation_id)),
+                role=MessageRole.ASSISTANT,
+                content=full_answer,
+                citations=citations,
+                usage={"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
+            )
+            stream_db.add(assistant_message)
+            stream_db.commit()
+
+            # 发送完成信号
+            yield f"data: {json.dumps({'type': 'done', 'data': {'message_id': str(assistant_message.id), 'conversation_id': str(conversation_id)}}, ensure_ascii=False)}\n\n"
+
+        except Exception as e:
+            yield f"data: {json.dumps({'type': 'error', 'data': str(e)}, ensure_ascii=False)}\n\n"
+        finally:
+            stream_db.close()
+
+    return StreamingResponse(generate_stream(), media_type="text/event-stream")

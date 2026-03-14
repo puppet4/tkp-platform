@@ -68,7 +68,7 @@ class RAGServicesSingleton:
     _query_preprocessor = None
     _parent_child_merger = None
     _answer_grader = None
-    _lock = threading.Lock()
+    _lock = threading.RLock()  # 使用可重入锁，避免死锁
 
     @classmethod
     def get_embedding_service(cls):
@@ -92,8 +92,9 @@ class RAGServicesSingleton:
             with cls._lock:
                 if cls._retriever is None:
                     settings = get_settings()
+                    embedding_service = cls.get_embedding_service()
                     cls._retriever = create_retriever(
-                        embedding_service=cls.get_embedding_service(),
+                        embedding_service=embedding_service,
                         top_k=settings.retrieval_top_k,
                         similarity_threshold=settings.retrieval_similarity_threshold,
                     )

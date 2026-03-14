@@ -19,7 +19,7 @@ engine = create_engine(
     max_overflow=settings.database_max_overflow,  # 最大溢出连接数（可配置）
     pool_timeout=settings.database_pool_timeout,  # 获取连接超时时间（秒）
     pool_recycle=settings.database_pool_recycle,  # 连接回收时间（秒），避免长时间连接被数据库关闭
-    echo=settings.app_debug,  # 开发模式下打印 SQL
+    echo=False,  # 关闭 SQL 日志，避免日志噪音
 )
 # 统一会话工厂，路由层通过依赖注入获取短生命周期会话。
 SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False, class_=Session)

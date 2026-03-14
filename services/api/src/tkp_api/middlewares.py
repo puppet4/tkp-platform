@@ -41,14 +41,28 @@ async def request_id_middleware(request: Request, call_next):
     request.state.request_id = str(uuid.uuid4())
     request.state.request_started_at = perf_counter()
 
-    logger.info(
-        f"Request started: {request.method} {request.url.path}",
-        extra={
-            "request_id": request.state.request_id,
-            "method": request.method,
-            "path": request.url.path,
-        }
-    )
+    # 跳过健康检查、指标端点和高频轮询接口的日志记录（避免日志噪音）
+    skip_logging = request.url.path in [
+        "/health/live",
+        "/health/ready",
+        "/metrics",
+        "/api/health/live",
+        "/api/health/ready",
+        "/api/metrics",
+        "/api/auth/me",
+        "/api/permissions/me",
+        "/api/permissions/ui-manifest",
+    ]
+
+    if not skip_logging:
+        logger.info(
+            f"Request started: {request.method} {request.url.path}",
+            extra={
+                "request_id": request.state.request_id,
+                "method": request.method,
+                "path": request.url.path,
+            }
+        )
 
     response = await call_next(request)
     response.headers["X-Request-Id"] = request.state.request_id
@@ -58,20 +72,22 @@ async def request_id_middleware(request: Request, call_next):
 
     # 慢请求告警
     is_slow = elapsed_ms > SLOW_REQUEST_THRESHOLD_MS
-    log_level = logging.WARNING if is_slow else logging.INFO
-    logger.log(
-        log_level,
-        f"Request completed: {request.method} {request.url.path} - {response.status_code}"
-        + (f" [SLOW REQUEST]" if is_slow else ""),
-        extra={
-            "request_id": request.state.request_id,
-            "method": request.method,
-            "path": request.url.path,
-            "status_code": response.status_code,
-            "duration_ms": elapsed_ms,
-            "slow_request": is_slow,
-        }
-    )
+
+    if not skip_logging:
+        log_level = logging.WARNING if is_slow else logging.INFO
+        logger.log(
+            log_level,
+            f"Request completed: {request.method} {request.url.path} - {response.status_code}"
+            + (f" [SLOW REQUEST]" if is_slow else ""),
+            extra={
+                "request_id": request.state.request_id,
+                "method": request.method,
+                "path": request.url.path,
+                "status_code": response.status_code,
+                "duration_ms": elapsed_ms,
+                "slow_request": is_slow,
+            }
+        )
 
     return response
 

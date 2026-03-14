@@ -1003,7 +1003,7 @@ def list_ingestion_jobs(
                 "document_id": str(job.document_id),
                 "status": job.status,
                 "progress": job.progress,
-                "error_message": job.error_message,
+                "error_message": job.error,
                 "created_at": job.created_at.isoformat() if job.created_at else None,
                 "updated_at": job.updated_at.isoformat() if job.updated_at else None,
             }
@@ -1046,7 +1046,7 @@ def create_quota_policy(
         actor_user_id=ctx.user_id,
         action="ops.quota.create",
         resource_type="quota_policy",
-        resource_id=data["policy_id"],
+        resource_id=data["id"],
         after_json=_json_safe(data),
     )
     db.commit()
