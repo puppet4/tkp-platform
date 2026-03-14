@@ -9,6 +9,9 @@ jobs:
   api-http-tests-sqlite:
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    env:
+      AUTH_JWT_SECRET: ci-test-secret-key-at-least-32-bytes-long
+      INTERNAL_SERVICE_TOKEN: ci-test-internal-service-token
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -51,6 +54,9 @@ jobs:
   api-http-tests-postgres:
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    env:
+      AUTH_JWT_SECRET: ci-test-secret-key-at-least-32-bytes-long
+      INTERNAL_SERVICE_TOKEN: ci-test-internal-service-token
     services:
       postgres:
         image: docker.io/pgvector/pgvector:pg16
