@@ -3344,6 +3344,27 @@ def api_client(monkeypatch: pytest.MonkeyPatch, tmp_path) -> Generator[TestClien
     monkeypatch.setenv("STORAGE_ROOT", str(tmp_path / "storage"))
     monkeypatch.setenv("STORAGE_BACKEND", "local")
     monkeypatch.setenv("RAG_BASE_URL", "")
+
+    # Mock OpenAI-dependent services to avoid requiring real API keys in CI
+    from unittest.mock import MagicMock
+
+    # Create mock generator
+    mock_generator = MagicMock()
+    def mock_streaming_method(*args, **kwargs):
+        yield "测试"
+        yield "回答"
+    mock_generator.generate_streaming_answer = mock_streaming_method
+
+    # Create mock embedding service
+    mock_embedding_service = MagicMock()
+    mock_embedding_service.embed_text.return_value = [0.1] * 1536
+
+    # Set mocks directly on RAG singletons to bypass factory functions
+    from tkp_api.services.rag.retrieval_improved import RAGServicesSingleton
+    RAGServicesSingleton._generator = mock_generator
+    RAGServicesSingleton._embedding_service = mock_embedding_service
+    RAGServicesSingleton._retriever = None
+
     get_settings.cache_clear()
     _reset_runtime_auth_state()
     app.dependency_overrides.clear()
@@ -3375,12 +3396,21 @@ def api_client(monkeypatch: pytest.MonkeyPatch, tmp_path) -> Generator[TestClien
             db.close()
 
     app.dependency_overrides[get_db] = override_get_db
-    with TestClient(app) as client:
-        yield client
-    app.dependency_overrides.clear()
-    Base.metadata.drop_all(bind=sqlite_engine)
-    _reset_runtime_auth_state()
-    get_settings.cache_clear()
+
+    # Also patch SessionLocal for streaming endpoints that bypass dependency injection
+    import tkp_api.db.session
+    original_session_local = tkp_api.db.session.SessionLocal
+    tkp_api.db.session.SessionLocal = testing_session_local
+
+    try:
+        with TestClient(app) as client:
+            yield client
+    finally:
+        tkp_api.db.session.SessionLocal = original_session_local
+        app.dependency_overrides.clear()
+        Base.metadata.drop_all(bind=sqlite_engine)
+        _reset_runtime_auth_state()
+        get_settings.cache_clear()
 
 
 def _is_log_enabled() -> bool:

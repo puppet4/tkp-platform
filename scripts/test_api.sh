@@ -96,7 +96,8 @@ configure_mode_env() {
     export TKP_TEST_DB_MODE=postgres
   else
     export TKP_TEST_DB_MODE=sqlite
-    unset DATABASE_URL || true
+    # Set sqlite DATABASE_URL if not already set (for startup warmup)
+    export DATABASE_URL="${DATABASE_URL:-sqlite+pysqlite:///:memory:}"
     unset REDIS_URL || true
   fi
 }

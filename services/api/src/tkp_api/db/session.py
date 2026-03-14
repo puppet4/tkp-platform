@@ -11,16 +11,23 @@ from tkp_api.core.context import get_request_context
 settings = get_settings()
 
 # 全局数据库引擎，配置连接池以支持高并发
-engine = create_engine(
-    settings.database_url,
-    future=True,
-    pool_pre_ping=True,  # 连接前检查，避免使用僵尸连接
-    pool_size=settings.database_pool_size,  # 连接池大小（可配置）
-    max_overflow=settings.database_max_overflow,  # 最大溢出连接数（可配置）
-    pool_timeout=settings.database_pool_timeout,  # 获取连接超时时间（秒）
-    pool_recycle=settings.database_pool_recycle,  # 连接回收时间（秒），避免长时间连接被数据库关闭
-    echo=False,  # 关闭 SQL 日志，避免日志噪音
-)
+# SQLite 不支持某些连接池参数，需要条件性配置
+engine_kwargs = {
+    "future": True,
+    "pool_pre_ping": True,  # 连接前检查，避免使用僵尸连接
+    "echo": False,  # 关闭 SQL 日志，避免日志噪音
+}
+
+# 只有非 SQLite 数据库才支持这些连接池参数
+if not settings.database_url.startswith("sqlite"):
+    engine_kwargs.update({
+        "pool_size": settings.database_pool_size,  # 连接池大小（可配置）
+        "max_overflow": settings.database_max_overflow,  # 最大溢出连接数（可配置）
+        "pool_timeout": settings.database_pool_timeout,  # 获取连接超时时间（秒）
+        "pool_recycle": settings.database_pool_recycle,  # 连接回收时间（秒），避免长时间连接被数据库关闭
+    })
+
+engine = create_engine(settings.database_url, **engine_kwargs)
 # 统一会话工厂，路由层通过依赖注入获取短生命周期会话。
 SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False, class_=Session)
 

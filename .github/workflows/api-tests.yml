@@ -12,6 +12,9 @@ jobs:
     env:
       AUTH_JWT_SECRET: ci-test-secret-key-at-least-32-bytes-long
       INTERNAL_SERVICE_TOKEN: ci-test-internal-service-token
+      DATABASE_URL: "sqlite+pysqlite:///:memory:"
+      OPENAI_CHAT_API_KEY: sk-dummy-key-for-ci-testing
+      OPENAI_EMBEDDING_API_KEY: sk-dummy-key-for-ci-testing
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -57,6 +60,8 @@ jobs:
     env:
       AUTH_JWT_SECRET: ci-test-secret-key-at-least-32-bytes-long
       INTERNAL_SERVICE_TOKEN: ci-test-internal-service-token
+      OPENAI_CHAT_API_KEY: sk-dummy-key-for-ci-testing
+      OPENAI_EMBEDDING_API_KEY: sk-dummy-key-for-ci-testing
     services:
       postgres:
         image: docker.io/pgvector/pgvector:pg16
