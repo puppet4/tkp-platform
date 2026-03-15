@@ -163,7 +163,9 @@ run_pytest_target() {
   fi
 
   echo "uv run failed with code $uv_exit_code, fallback to local .venv ..."
-  local pytest_site_packages="${PYTEST_SITE_PACKAGES:-/Library/Frameworks/Python.framework/Versions/3.13/lib/python3.13/site-packages}"
+  local venv_site_packages
+  venv_site_packages="$(.venv/bin/python -c 'import site; print(site.getsitepackages()[0])')"
+  local pytest_site_packages="${PYTEST_SITE_PACKAGES:-$venv_site_packages}"
   PYTHONPATH="services/api/src:$pytest_site_packages" .venv/bin/python -m pytest \
     "${pytest_args[@]}" $TEST_PYTEST_OPTS
 }

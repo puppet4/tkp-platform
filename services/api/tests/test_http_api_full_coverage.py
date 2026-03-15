@@ -3001,6 +3001,72 @@ class WorkflowRunner:
             "ops.retrieval.evaluate.compare",
         )
 
+        # ── Import Batches 全流程覆盖 ──
+        batch_create = self.success(
+            "POST",
+            "/api/knowledge-bases/{kb_id}/import-batches",
+            actual_path=f"/api/knowledge-bases/{self.ctx.kb1_id}/import-batches",
+            token=self.ctx.owner_token,
+            json={"total_files": 1},
+        )
+        _require_keys(batch_create, ["id", "status"], "import-batch.create")
+        batch_id = batch_create["id"]
+
+        batch_upload = self.success(
+            "POST",
+            "/api/import-batches/{batch_id}/files",
+            actual_path=f"/api/import-batches/{batch_id}/files",
+            token=self.ctx.owner_token,
+            files={"file": ("batch_test.txt", b"batch content", "text/plain")},
+        )
+        _require_keys(batch_upload, ["document_id"], "import-batch.upload")
+        batch_doc_id = batch_upload["document_id"]
+
+        self.success(
+            "POST",
+            "/api/import-batches/{batch_id}/finalize",
+            actual_path=f"/api/import-batches/{batch_id}/finalize",
+            token=self.ctx.owner_token,
+        )
+
+        self.success(
+            "GET",
+            "/api/import-batches/{batch_id}",
+            actual_path=f"/api/import-batches/{batch_id}",
+            token=self.ctx.owner_token,
+        )
+
+        self.success(
+            "GET",
+            "/api/knowledge-bases/{kb_id}/import-batches",
+            actual_path=f"/api/knowledge-bases/{self.ctx.kb1_id}/import-batches",
+            token=self.ctx.owner_token,
+        )
+
+        # 创建一个新的批次用于取消测试
+        batch_create2 = self.success(
+            "POST",
+            "/api/knowledge-bases/{kb_id}/import-batches",
+            actual_path=f"/api/knowledge-bases/{self.ctx.kb1_id}/import-batches",
+            token=self.ctx.owner_token,
+            json={"total_files": 1},
+        )
+        self.success(
+            "POST",
+            "/api/import-batches/{batch_id}/cancel",
+            actual_path=f"/api/import-batches/{batch_create2['id']}/cancel",
+            token=self.ctx.owner_token,
+        )
+
+        # ── Batch Delete 覆盖 ──
+        batch_delete_result = self.success(
+            "POST",
+            "/api/documents/batch-delete",
+            token=self.ctx.owner_token,
+            json={"document_ids": [batch_doc_id]},
+        )
+        assert batch_delete_result["deleted"] >= 1
+
         deleted_doc = self.success(
             "DELETE",
             "/api/documents/{document_id}",

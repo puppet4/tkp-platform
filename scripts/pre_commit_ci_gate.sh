@@ -4,6 +4,9 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
 
+# Ensure uv and local .venv are on PATH (git hooks run with minimal PATH)
+export PATH="$ROOT_DIR/.venv/bin:$HOME/.local/bin:$HOME/.cargo/bin:/usr/local/bin:$PATH"
+
 DRY_RUN="${PRE_COMMIT_DRY_RUN:-0}"
 POSTGRES_ENV_READY=0
 
