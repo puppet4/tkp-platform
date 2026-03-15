@@ -110,6 +110,8 @@ _MEMBER_ACTIONS = {
     PermissionAction.WORKSPACE_READ.value,
     PermissionAction.KB_READ.value,
     PermissionAction.DOCUMENT_READ.value,
+    PermissionAction.DOCUMENT_WRITE.value,
+    PermissionAction.DOCUMENT_DELETE.value,
     PermissionAction.RETRIEVAL_QUERY.value,
     PermissionAction.CHAT_COMPLETION.value,
     PermissionAction.AGENT_RUN_CREATE.value,

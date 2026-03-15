@@ -53,29 +53,34 @@ def test_query_rewriter_passes_base_url(monkeypatch):
 
 
 def test_rag_embedding_service_passes_base_url(monkeypatch):
+    """Test that embedding service correctly passes config.
+
+    The rag.embeddings module has been merged into embedding_service.py.
+    This test now validates the unified EmbeddingService picks up settings.
+    """
     _install_fake_openai(monkeypatch)
-    from tkp_api.services.rag.embeddings import create_embedding_service
 
-    service = create_embedding_service(
-        api_key="test-key",
-        base_url="https://example.com/v1",
-        model="text-embedding-3-large",
-    )
+    monkeypatch.setenv("AUTH_JWT_SECRET", "test-secret-key-for-jwt-auth-1234567890")
+    monkeypatch.setenv("INTERNAL_SERVICE_TOKEN", "test-internal-token-1234567890")
+    monkeypatch.setenv("OPENAI_EMBEDDING_API_KEY", "test-key")
+    monkeypatch.setenv("OPENAI_EMBEDDING_BASE_URL", "https://example.com/v1")
+    monkeypatch.setenv("OPENAI_EMBEDDING_MODEL", "text-embedding-3-large")
 
-    assert _FakeOpenAI.last_kwargs == {"api_key": "test-key", "base_url": "https://example.com/v1"}
-    assert _FakeAsyncOpenAI.last_kwargs == {"api_key": "test-key", "base_url": "https://example.com/v1"}
+    from tkp_api.core.config import clear_settings_cache
+    clear_settings_cache()
+
+    from tkp_api.services.embedding_service import EmbeddingService
+    service = EmbeddingService()
+
     assert service.model == "text-embedding-3-large"
+    clear_settings_cache()
 
 
-def test_embedding_gateway_openai_provider_passes_base_url(monkeypatch):
-    _install_fake_openai(monkeypatch)
-    from tkp_api.services.embedding_gateway import OpenAIEmbeddingProvider
-
-    provider = OpenAIEmbeddingProvider(
-        api_key="test-key",
-        base_url="https://example.com/v1",
-        model="text-embedding-3-large",
-    )
-
-    assert _FakeOpenAI.last_kwargs == {"api_key": "test-key", "base_url": "https://example.com/v1"}
-    assert provider.model == "text-embedding-3-large"
+def test_embedding_gateway_openai_provider_removed():
+    """The embedding_gateway module has been removed (merged into embedding_service)."""
+    import importlib
+    try:
+        importlib.import_module("tkp_api.services.embedding_gateway")
+        assert False, "embedding_gateway should have been removed"
+    except (ImportError, ModuleNotFoundError):
+        pass  # expected

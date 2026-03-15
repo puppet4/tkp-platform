@@ -16,6 +16,9 @@ class StorageProvider(Protocol):
     def put_bytes(self, object_key: str, content: bytes, content_type: str = "application/octet-stream") -> None:
         """写入对象字节。"""
 
+    def get_bytes(self, object_key: str) -> bytes:
+        """读取对象字节。"""
+
 
 def infer_parser_type(filename: str) -> str:
     """根据文件后缀推断解析器类型。"""
@@ -63,6 +66,12 @@ class LocalStorageProvider:
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_bytes(content)
 
+    def get_bytes(self, object_key: str) -> bytes:
+        target = self._root.joinpath(object_key)
+        if not target.exists():
+            raise FileNotFoundError(f"object not found: {target}")
+        return target.read_bytes()
+
 
 def _build_minio_client(settings: Settings):
     """构建 MinIO 客户端（延迟导入，避免本地不依赖时启动失败）。"""
@@ -103,6 +112,14 @@ class MinioStorageProvider:
             content_type=content_type,
         )
 
+    def get_bytes(self, object_key: str) -> bytes:
+        obj = self._client.get_object(self._bucket, object_key)
+        try:
+            return obj.read()
+        finally:
+            obj.close()
+            obj.release_conn()
+
 
 def _build_oss_bucket(settings: Settings):
     """构建阿里云 OSS Bucket 客户端（延迟导入）。"""
@@ -136,6 +153,9 @@ class OssStorageProvider:
             content,
             headers={"Content-Type": content_type},
         )
+
+    def get_bytes(self, object_key: str) -> bytes:
+        return self._bucket.get_object(object_key).read()
 
 
 def get_storage_provider(settings: Settings | None = None) -> StorageProvider:
@@ -171,3 +191,9 @@ def persist_upload(
     provider = get_storage_provider(settings)
     provider.put_bytes(object_key, content)
     return object_key
+
+
+def read_upload(object_key: str) -> bytes:
+    """从对象存储读取已上传文件的字节。"""
+    provider = get_storage_provider()
+    return provider.get_bytes(object_key)

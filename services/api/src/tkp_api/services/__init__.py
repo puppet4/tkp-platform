@@ -32,7 +32,7 @@ from tkp_api.services.permissions import (
     set_tenant_role_actions,
 )
 from tkp_api.services.retrieval import generate_chat_answer, query_chunks
-from tkp_api.services.storage import infer_parser_type, persist_upload
+from tkp_api.services.storage import infer_parser_type, persist_upload, read_upload
 from tkp_api.services.tenant_bootstrap import build_unique_tenant_slug, create_tenant_with_owner, normalize_tenant_slug
 
 __all__ = [
@@ -42,6 +42,7 @@ __all__ = [
     "generate_chat_answer",
     "infer_parser_type",
     "persist_upload",
+    "read_upload",
     "query_chunks",
     "normalize_email",
     "normalize_tenant_slug",

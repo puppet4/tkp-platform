@@ -407,10 +407,11 @@ def _process_job_with_real_embeddings(
         {"job_id": str(job_id)},
     )
 
-    chunks = chunker.chunk_text(text_content)
+    chunks = chunker.chunk_text_structured(text_content)
     if not chunks:
         raise RuntimeError("Document chunking produced no chunks")
 
+    chunk_texts = [c.content for c in chunks]
     logger.info("chunked document: job_id=%s, chunks=%d", job_id, len(chunks))
 
     # Step 4: 生成向量
@@ -426,7 +427,7 @@ def _process_job_with_real_embeddings(
     )
 
     logger.info("generating embeddings: job_id=%s, chunks=%d", job_id, len(chunks))
-    embeddings = embedding_service.embed_batch(chunks)
+    embeddings = embedding_service.embed_batch(chunk_texts)
 
     if len(embeddings) != len(chunks):
         raise RuntimeError(f"Embedding count mismatch: got {len(embeddings)}, expected {len(chunks)}")
@@ -474,7 +475,10 @@ def _process_job_with_real_embeddings(
             chunk_no,
             content,
             token_count,
+            title_path,
+            parent_chunk_id,
             metadata,
+            content_tsv,
             created_at
         ) VALUES (
             :id,
@@ -486,7 +490,10 @@ def _process_job_with_real_embeddings(
             :chunk_no,
             :content,
             :token_count,
+            :title_path,
+            :parent_chunk_id,
             CAST(:metadata AS jsonb),
+            to_tsvector('simple', :content),
             now()
         )
         """
@@ -511,19 +518,34 @@ def _process_job_with_real_embeddings(
         """
     )
 
-    for idx, (chunk_text, embedding_vector) in enumerate(zip(chunks, embeddings)):
-        token_count = embedding_service.count_tokens(chunk_text)
+    # Build parent_chunk_id mapping: group index -> first chunk's real UUID
+    parent_id_map: dict[int, str] = {}
+
+    for idx, (chunk_obj, embedding_vector) in enumerate(zip(chunks, embeddings)):
+        token_count = chunk_obj.token_count or embedding_service.count_tokens(chunk_obj.content)
         chunk_metadata = {
             "source": "worker",
             "filename": actual_filename,
             "chunk_index": idx,
             "total_chunks": len(chunks),
+            "title_path": chunk_obj.title_path,
         }
 
         # 将向量转换为 pgvector 格式
         vector_str = "[" + ",".join(str(v) for v in embedding_vector) + "]"
 
         chunk_id = str(uuid4())
+
+        # Track parent group mapping
+        parent_group = chunk_obj.metadata.get("parent_group", idx)
+        if parent_group not in parent_id_map:
+            parent_id_map[parent_group] = chunk_id
+
+        # Resolve parent_chunk_id: first chunk in group is parent (no self-reference)
+        resolved_parent_id = None
+        if chunk_obj.parent_chunk_id and parent_group in parent_id_map and parent_id_map[parent_group] != chunk_id:
+            resolved_parent_id = parent_id_map[parent_group]
+
         conn.execute(
             insert_stmt,
             {
@@ -534,8 +556,10 @@ def _process_job_with_real_embeddings(
                 "document_id": str(document_id),
                 "document_version_id": str(document_version_id),
                 "chunk_no": idx,
-                "content": chunk_text,
+                "content": chunk_obj.content,
                 "token_count": token_count,
+                "title_path": chunk_obj.title_path or None,
+                "parent_chunk_id": resolved_parent_id,
                 "metadata": json.dumps(chunk_metadata),
             },
         )

@@ -64,9 +64,9 @@ class Settings(BaseSettings):
         description="批量生成向量时的批次大小。",
     )
 
-    # 文本切片配置
-    chunk_size: int = Field(default=800, description="文本切片大小（字符数）。")
-    chunk_overlap: int = Field(default=200, description="切片重叠大小（字符数）。")
+    # 文本切片配置（token 级）
+    chunk_size: int = Field(default=512, description="文本切片大小（token 数）。")
+    chunk_overlap: int = Field(default=64, description="切片重叠大小（token 数）。")
 
     # OCR 配置
     ocr_enabled: bool = Field(default=False, description="是否启用 OCR 文字识别。")

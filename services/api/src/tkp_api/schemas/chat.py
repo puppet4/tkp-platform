@@ -16,7 +16,7 @@ class ChatGenerationConfig(BaseModel):
     """生成参数配置。"""
 
     temperature: float = Field(default=0.2, ge=0.0, le=2.0, description="采样温度。", examples=[0.2])
-    max_tokens: int = Field(default=600, ge=1, le=8000, description="最大生成 token 数。", examples=[600])
+    max_tokens: int = Field(default=2000, ge=1, le=8000, description="最大生成 token 数。", examples=[2000])
 
 
 class ChatCompletionRequest(BaseModel):

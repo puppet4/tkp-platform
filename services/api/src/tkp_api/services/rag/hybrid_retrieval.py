@@ -296,11 +296,12 @@ class HybridRetriever:
         # 按 RRF 分数排序
         merged = sorted(all_results.values(), key=lambda x: x["rrf_score"], reverse=True)
 
-        # 更新检索方法标记
+        # Normalise: top = 1.0
+        max_score = merged[0]["rrf_score"] if merged else 1.0
         for result in merged:
             if result["vector_rank"] and result["fulltext_rank"]:
                 result["retrieval_method"] = "hybrid"
-            result["score"] = result["rrf_score"]
+            result["score"] = result["rrf_score"] / max_score if max_score > 0 else 0.0
 
         return merged[:top_k]
 

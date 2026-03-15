@@ -120,9 +120,9 @@ class Settings(BaseSettings):
     openai_embedding_batch_size: int = Field(default=100, description="OpenAI 嵌入批次大小。")
     openai_embedding_timeout: float = Field(default=30.0, description="OpenAI 嵌入超时（秒）。")
 
-    # 文本切片配置
-    chunk_size: int = Field(default=800, description="文本切片大小。")
-    chunk_overlap: int = Field(default=200, description="切片重叠大小。")
+    # 文本切片配置（token 级）
+    chunk_size: int = Field(default=512, description="文本切片大小（token 数）。")
+    chunk_overlap: int = Field(default=64, description="切片重叠大小（token 数）。")
     embedding_batch_size: int = Field(default=100, description="向量生成批次大小。")
 
     # Embedding Gateway 配置
@@ -177,8 +177,8 @@ class Settings(BaseSettings):
     policy_weight: float = Field(default=0.3, description="策略权重（重排序时）。")
 
     # 检索配置
-    retrieval_top_k: int = Field(default=5, description="检索返回的最大结果数。")
-    retrieval_similarity_threshold: float = Field(default=0.7, description="检索相似度阈值。")
+    retrieval_top_k: int = Field(default=10, description="检索返回的最大结果数。")
+    retrieval_similarity_threshold: float = Field(default=0.3, description="检索相似度阈值。")
     retrieval_default_strategy: str = Field(default="hybrid", description="默认检索策略（vector/fulltext/hybrid）。")
     retrieval_vector_weight: float = Field(default=0.5, description="混合检索中向量检索的权重。")
     retrieval_fulltext_weight: float = Field(default=0.5, description="混合检索中全文检索的权重。")

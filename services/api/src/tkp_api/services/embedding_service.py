@@ -11,7 +11,7 @@ import time
 from typing import Any
 
 from cachetools import LRUCache  # type: ignore[import-untyped]
-from openai import OpenAI
+from openai import AsyncOpenAI, OpenAI
 
 from tkp_api.core.config import get_settings
 from tkp_api.core.exceptions import EmbeddingException
@@ -55,6 +55,11 @@ class EmbeddingService:
         """初始化嵌入服务。"""
         self.settings = get_settings()
         self.client = OpenAI(
+            api_key=self.settings.resolved_openai_embedding_api_key,
+            base_url=self.settings.resolved_openai_embedding_base_url,
+            timeout=self.settings.openai_embedding_timeout,
+        )
+        self.async_client = AsyncOpenAI(
             api_key=self.settings.resolved_openai_embedding_api_key,
             base_url=self.settings.resolved_openai_embedding_base_url,
             timeout=self.settings.openai_embedding_timeout,
@@ -263,6 +268,98 @@ class EmbeddingService:
                 ) from e
 
         return [r for r in results if r is not None]
+
+    async def embed_text_async(self, text: str) -> list[float]:
+        """生成单个文本的向量（异步版本）。"""
+        normalized = " ".join(text.strip().split())
+        if not normalized:
+            return [0.0] * self.dimensions
+
+        cached = self._get_from_cache(normalized)
+        if cached is not None:
+            return cached
+
+        try:
+            response = await self.async_client.embeddings.create(
+                model=self.model,
+                input=normalized,
+                dimensions=self.dimensions,
+            )
+            vector = _normalize_embedding(response.data[0].embedding)
+            if vector is None:
+                raise EmbeddingException(
+                    "向量嵌入失败: embedding payload is invalid",
+                    details={"model": self.model, "text_length": len(normalized)},
+                )
+            self._set_to_cache(normalized, vector)
+            return vector
+        except EmbeddingException:
+            raise
+        except Exception as exc:
+            raise EmbeddingException(
+                f"向量嵌入失败: {exc}",
+                details={"model": self.model, "text_length": len(normalized)},
+            ) from exc
+
+    async def embed_batch_async(self, texts: list[str]) -> list[list[float]]:
+        """批量生成文本向量（异步版本）。"""
+        if not texts:
+            return []
+
+        normalized_texts = [" ".join(text.strip().split()) for text in texts]
+        results: list[list[float] | None] = []
+        uncached_indices: list[int] = []
+        uncached_texts: list[str] = []
+
+        for i, text in enumerate(normalized_texts):
+            if not text:
+                results.append([0.0] * self.dimensions)
+            else:
+                cached = self._get_from_cache(text)
+                if cached is not None:
+                    results.append(cached)
+                else:
+                    results.append(None)
+                    uncached_indices.append(i)
+                    uncached_texts.append(text)
+
+        if uncached_texts:
+            try:
+                response = await self.async_client.embeddings.create(
+                    model=self.model,
+                    input=uncached_texts,
+                    dimensions=self.dimensions,
+                )
+                for i, embedding_data in enumerate(response.data):
+                    vector = _normalize_embedding(embedding_data.embedding)
+                    if vector is None:
+                        raise EmbeddingException(
+                            "批量向量嵌入失败: embedding payload is invalid",
+                            details={"model": self.model, "batch_size": len(uncached_texts)},
+                        )
+                    results[uncached_indices[i]] = vector
+                    self._set_to_cache(uncached_texts[i], vector)
+            except Exception as e:
+                raise EmbeddingException(
+                    f"批量向量嵌入失败: {e}",
+                    details={"model": self.model, "batch_size": len(uncached_texts)},
+                ) from e
+
+        return [r for r in results if r is not None]
+
+    def count_tokens(self, text: str) -> int:
+        """估算文本的 token 数量。"""
+        try:
+            import tiktoken
+        except ImportError:
+            return len(text) // 4
+
+        try:
+            encoding = tiktoken.encoding_for_model(self.model)
+            return len(encoding.encode(text))
+        except Exception:
+            encoding = tiktoken.get_encoding("cl100k_base")
+            return len(encoding.encode(text))
 
 
 # 全局单例（线程安全）

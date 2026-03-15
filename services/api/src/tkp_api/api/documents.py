@@ -3,9 +3,12 @@
 import hashlib
 import json
 from datetime import datetime, timezone
+from pathlib import PurePosixPath
+from urllib.parse import quote
 from uuid import UUID
 
 from fastapi import APIRouter, Body, Depends, File, Form, Header, HTTPException, Path, Query, Request, UploadFile, status
+from fastapi.responses import Response
 from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
 
@@ -13,7 +16,7 @@ from tkp_api.core.exceptions import DocumentValidationException
 from tkp_api.db.session import get_db
 from tkp_api.dependencies import get_request_context
 from tkp_api.models.enums import DocumentStatus, IngestionJobStatus, ParseStatus, SourceType
-from tkp_api.models.knowledge import ChunkEmbedding, Document, DocumentChunk, DocumentVersion, IngestionJob
+from tkp_api.models.knowledge import ChunkEmbedding, Document, DocumentChunk, DocumentVersion, IngestionJob, KnowledgeBase
 from tkp_api.schemas.common import ErrorResponse, SuccessResponse
 from tkp_api.schemas.document import DocumentUpdateRequest, IngestionJobDeadLetterRequest
 from tkp_api.schemas.responses import (
@@ -33,6 +36,7 @@ from tkp_api.services import (
     ensure_kb_write_access,
     infer_parser_type,
     persist_upload,
+    read_upload,
     require_tenant_action,
 )
 from tkp_api.services.quota import QuotaMetric, enforce_quota
@@ -640,6 +644,140 @@ def list_document_chunks(
     )
 
 
+@router.get(
+    "/documents/{document_id}/full-text",
+    summary="获取文档全文",
+    description="拼接当前版本所有切片内容，返回文档全文。",
+    status_code=status.HTTP_200_OK,
+    response_model=SuccessResponse[dict],
+    responses={401: {"model": ErrorResponse}, 403: {"model": ErrorResponse}, 404: {"model": ErrorResponse}},
+)
+def get_document_full_text(
+    request: Request,
+    document_id: UUID = Path(..., description="文档 ID。"),
+    ctx=Depends(get_request_context),
+    db: Session = Depends(get_db),
+):
+    """拼接当前版本切片返回文档全文。"""
+    require_tenant_action(
+        db,
+        tenant_id=ctx.tenant_id,
+        tenant_role=ctx.tenant_role,
+        action=PermissionAction.DOCUMENT_READ,
+    )
+    document, _ = ensure_document_read_access(
+        db,
+        tenant_id=ctx.tenant_id,
+        document_id=document_id,
+        user_id=ctx.user_id,
+    )
+
+    doc_version = (
+        db.execute(
+            select(DocumentVersion)
+            .where(DocumentVersion.tenant_id == ctx.tenant_id)
+            .where(DocumentVersion.document_id == document_id)
+            .where(DocumentVersion.version == document.current_version)
+        )
+        .scalar_one_or_none()
+    )
+    if not doc_version:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="document version not found")
+
+    chunks = (
+        db.execute(
+            select(DocumentChunk.content)
+            .where(DocumentChunk.tenant_id == ctx.tenant_id)
+            .where(DocumentChunk.document_id == document_id)
+            .where(DocumentChunk.document_version_id == doc_version.id)
+            .order_by(DocumentChunk.chunk_no.asc())
+        )
+        .scalars()
+        .all()
+    )
+
+    content = "\n\n".join(chunks)
+    return success(
+        request,
+        {
+            "document_id": str(document_id),
+            "title": document.title,
+            "parser_type": doc_version.parser_type,
+            "version": document.current_version,
+            "total_chunks": len(chunks),
+            "content": content,
+        },
+    )
+
+
+@router.get(
+    "/documents/{document_id}/download",
+    summary="下载文档原始文件",
+    description="返回文档原始文件的字节流。",
+    responses={401: {"model": ErrorResponse}, 403: {"model": ErrorResponse}, 404: {"model": ErrorResponse}},
+)
+def download_document(
+    request: Request,
+    document_id: UUID = Path(..., description="文档 ID。"),
+    ctx=Depends(get_request_context),
+    db: Session = Depends(get_db),
+):
+    """下载文档原始文件。"""
+    require_tenant_action(
+        db,
+        tenant_id=ctx.tenant_id,
+        tenant_role=ctx.tenant_role,
+        action=PermissionAction.DOCUMENT_READ,
+    )
+    document, _ = ensure_document_read_access(
+        db,
+        tenant_id=ctx.tenant_id,
+        document_id=document_id,
+        user_id=ctx.user_id,
+    )
+
+    doc_version = (
+        db.execute(
+            select(DocumentVersion)
+            .where(DocumentVersion.tenant_id == ctx.tenant_id)
+            .where(DocumentVersion.document_id == document_id)
+            .where(DocumentVersion.version == document.current_version)
+        )
+        .scalar_one_or_none()
+    )
+    if not doc_version or not doc_version.object_key:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="document file not found")
+
+    try:
+        file_bytes = read_upload(doc_version.object_key)
+    except FileNotFoundError:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="document file not found in storage")
+
+    ext_map = {
+        ".pdf": "application/pdf",
+        ".md": "text/markdown",
+        ".markdown": "text/markdown",
+        ".txt": "text/plain",
+        ".png": "image/png",
+        ".jpg": "image/jpeg",
+        ".jpeg": "image/jpeg",
+        ".webp": "image/webp",
+        ".gif": "image/gif",
+    }
+    filename = doc_version.object_key.split("/")[-1] if "/" in doc_version.object_key else doc_version.object_key
+    ext = PurePosixPath(filename).suffix.lower()
+    media_type = ext_map.get(ext, "application/octet-stream")
+
+    encoded_filename = quote(filename)
+    disposition = f"attachment; filename*=UTF-8''{encoded_filename}"
+
+    return Response(
+        content=file_bytes,
+        media_type=media_type,
+        headers={"Content-Disposition": disposition},
+    )
+
+
 @router.patch(
     "/documents/{document_id}",
     summary="更新文档元信息",
@@ -796,6 +934,95 @@ def reindex_document(
 
 
 @router.post(
+    "/documents/batch-reindex",
+    summary="批量重建文档索引",
+    description="为多个文档的当前版本重新创建入库任务。",
+    status_code=status.HTTP_200_OK,
+    response_model=SuccessResponse[dict],
+    responses={401: {"model": ErrorResponse}, 403: {"model": ErrorResponse}},
+)
+def batch_reindex_documents(
+    request: Request,
+    document_ids: list[UUID] = Body(..., description="要重建索引的文档 ID 列表。", embed=True),
+    ctx=Depends(get_request_context),
+    db: Session = Depends(get_db),
+):
+    """批量重建文档索引。"""
+    if not document_ids:
+        return success(request, {"submitted": 0})
+
+    require_tenant_action(
+        db,
+        tenant_id=ctx.tenant_id,
+        tenant_role=ctx.tenant_role,
+        action=PermissionAction.DOCUMENT_WRITE,
+    )
+
+    import logging
+    import uuid as _uuid
+    _log = logging.getLogger(__name__)
+
+    submitted = 0
+    for doc_id in document_ids:
+        try:
+            document = db.get(Document, doc_id)
+            if not document:
+                _log.warning("batch_reindex: doc %s not found", doc_id)
+                continue
+            if str(document.tenant_id) != str(ctx.tenant_id):
+                _log.warning("batch_reindex: doc %s tenant mismatch", doc_id)
+                continue
+
+            kb = db.get(KnowledgeBase, document.kb_id)
+            if not kb:
+                _log.warning("batch_reindex: doc %s kb %s not found", doc_id, document.kb_id)
+                continue
+
+            doc_version = (
+                db.execute(
+                    select(DocumentVersion)
+                    .where(DocumentVersion.document_id == doc_id)
+                    .where(DocumentVersion.version == document.current_version)
+                )
+                .scalar_one_or_none()
+            )
+            if not doc_version:
+                _log.warning("batch_reindex: doc %s version %s not found", doc_id, document.current_version)
+                continue
+
+            enqueue_ingestion_job(
+                db=db,
+                tenant_id=ctx.tenant_id,
+                workspace_id=kb.workspace_id,
+                kb_id=document.kb_id,
+                document_id=doc_id,
+                document_version_id=doc_version.id,
+                action="reindex",
+                client_idempotency_key=str(_uuid.uuid4()),
+            )
+            document.status = DocumentStatus.PROCESSING
+            submitted += 1
+        except Exception as exc:
+            _log.warning("batch_reindex skip doc %s: %s", doc_id, exc, exc_info=True)
+            continue
+
+    audit_log(
+        db=db,
+        request=request,
+        tenant_id=ctx.tenant_id,
+        actor_user_id=ctx.user_id,
+        action="document.batch_reindex",
+        resource_type="document",
+        resource_id=f"batch:{len(document_ids)}",
+        before_json={"count": len(document_ids), "document_ids": [str(d) for d in document_ids]},
+        after_json={"submitted": submitted},
+    )
+    db.commit()
+
+    return success(request, {"submitted": submitted, "total": len(document_ids)})
+
+
+@router.post(
     "/documents/batch-delete",
     summary="批量删除文档",
     description="批量逻辑删除多个文档，并清理关联版本、切片、向量与入库任务记录。",
@@ -874,8 +1101,8 @@ def batch_delete_documents(
         actor_user_id=ctx.user_id,
         action="document.batch_delete",
         resource_type="document",
-        resource_id=",".join(str(d) for d in doc_ids),
-        before_json={"count": len(doc_ids)},
+        resource_id=f"batch:{len(doc_ids)}",
+        before_json={"count": len(doc_ids), "document_ids": [str(d) for d in doc_ids]},
         after_json={"status": DocumentStatus.DELETED},
     )
     db.commit()

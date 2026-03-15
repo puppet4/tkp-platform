@@ -219,6 +219,8 @@ class LLMGenerator:
         context_chunks: list[dict[str, Any]],
         system_prompt: str | None = None,
         history_messages: list[dict[str, str]] | None = None,
+        temperature: float | None = None,
+        max_tokens: int | None = None,
     ):
         """流式生成回答（生成器函数）。
 
@@ -227,6 +229,8 @@ class LLMGenerator:
             context_chunks: 检索到的文档块列表
             system_prompt: 可选的系统提示词
             history_messages: 历史对话消息（用于上下文记忆）
+            temperature: 覆盖默认温度
+            max_tokens: 覆盖默认最大 token 数
 
         Yields:
             生成的文本片段
@@ -234,60 +238,64 @@ class LLMGenerator:
         if not query.strip():
             raise ValueError("Query cannot be empty")
 
-        # 构建上下文（与非流式相同）
+        effective_temp = temperature if temperature is not None else self.temperature
+        effective_max_tokens = max_tokens if max_tokens is not None else self.max_tokens
+
+        # 构建上下文
         context_parts = []
         for i, chunk in enumerate(context_chunks, start=1):
+            similarity = chunk.get('similarity', 0)
+            sim_str = f"{similarity:.2f}" if isinstance(similarity, (int, float)) else str(similarity)
             context_parts.append(
-                f"[文档{i}] {chunk['document_title']} (相似度: {chunk['similarity']:.2f})\n{chunk['content']}"
+                f"[文档{i}] {chunk['document_title']} (相似度: {sim_str})\n{chunk['content']}"
             )
 
         context_text = "\n\n".join(context_parts)
 
         if not system_prompt:
-            system_prompt = (
-                "你是一个专业的知识助手。请基于提供的文档内容回答用户问题。\n"
-                "要求：\n"
-                "1. 仅使用提供的文档内容回答，不要编造信息\n"
-                "2. 如果文档中没有相关信息，明确告知用户\n"
-                "3. 回答要准确、简洁、有条理\n"
-                "4. 在回答中引用文档编号（如[文档1]）来标注信息来源"
-            )
+            if context_text:
+                system_prompt = (
+                    "你是一个专业的知识助手。请基于提供的文档内容回答用户问题。\n"
+                    "要求：\n"
+                    "1. 仅使用提供的文档内容回答，不要编造信息\n"
+                    "2. 如果文档中没有相关信息，明确告知用户\n"
+                    "3. 回答要准确、简洁、有条理\n"
+                    "4. 在回答中引用文档编号（如[文档1]）来标注信息来源"
+                )
+            else:
+                system_prompt = "你是一个专业的知识助手。请直接回答用户的问题。"
 
         messages = [
             {"role": "system", "content": system_prompt},
         ]
 
-        # 添加历史对话
+        # 添加历史对话（截断至最近 10 条）
         if history_messages:
-            messages.extend(history_messages)
+            recent = history_messages[-10:]
+            messages.extend(recent)
 
         # 添加当前查询
-        messages.append({
-            "role": "user",
-            "content": f"参考文档：\n\n{context_text}\n\n用户问题：{query}",
-        })
+        if context_text:
+            messages.append({
+                "role": "user",
+                "content": f"参考文档：\n\n{context_text}\n\n用户问题：{query}",
+            })
+        else:
+            messages.append({"role": "user", "content": query})
 
         try:
-            logger.info(f"Starting streaming generation with model: {self.model}")
-            logger.debug(f"Messages: {messages}")
-
             stream = self.client.chat.completions.create(
                 model=self.model,
                 messages=messages,
-                temperature=self.temperature,
-                max_tokens=self.max_tokens,
+                temperature=effective_temp,
+                max_tokens=effective_max_tokens,
                 stream=True,
+                stream_options={"include_usage": True},
             )
 
-            chunk_count = 0
             for chunk in stream:
-                if chunk.choices[0].delta.content:
-                    chunk_count += 1
-                    content = chunk.choices[0].delta.content
-                    logger.debug(f"Chunk {chunk_count}: {content[:30]}...")
-                    yield content
-
-            logger.info(f"Streaming completed. Total chunks: {chunk_count}")
+                if chunk.choices and chunk.choices[0].delta.content:
+                    yield chunk.choices[0].delta.content
 
         except Exception as exc:
             logger.exception("failed to generate streaming answer: %s", exc)

@@ -1,6 +1,7 @@
--- 基础扩展：UUID 生成 + 向量类型。
+-- 基础扩展：UUID 生成 + 向量类型 + trigram。
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
 CREATE EXTENSION IF NOT EXISTS vector;
+CREATE EXTENSION IF NOT EXISTS pg_trgm;
 
 -- ============================================================================
 -- 表结构
@@ -897,6 +898,22 @@ ALTER TABLE document_chunks
 ADD COLUMN IF NOT EXISTS embedded_at TIMESTAMPTZ;
 
 COMMENT ON COLUMN document_chunks.embedding IS '文本块的向量表示，用于语义检索';
+
+-- 全文检索：tsvector 列 + GIN 索引
+ALTER TABLE document_chunks
+ADD COLUMN IF NOT EXISTS content_tsv TSVECTOR;
+
+CREATE INDEX IF NOT EXISTS idx_document_chunks_content_tsv
+ON document_chunks USING gin (content_tsv);
+
+-- trigram 索引：中文友好，不依赖分词插件
+CREATE INDEX IF NOT EXISTS idx_document_chunks_content_trgm
+ON document_chunks USING gin (content gin_trgm_ops);
+
+-- 回填已有数据的 tsvector
+UPDATE document_chunks
+SET content_tsv = to_tsvector('simple', content)
+WHERE content_tsv IS NULL;
 COMMENT ON COLUMN document_chunks.embedding_model IS '生成向量的模型标识（如 text-embedding-3-small）';
 COMMENT ON COLUMN document_chunks.embedded_at IS '向量生成时间';
 

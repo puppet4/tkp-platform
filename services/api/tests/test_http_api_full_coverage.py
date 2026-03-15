@@ -3425,11 +3425,14 @@ def api_client(monkeypatch: pytest.MonkeyPatch, tmp_path) -> Generator[TestClien
     mock_embedding_service = MagicMock()
     mock_embedding_service.embed_text.return_value = [0.1] * 1536
 
-    # Set mocks directly on RAG singletons to bypass factory functions
-    from tkp_api.services.rag.retrieval_improved import RAGServicesSingleton
-    RAGServicesSingleton._generator = mock_generator
-    RAGServicesSingleton._embedding_service = mock_embedding_service
-    RAGServicesSingleton._retriever = None
+    # Set mocks on Pipeline singleton to bypass factory functions
+    from tkp_api.services.pipeline.pipeline import PipelineSingleton
+    PipelineSingleton.reset()
+
+    # Also mock the pipeline's internal generator if needed
+    from unittest.mock import patch
+    # We'll let the pipeline initialize normally in tests,
+    # but the streaming test will need to mock at a higher level
 
     get_settings.cache_clear()
     _reset_runtime_auth_state()

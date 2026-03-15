@@ -8,6 +8,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import desc, func, select
 from sqlalchemy.orm import Session
 
+from tkp_api.core.config import get_settings
 from tkp_api.db.session import get_db
 from tkp_api.dependencies import get_request_context
 from tkp_api.models.conversation import Conversation, Message
@@ -494,7 +495,8 @@ async def chat_completions(
 
     # 流式生成
     import json
-    from tkp_api.services.rag.retrieval_improved import search_chunks_improved, RAGServicesSingleton
+    from tkp_api.services.pipeline.pipeline import PipelineSingleton
+    from tkp_api.services.pipeline.types import GenerationConfig, RetrievalRequest
 
     async def generate_stream():
         # 创建新的数据库会话用于异步操作
@@ -502,51 +504,45 @@ async def chat_completions(
         stream_db = SessionLocal()
 
         try:
-            # 先检索
-            chunks = search_chunks_improved(
-                stream_db,
+            settings = get_settings()
+
+            pipeline_request = RetrievalRequest(
+                query=question,
                 tenant_id=tenant_id,
                 kb_ids=readable_kb_ids,
-                query=question,
-                top_k=6,
+                top_k=settings.retrieval_top_k,
+                history_messages=context_messages,
+                generation_config=GenerationConfig(
+                    temperature=payload.generation.temperature,
+                    max_tokens=payload.generation.max_tokens,
+                    stream=True,
+                ),
+                skip_intent_classification=False,
             )
 
-            # 发送引用信息
-            citations = []
-            for chunk in chunks:
-                citations.append({
-                    "chunk_id": str(chunk["chunk_id"]),
-                    "document_id": str(chunk["document_id"]),
-                    "document_version_id": str(chunk.get("document_version_id", "")),
-                    "document_title": chunk["document_title"],
-                    "kb_name": chunk["kb_name"],
-                    "similarity": chunk["similarity"],
-                    "snippet": chunk.get("snippet", ""),
-                    "content": chunk["content"],
-                })
-
-            yield f"data: {json.dumps({'type': 'citations', 'data': citations}, ensure_ascii=False)}\n\n"
-
-            # 流式生成回答
-            generator = RAGServicesSingleton.get_generator()
+            pipeline = PipelineSingleton.get_instance()
             full_answer = ""
+            citations = []
+            usage = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
 
-            import logging
-            logger = logging.getLogger("tkp_api.chat")
-            logger.info(f"Starting streaming generation for question: {question[:50]}...")
+            for event in pipeline.generate_streaming(stream_db, pipeline_request):
+                event_type = event["type"]
 
-            chunk_count = 0
-            for chunk_text in generator.generate_streaming_answer(
-                query=question,
-                context_chunks=chunks,
-                history_messages=context_messages,
-            ):
-                chunk_count += 1
-                full_answer += chunk_text
-                logger.debug(f"Received chunk {chunk_count}: {chunk_text[:50]}...")
-                yield f"data: {json.dumps({'type': 'content', 'data': chunk_text}, ensure_ascii=False)}\n\n"
+                if event_type == "citations":
+                    citations = event["data"]
+                    yield f"data: {json.dumps({'type': 'citations', 'data': citations}, ensure_ascii=False)}\n\n"
 
-            logger.info(f"Streaming completed. Total chunks: {chunk_count}, answer length: {len(full_answer)}")
+                elif event_type == "content":
+                    full_answer += event["data"]
+                    yield f"data: {json.dumps({'type': 'content', 'data': event['data']}, ensure_ascii=False)}\n\n"
+
+                elif event_type == "error":
+                    yield f"data: {json.dumps({'type': 'error', 'data': event['data']}, ensure_ascii=False)}\n\n"
+                    return
+
+                elif event_type == "done":
+                    done_data = event["data"]
+                    usage = done_data.get("usage", usage)
 
             # 保存助手消息
             assistant_message = Message(
@@ -555,7 +551,7 @@ async def chat_completions(
                 role=MessageRole.ASSISTANT,
                 content=full_answer,
                 citations=citations,
-                usage={"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
+                usage=usage,
             )
             stream_db.add(assistant_message)
             stream_db.commit()
