@@ -714,6 +714,39 @@ class ReindexData(BaseSchema):
     status: str = Field(description="重建任务状态。")
 
 
+class ImportBatchFileData(BaseSchema):
+    """批次中单文件状态。"""
+
+    document_id: UUID = Field(description="文档 ID。")
+    title: str = Field(description="文档标题。")
+    status: str = Field(description="文档状态。")
+    job_id: UUID | None = Field(default=None, description="入库任务 ID。")
+    job_status: str | None = Field(default=None, description="入库任务状态。")
+    job_stage: str | None = Field(default=None, description="入库任务阶段。")
+    job_progress: int | None = Field(default=None, description="入库任务进度。")
+    error: str | None = Field(default=None, description="错误信息。")
+
+
+class ImportBatchData(BaseSchema):
+    """导入批次摘要。"""
+
+    id: UUID = Field(description="批次 ID。")
+    kb_id: UUID = Field(description="知识库 ID。")
+    label: str | None = Field(default=None, description="批次标签。")
+    total_files: int = Field(description="文件总数。")
+    uploaded_files: int = Field(description="已上传文件数。")
+    failed_uploads: int = Field(description="上传失败文件数。")
+    status: str = Field(description="批次状态。")
+    created_at: datetime = Field(description="创建时间。")
+    updated_at: datetime = Field(description="更新时间。")
+
+
+class ImportBatchDetailData(ImportBatchData):
+    """导入批次详情（含文件列表）。"""
+
+    files: list[ImportBatchFileData] = Field(description="批次内文件列表。")
+
+
 class IngestionJobData(BaseSchema):
     """入库任务详情结构。"""
 

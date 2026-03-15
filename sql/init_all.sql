@@ -203,6 +203,29 @@ CREATE TABLE IF NOT EXISTS ingestion_jobs (
     CONSTRAINT ck_ingestion_jobs_max_attempts CHECK (max_attempts > 0)
 );
 
+CREATE TABLE IF NOT EXISTS import_batches (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    tenant_id UUID NOT NULL,
+    workspace_id UUID NOT NULL,
+    kb_id UUID NOT NULL,
+    created_by UUID NULL,
+    label VARCHAR(256) NULL,
+    total_files INTEGER NOT NULL DEFAULT 0,
+    uploaded_files INTEGER NOT NULL DEFAULT 0,
+    failed_uploads INTEGER NOT NULL DEFAULT 0,
+    status VARCHAR(32) NOT NULL DEFAULT 'uploading',
+    metadata JSONB NOT NULL DEFAULT '{}'::JSONB,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CONSTRAINT ck_import_batches_status CHECK (status IN ('uploading', 'uploaded', 'ingesting', 'completed', 'partial_failure', 'cancelled')),
+    CONSTRAINT ck_import_batches_total_files CHECK (total_files >= 0),
+    CONSTRAINT ck_import_batches_uploaded_files CHECK (uploaded_files >= 0),
+    CONSTRAINT ck_import_batches_failed_uploads CHECK (failed_uploads >= 0)
+);
+
+ALTER TABLE documents ADD COLUMN IF NOT EXISTS batch_id UUID;
+ALTER TABLE ingestion_jobs ADD COLUMN IF NOT EXISTS batch_id UUID;
+
 CREATE TABLE IF NOT EXISTS retrieval_logs (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     tenant_id UUID NOT NULL,
@@ -1141,6 +1164,11 @@ CREATE INDEX IF NOT EXISTS ix_ingestion_jobs_status_next_run
     ON ingestion_jobs (status, next_run_at);
 CREATE INDEX IF NOT EXISTS ix_ingestion_jobs_locked_by_locked_at
     ON ingestion_jobs (locked_by, locked_at);
+
+CREATE INDEX IF NOT EXISTS idx_import_batches_tenant ON import_batches (tenant_id);
+CREATE INDEX IF NOT EXISTS idx_import_batches_kb ON import_batches (kb_id);
+CREATE INDEX IF NOT EXISTS idx_documents_batch_id ON documents (batch_id) WHERE batch_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_ingestion_jobs_batch_id ON ingestion_jobs (batch_id) WHERE batch_id IS NOT NULL;
 
 CREATE INDEX IF NOT EXISTS ix_retrieval_logs_tenant_id ON retrieval_logs (tenant_id);
 CREATE INDEX IF NOT EXISTS ix_retrieval_logs_user_id ON retrieval_logs (user_id);

@@ -113,3 +113,14 @@ class IngestionJobStatus(StrEnum):
     RETRYING = "retrying"  # 失败后重试中。
     COMPLETED = "completed"  # 处理完成。
     DEAD_LETTER = "dead_letter"  # 超过重试上限，进入死信。
+
+
+class ImportBatchStatus(StrEnum):
+    """导入批次状态。"""
+
+    UPLOADING = "uploading"
+    UPLOADED = "uploaded"
+    INGESTING = "ingesting"
+    COMPLETED = "completed"
+    PARTIAL_FAILURE = "partial_failure"
+    CANCELLED = "cancelled"

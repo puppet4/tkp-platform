@@ -45,6 +45,7 @@ def enqueue_ingestion_job(
     document_version_id: UUID,
     action: str,
     client_idempotency_key: str | None,
+    batch_id: UUID | None = None,
 ) -> IngestionJob:
     """创建入库任务，若命中幂等键则复用已有任务。"""
     settings = get_settings()
@@ -82,6 +83,7 @@ def enqueue_ingestion_job(
         attempt_count=0,
         max_attempts=settings.ingestion_default_max_attempts,
         next_run_at=datetime.now(timezone.utc),
+        batch_id=batch_id,
     )
     db.add(job)
     db.flush()

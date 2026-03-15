@@ -13,9 +13,9 @@ class WorkspaceCreateRequest(BaseModel):
     slug: str = Field(
         min_length=2,
         max_length=64,
-        pattern=r"^[a-z0-9-]+$",
-        description="工作空间在租户内唯一标识。",
-        examples=["qa-team"],
+        pattern=r"^[\w\u4e00-\u9fff\u3400-\u4dbf-]+$",
+        description="工作空间在租户内唯一标识，支持中文、字母、数字、下划线和连字符。",
+        examples=["qa-team", "智能问答"],
     )
     description: str | None = Field(default=None, description="工作空间说明。", examples=["面向客服知识运营"])
 
@@ -38,8 +38,8 @@ class WorkspaceUpdateRequest(BaseModel):
         default=None,
         min_length=2,
         max_length=64,
-        pattern=r"^[a-z0-9-]+$",
-        description="新的工作空间短标识（租户内唯一）。",
+        pattern=r"^[\w\u4e00-\u9fff\u3400-\u4dbf-]+$",
+        description="新的工作空间短标识（租户内唯一），支持中文、字母、数字、下划线和连字符。",
     )
     description: str | None = Field(default=None, description="新的工作空间说明。")
     status: Literal["active", "archived"] | None = Field(

@@ -15,6 +15,7 @@ from sqlalchemy.orm import Mapped, mapped_column
 from tkp_api.models.base import Base, TimestampMixin, UUIDPrimaryKeyMixin
 from tkp_api.models.enums import (
     DocumentStatus,
+    ImportBatchStatus,
     IngestionJobStatus,
     KBRole,
     KBStatus,
@@ -99,6 +100,8 @@ class Document(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     metadata_: Mapped[dict[str, Any]] = mapped_column("metadata", JSONB, nullable=False, default=dict)
     # 创建人用户 ID。
     created_by: Mapped[UUID | None] = mapped_column()
+    # 导入批次 ID（批量上传时关联）。
+    batch_id: Mapped[UUID | None] = mapped_column(index=True)
 
 
 class DocumentVersion(Base, UUIDPrimaryKeyMixin):
@@ -220,6 +223,26 @@ class IngestionJob(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     # 错误详情摘要。
     error: Mapped[str | None] = mapped_column(Text)
+    # 导入批次 ID（批量上传时关联）。
+    batch_id: Mapped[UUID | None] = mapped_column(index=True)
+
+
+class ImportBatch(Base, UUIDPrimaryKeyMixin, TimestampMixin):
+    """导入批次，支持多文件批量上传。"""
+
+    __tablename__ = "import_batches"
+
+    tenant_id: Mapped[UUID] = mapped_column(nullable=False, index=True)
+    workspace_id: Mapped[UUID] = mapped_column(nullable=False, index=True)
+    kb_id: Mapped[UUID] = mapped_column(nullable=False, index=True)
+    created_by: Mapped[UUID | None] = mapped_column()
+    label: Mapped[str | None] = mapped_column(String(256))
+    total_files: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    uploaded_files: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    failed_uploads: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default=ImportBatchStatus.UPLOADING)
+    metadata_: Mapped[dict[str, Any]] = mapped_column("metadata", JSONB, nullable=False, default=dict)
+
 
 class RetrievalLog(Base, UUIDPrimaryKeyMixin):
     """检索日志。"""

@@ -5,7 +5,7 @@ import json
 from datetime import datetime, timezone
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, File, Form, Header, HTTPException, Path, Query, Request, UploadFile, status
+from fastapi import APIRouter, Body, Depends, File, Form, Header, HTTPException, Path, Query, Request, UploadFile, status
 from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
 
@@ -793,6 +793,94 @@ def reindex_document(
     db.commit()
 
     return success(request, {"job_id": job.id, "status": job.status})
+
+
+@router.post(
+    "/documents/batch-delete",
+    summary="批量删除文档",
+    description="批量逻辑删除多个文档，并清理关联版本、切片、向量与入库任务记录。",
+    status_code=status.HTTP_200_OK,
+    response_model=SuccessResponse[dict],
+    responses={401: {"model": ErrorResponse}, 403: {"model": ErrorResponse}},
+)
+def batch_delete_documents(
+    request: Request,
+    document_ids: list[UUID] = Body(..., description="要删除的文档 ID 列表。", embed=True),
+    ctx=Depends(get_request_context),
+    db: Session = Depends(get_db),
+):
+    """批量删除文档。"""
+    if not document_ids:
+        return success(request, {"deleted": 0})
+
+    require_tenant_action(
+        db,
+        tenant_id=ctx.tenant_id,
+        tenant_role=ctx.tenant_role,
+        action=PermissionAction.DOCUMENT_DELETE,
+    )
+
+    documents = (
+        db.execute(
+            select(Document).where(
+                Document.id.in_(document_ids),
+                Document.tenant_id == ctx.tenant_id,
+                Document.status != DocumentStatus.DELETED,
+            )
+        )
+        .scalars()
+        .all()
+    )
+    if not documents:
+        return success(request, {"deleted": 0})
+
+    # 校验每个涉及的 KB 的写权限（去重）
+    checked_kb_ids: set[UUID] = set()
+    for doc in documents:
+        kb_id = UUID(str(doc.kb_id))
+        if kb_id not in checked_kb_ids:
+            ensure_kb_write_access(db, tenant_id=ctx.tenant_id, kb_id=kb_id, user_id=ctx.user_id)
+            checked_kb_ids.add(kb_id)
+
+    doc_ids = [doc.id for doc in documents]
+
+    # 标记软删除
+    for doc in documents:
+        doc.status = DocumentStatus.DELETED
+
+    # 级联清理
+    version_ids = (
+        db.execute(select(DocumentVersion.id).where(DocumentVersion.document_id.in_(doc_ids)))
+        .scalars()
+        .all()
+    )
+    if version_ids:
+        chunk_ids = (
+            db.execute(select(DocumentChunk.id).where(DocumentChunk.document_version_id.in_(version_ids)))
+            .scalars()
+            .all()
+        )
+        if chunk_ids:
+            db.execute(delete(ChunkEmbedding).where(ChunkEmbedding.chunk_id.in_(chunk_ids)))
+            db.execute(delete(DocumentChunk).where(DocumentChunk.id.in_(chunk_ids)))
+        db.execute(delete(DocumentVersion).where(DocumentVersion.id.in_(version_ids)))
+
+    db.execute(delete(IngestionJob).where(IngestionJob.document_id.in_(doc_ids)))
+
+    audit_log(
+        db=db,
+        request=request,
+        tenant_id=ctx.tenant_id,
+        actor_user_id=ctx.user_id,
+        action="document.batch_delete",
+        resource_type="document",
+        resource_id=",".join(str(d) for d in doc_ids),
+        before_json={"count": len(doc_ids)},
+        after_json={"status": DocumentStatus.DELETED},
+    )
+    db.commit()
+
+    return success(request, {"deleted": len(doc_ids)})
 
 
 @router.delete(

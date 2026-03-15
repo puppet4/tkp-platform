@@ -10,6 +10,7 @@ from . import (
     feedback,
     governance,
     health,
+    import_batches,
     knowledge_bases,
     metrics,
     ops,
@@ -31,6 +32,7 @@ api_router.include_router(tenants.router)
 api_router.include_router(workspaces.router)
 api_router.include_router(knowledge_bases.router)
 api_router.include_router(documents.router)
+api_router.include_router(import_batches.router)
 api_router.include_router(retrieval.router)
 api_router.include_router(chat.router)
 api_router.include_router(agents.router)
