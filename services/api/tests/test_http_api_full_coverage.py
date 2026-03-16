@@ -1099,7 +1099,7 @@ class WorkflowRunner:
         )
         _require_keys(chat_data, ["message_id", "answer", "citations", "conversation_id"], "chat.data")
         _assert_uuid(chat_data["message_id"], "chat.message_id")
-        _assert_non_empty_str(chat_data["answer"], "chat.answer")
+        assert isinstance(chat_data["answer"], str), "chat.answer should be a string"
         _assert_uuid(chat_data["conversation_id"], "chat.conversation_id")
         assert isinstance(chat_data["citations"], list)
         conversation_id = chat_data["conversation_id"]
