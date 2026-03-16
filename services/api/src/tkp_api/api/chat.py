@@ -538,7 +538,7 @@ async def chat_completions(
 
                 elif event_type == "error":
                     yield f"data: {json.dumps({'type': 'error', 'data': event['data']}, ensure_ascii=False)}\n\n"
-                    return
+                    break
 
                 elif event_type == "done":
                     done_data = event["data"]
