@@ -3058,6 +3058,26 @@ class WorkflowRunner:
             token=self.ctx.owner_token,
         )
 
+        # ── Full-text / Download / Batch-reindex 覆盖 ──
+        self.success(
+            "GET",
+            "/api/documents/{document_id}/full-text",
+            actual_path=f"/api/documents/{self.ctx.document_id}/full-text",
+            token=self.ctx.owner_token,
+        )
+        self.call(
+            "GET",
+            "/api/documents/{document_id}/download",
+            actual_path=f"/api/documents/{self.ctx.document_id}/download",
+            token=self.ctx.owner_token,
+        )
+        self.success(
+            "POST",
+            "/api/documents/batch-reindex",
+            token=self.ctx.owner_token,
+            json={"document_ids": [self.ctx.document_id]},
+        )
+
         # ── Batch Delete 覆盖 ──
         batch_delete_result = self.success(
             "POST",
