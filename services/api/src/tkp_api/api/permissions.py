@@ -454,4 +454,3 @@ def rollback_policy_snapshot(
             "role_permissions": [{"role": role, "permission_codes": codes} for role, codes in result.items()],
         },
     )
-    policy_center_view,

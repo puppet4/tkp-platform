@@ -176,18 +176,20 @@ def list_feedbacks(
     ctx=Depends(require_tenant_roles(TenantRole.OWNER, TenantRole.ADMIN)),
 ):
     """获取反馈列表。"""
-    from sqlalchemy import select
+    from sqlalchemy import select, func as sa_func
     from tkp_api.models.feedback import UserFeedback
 
-    stmt = select(UserFeedback).where(UserFeedback.tenant_id == ctx.tenant_id)
+    base = select(UserFeedback).where(UserFeedback.tenant_id == ctx.tenant_id)
 
     if processed is not None:
-        stmt = stmt.where(UserFeedback.processed == processed)
+        base = base.where(UserFeedback.processed == processed)
 
     if feedback_type:
-        stmt = stmt.where(UserFeedback.feedback_type == feedback_type)
+        base = base.where(UserFeedback.feedback_type == feedback_type)
 
-    stmt = stmt.order_by(UserFeedback.created_at.desc()).limit(limit).offset(offset)
+    total = db.execute(select(sa_func.count()).select_from(base.subquery())).scalar() or 0
+
+    stmt = base.order_by(UserFeedback.created_at.desc()).limit(limit).offset(offset)
 
     result = db.execute(stmt)
     feedbacks = result.scalars().all()
@@ -208,7 +210,7 @@ def list_feedbacks(
                 }
                 for f in feedbacks
             ],
-            "total": len(feedbacks),
+            "total": total,
             "limit": limit,
             "offset": offset,
         },

@@ -375,6 +375,56 @@ def put_quota_policy(
         window_minutes=payload.window_minutes,
         enabled=payload.enabled,
     )
+    audit_log(
+        db,
+        request=request,
+        tenant_id=ctx.tenant_id,
+        actor_user_id=ctx.user_id,
+        action="ops.quota.upsert",
+        resource_type="quota_policy",
+        resource_id=str(data["id"]),
+        after_json=_json_safe(data),
+    )
+    db.commit()
+    return success(request, data)
+
+
+@router.post(
+    "/quotas",
+    summary="创建配额策略",
+    description="为租户创建新的配额策略。",
+    status_code=status.HTTP_200_OK,
+    response_model=SuccessResponse[QuotaPolicyData],
+    responses={401: {"model": ErrorResponse}, 403: {"model": ErrorResponse}, 422: {"model": ErrorResponse}},
+)
+def create_quota_policy(
+    payload: QuotaPolicyUpsertRequest,
+    request: Request,
+    ctx=Depends(require_tenant_roles(TenantRole.OWNER, TenantRole.ADMIN)),
+    db: Session = Depends(get_db),
+):
+    """创建配额策略。"""
+    data = upsert_quota_policy(
+        db,
+        tenant_id=ctx.tenant_id,
+        user_id=ctx.user_id,
+        metric_code=payload.metric_code,
+        scope_type=payload.scope_type,
+        scope_id=payload.scope_id,
+        limit_value=payload.limit_value,
+        window_minutes=payload.window_minutes,
+        enabled=payload.enabled,
+    )
+    audit_log(
+        db,
+        request=request,
+        tenant_id=ctx.tenant_id,
+        actor_user_id=ctx.user_id,
+        action="ops.quota.create",
+        resource_type="quota_policy",
+        resource_id=str(data["id"]),
+        after_json=_json_safe(data),
+    )
     db.commit()
     return success(request, data)
 
@@ -980,19 +1030,20 @@ def list_ingestion_jobs(
 ):
     """查询入库任务列表。"""
     from tkp_api.models.knowledge import IngestionJob
-    from sqlalchemy import select, desc
+    from sqlalchemy import select, desc, func
 
     stmt = (
         select(IngestionJob)
         .where(IngestionJob.tenant_id == ctx.tenant_id)
         .order_by(desc(IngestionJob.created_at))
-        .limit(limit)
-        .offset(offset)
     )
 
     if status_filter:
         stmt = stmt.where(IngestionJob.status == status_filter)
 
+    total = db.execute(select(func.count()).select_from(stmt.subquery())).scalar_one()
+
+    stmt = stmt.limit(limit).offset(offset)
     jobs = db.execute(stmt).scalars().all()
 
     return success(
@@ -1009,48 +1060,8 @@ def list_ingestion_jobs(
             }
             for job in jobs
         ],
-        meta={"total": len(jobs), "limit": limit, "offset": offset},
+        meta={"total": total, "limit": limit, "offset": offset},
     )
-
-
-@router.post(
-    "/quotas",
-    summary="创建配额策略",
-    description="为租户创建新的配额策略。",
-    status_code=status.HTTP_200_OK,
-    response_model=SuccessResponse[QuotaPolicyData],
-    responses={401: {"model": ErrorResponse}, 403: {"model": ErrorResponse}, 422: {"model": ErrorResponse}},
-)
-def create_quota_policy(
-    payload: QuotaPolicyUpsertRequest,
-    request: Request,
-    ctx=Depends(require_tenant_roles(TenantRole.OWNER, TenantRole.ADMIN)),
-    db: Session = Depends(get_db),
-):
-    """创建配额策略。"""
-    data = upsert_quota_policy(
-        db,
-        tenant_id=ctx.tenant_id,
-        user_id=ctx.user_id,
-        metric_code=payload.metric_code,
-        scope_type=payload.scope_type,
-        scope_id=payload.scope_id,
-        limit_value=payload.limit_value,
-        window_minutes=payload.window_minutes,
-        enabled=payload.enabled,
-    )
-    audit_log(
-        db,
-        request=request,
-        tenant_id=ctx.tenant_id,
-        actor_user_id=ctx.user_id,
-        action="ops.quota.create",
-        resource_type="quota_policy",
-        resource_id=data["id"],
-        after_json=_json_safe(data),
-    )
-    db.commit()
-    return success(request, data)
 
 
 @router.put(
@@ -1069,17 +1080,26 @@ def update_quota_policy(
     db: Session = Depends(get_db),
 ):
     """更新配额策略。"""
-    data = upsert_quota_policy(
-        db,
-        tenant_id=ctx.tenant_id,
-        user_id=ctx.user_id,
-        metric_code=payload.metric_code,
-        scope_type=payload.scope_type,
-        scope_id=payload.scope_id,
-        limit_value=payload.limit_value,
-        window_minutes=payload.window_minutes,
-        enabled=payload.enabled,
-    )
+    from tkp_api.models.quota import QuotaPolicy as QuotaPolicyModel
+    from sqlalchemy import select as sa_select
+
+    row = db.execute(
+        sa_select(QuotaPolicyModel).where(
+            QuotaPolicyModel.id == policy_id,
+            QuotaPolicyModel.tenant_id == ctx.tenant_id,
+        )
+    ).scalar_one_or_none()
+    if not row:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Quota policy not found")
+
+    row.limit_value = payload.limit_value
+    row.window_minutes = payload.window_minutes
+    row.enabled = payload.enabled
+    row.updated_by = ctx.user_id
+    db.flush()
+
+    from tkp_api.services.quota import _quota_row_to_dict
+    data = _quota_row_to_dict(row)
     audit_log(
         db,
         request=request,
@@ -1127,6 +1147,7 @@ def delete_alert_webhook(
 
     # 删除webhook
     db.delete(webhook)
+    db.flush()
 
     audit_log(
         db,

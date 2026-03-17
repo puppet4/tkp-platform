@@ -471,10 +471,12 @@ class DeletionService:
         limit: int = 50,
         offset: int = 0,
         requester_user_id: UUID | None = None,
-    ) -> list[dict[str, Any]]:
-        """分页查询删除请求列表。"""
+    ) -> tuple[list[dict[str, Any]], int]:
+        """分页查询删除请求列表。返回 (items, total)。"""
         try:
             self._expire_pending_requests(tenant_id=tenant_id)
+
+            count_sql = "SELECT COUNT(*) FROM deletion_requests WHERE tenant_id = :tenant_id"
             sql = """
                 SELECT id, tenant_id, user_id, resource_type, resource_id, reason,
                        status, requested_at, approved_by, approved_at,
@@ -489,17 +491,20 @@ class DeletionService:
             }
             if requester_user_id is not None:
                 sql += " AND user_id = :requester_user_id"
+                count_sql += " AND user_id = :requester_user_id"
                 params["requester_user_id"] = str(requester_user_id)
             if status:
                 sql += " AND status = :status"
+                count_sql += " AND status = :status"
                 params["status"] = status
             sql += " ORDER BY requested_at DESC LIMIT :limit OFFSET :offset"
+            total = self.db.execute(text(count_sql), params).scalar() or 0
             rows = self.db.execute(text(sql), params).fetchall()
         except (OperationalError, ProgrammingError) as exc:
             if _is_missing_table_error(exc):
                 self.db.rollback()
                 logger.warning("skip list deletion requests because governance tables are not initialized: %s", exc)
-                return []
+                return [], 0
             raise
 
         return [
@@ -522,7 +527,7 @@ class DeletionService:
                 "proof_id": str(row.proof_id) if row.proof_id else None,
             }
             for row in rows
-        ]
+        ], total
 
     def get_deletion_request_state(self, *, request_id: UUID, tenant_id: UUID) -> str | None:
         """查询删除请求当前状态。"""

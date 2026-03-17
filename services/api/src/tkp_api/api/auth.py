@@ -130,9 +130,16 @@ def _resolve_user_default_tenant_id(db: Session, *, user_id: UUID) -> UUID | Non
     return None
 
 
+_mfa_table_checked: set[int] = set()
+
+
 def _ensure_user_mfa_totp_table(db: Session) -> None:
     """确保 MFA 表存在（兼容未跑迁移环境）。"""
+    bind_id = id(db.get_bind())
+    if bind_id in _mfa_table_checked:
+        return
     UserMfaTotp.__table__.create(bind=db.get_bind(), checkfirst=True)
+    _mfa_table_checked.add(bind_id)
 
 
 def _get_mfa_record(db: Session, *, user_id: UUID) -> UserMfaTotp | None:

@@ -42,7 +42,7 @@ class DeletionRequestReject(BaseModel):
 
 
 @router.post("/deletion/requests")
-async def create_deletion_request(
+def create_deletion_request(
     payload: DeletionRequestCreate,
     request: Request,
     ctx: RequestContext = Depends(get_request_context),
@@ -86,10 +86,9 @@ async def create_deletion_request(
 
 
 @router.get("/deletion/requests")
-async def list_deletion_requests(
+def list_deletion_requests(
     request: Request,
     deletion_status: str | None = Query(default=None, alias="status"),
-    status_filter: str | None = Query(default=None),
     limit: int = Query(default=50, ge=1, le=500),
     offset: int = Query(default=0, ge=0),
     ctx: RequestContext = Depends(get_request_context),
@@ -104,10 +103,9 @@ async def list_deletion_requests(
     )
     service = DeletionService(db)
     try:
-        effective_status = deletion_status or status_filter
-        data = service.list_deletion_requests(
+        data, total = service.list_deletion_requests(
             tenant_id=ctx.tenant_id,
-            status=effective_status,
+            status=deletion_status,
             limit=limit,
             offset=offset,
             requester_user_id=None if is_admin_role(ctx) else ctx.user_id,
@@ -115,7 +113,7 @@ async def list_deletion_requests(
         return success(
             request,
             {"requests": data},
-            meta={"total": len(data), "limit": limit, "offset": offset},
+            meta={"total": total, "limit": limit, "offset": offset},
         )
     except Exception as exc:
         logger.exception("failed to list deletion requests: %s", exc)
@@ -126,7 +124,7 @@ async def list_deletion_requests(
 
 
 @router.post("/deletion/requests/{request_id}/approve")
-async def approve_deletion_request(
+def approve_deletion_request(
     request_id: UUID,
     request: Request,
     ctx: RequestContext = Depends(get_request_context),
@@ -164,7 +162,7 @@ async def approve_deletion_request(
 
 
 @router.post("/deletion/requests/{request_id}/reject")
-async def reject_deletion_request(
+def reject_deletion_request(
     request_id: UUID,
     payload: DeletionRequestReject,
     request: Request,
@@ -204,7 +202,7 @@ async def reject_deletion_request(
 
 
 @router.post("/deletion/requests/{request_id}/execute")
-async def execute_deletion(
+def execute_deletion(
     request_id: UUID,
     request: Request,
     ctx: RequestContext = Depends(get_request_context),
@@ -252,7 +250,7 @@ async def execute_deletion(
 
 
 @router.post("/deletion/requests/{request_id}/cancel")
-async def cancel_deletion_request(
+def cancel_deletion_request(
     request_id: UUID,
     request: Request,
     ctx: RequestContext = Depends(get_request_context),
@@ -291,7 +289,7 @@ async def cancel_deletion_request(
 
 
 @router.get("/deletion/proofs/{proof_id}")
-async def get_deletion_proof(
+def get_deletion_proof(
     proof_id: UUID,
     request: Request,
     ctx: RequestContext = Depends(get_request_context),
@@ -343,7 +341,7 @@ class RetentionCleanupRequest(BaseModel):
 
 
 @router.post("/retention/cleanup")
-async def cleanup_expired_data(
+def cleanup_expired_data(
     payload: RetentionCleanupRequest,
     request: Request,
     ctx: RequestContext = Depends(get_request_context),
@@ -384,7 +382,7 @@ class PIIMaskRequest(BaseModel):
 
 
 @router.post("/pii/mask")
-async def mask_pii_data(
+def mask_pii_data(
     payload: PIIMaskRequest,
     request: Request,
     ctx: RequestContext = Depends(get_request_context),
@@ -417,7 +415,7 @@ async def mask_pii_data(
 
 
 @router.get("/retention/policies")
-async def list_retention_policies(
+def list_retention_policies(
     request: Request,
     ctx: RequestContext = Depends(get_request_context),
     db: Session = Depends(get_db),
@@ -453,7 +451,7 @@ class RetentionPolicyRequest(BaseModel):
 
 
 @router.post("/retention/policies")
-async def create_retention_policy(
+def create_retention_policy(
     payload: RetentionPolicyRequest,
     request: Request,
     ctx: RequestContext = Depends(get_request_context),
@@ -490,7 +488,7 @@ async def create_retention_policy(
 
 
 @router.put("/retention/policies/{resource_type}")
-async def update_retention_policy(
+def update_retention_policy(
     resource_type: str,
     payload: RetentionPolicyRequest,
     request: Request,
@@ -528,7 +526,7 @@ async def update_retention_policy(
 
 
 @router.post("/retention/execute")
-async def execute_retention(
+def execute_retention(
     request: Request,
     ctx: RequestContext = Depends(get_request_context),
     db: Session = Depends(get_db),

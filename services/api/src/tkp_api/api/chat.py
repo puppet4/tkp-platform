@@ -560,6 +560,7 @@ async def chat_completions(
             yield f"data: {json.dumps({'type': 'done', 'data': {'message_id': str(assistant_message.id), 'conversation_id': str(conversation_id)}}, ensure_ascii=False)}\n\n"
 
         except Exception as e:
+            stream_db.rollback()
             yield f"data: {json.dumps({'type': 'error', 'data': str(e)}, ensure_ascii=False)}\n\n"
         finally:
             stream_db.close()

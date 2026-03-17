@@ -34,8 +34,14 @@ class UserPreferencesUpsertRequest(BaseModel):
     security: dict[str, bool] = Field(default_factory=dict, description="安全偏好。")
 
 
+_preferences_table_checked: set[int] = set()
+
+
 def _ensure_user_preferences_table(db: Session) -> None:
     """确保用户偏好表存在（兼容本地未跑迁移环境）。"""
+    bind_id = id(db.get_bind())
+    if bind_id in _preferences_table_checked:
+        return
     db.execute(
         text(
             """
@@ -51,6 +57,7 @@ def _ensure_user_preferences_table(db: Session) -> None:
         )
     )
     db.commit()
+    _preferences_table_checked.add(bind_id)
 
 
 def _can_access_preferences(*, ctx, user_id: UUID) -> bool:

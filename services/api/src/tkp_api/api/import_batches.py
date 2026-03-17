@@ -4,7 +4,7 @@ import hashlib
 import json
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Path, Query, Request, UploadFile, status
+from fastapi import APIRouter, Body, Depends, File, Form, HTTPException, Path, Query, Request, UploadFile, status
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
@@ -41,7 +41,7 @@ _MAX_UPLOAD_BYTES = 50 * 1024 * 1024
 def create_import_batch(
     request: Request,
     kb_id: UUID = Path(..., description="目标知识库 ID。"),
-    body: dict = None,
+    body: dict = Body(default=None),
     ctx=Depends(get_request_context),
     db: Session = Depends(get_db),
 ):
