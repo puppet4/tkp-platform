@@ -434,10 +434,18 @@ def list_workspace_members(
     memberships = db.execute(
         select(WorkspaceMembership).where(WorkspaceMembership.workspace_id == workspace_id)
     ).scalars().all()
+
+    user_ids = [m.user_id for m in memberships]
+    users_by_id = {}
+    if user_ids:
+        users = db.execute(select(User).where(User.id.in_(user_ids))).scalars().all()
+        users_by_id = {u.id: u for u in users}
+
     data = [
         {
             "workspace_id": workspace.id,
             "user_id": ws_membership.user_id,
+            "email": users_by_id.get(ws_membership.user_id, None) and users_by_id[ws_membership.user_id].email or "",
             "role": ws_membership.role,
             "status": ws_membership.status,
         }
@@ -546,6 +554,7 @@ def upsert_workspace_member(
         {
             "workspace_id": workspace_id,
             "user_id": payload.user_id,
+            "email": target_user.email,
             "role": target_membership.role,
             "status": target_membership.status,
         },
@@ -608,6 +617,8 @@ def remove_workspace_member(
 
     target_membership.status = MembershipStatus.DISABLED
 
+    target_user = db.get(User, user_id)
+
     audit_log(
         db=db,
         request=request,
@@ -626,6 +637,7 @@ def remove_workspace_member(
         {
             "workspace_id": workspace_id,
             "user_id": user_id,
+            "email": target_user.email if target_user else "",
             "role": target_membership.role,
             "status": target_membership.status,
         },

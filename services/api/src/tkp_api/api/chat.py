@@ -391,7 +391,7 @@ def delete_conversation(
     description="在授权知识库范围内检索并返回带引用的回答。支持会话上下文记忆和流式输出。",
     status_code=status.HTTP_200_OK,
 )
-async def chat_completions(
+def chat_completions(
     payload: ChatCompletionRequest,
     request: Request,
     ctx=Depends(get_request_context),

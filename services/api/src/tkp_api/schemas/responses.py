@@ -213,6 +213,7 @@ class WorkspaceMemberData(BaseSchema):
 
     workspace_id: UUID = Field(description="工作空间 ID。")
     user_id: UUID = Field(description="成员用户 ID。")
+    email: str = Field(default="", description="成员邮箱。")
     role: str = Field(description="成员在工作空间中的角色。")
     status: str = Field(description="成员关系状态。")
 

@@ -11,7 +11,7 @@ _METRICS_TOKEN = os.getenv("METRICS_TOKEN", "")
 
 
 @router.get("/metrics", response_class=PlainTextResponse)
-async def prometheus_metrics(request: Request):
+def prometheus_metrics(request: Request):
     """导出 Prometheus 格式的指标。"""
     if _METRICS_TOKEN:
         auth = request.headers.get("Authorization", "")

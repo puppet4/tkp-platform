@@ -1022,7 +1022,7 @@ def get_runbook(
 )
 def list_ingestion_jobs(
     request: Request,
-    status_filter: str | None = Query(default=None, description="任务状态筛选（pending/processing/completed/failed）"),
+    status_filter: str | None = Query(default=None, alias="status", description="任务状态筛选（pending/processing/completed/failed）"),
     limit: int = Query(default=50, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
     ctx=Depends(require_tenant_roles(TenantRole.OWNER, TenantRole.ADMIN)),
