@@ -10,6 +10,7 @@ from tkp_api.db.session import get_db
 from tkp_api.dependencies import get_request_context
 from tkp_api.models.enums import DocumentStatus, IngestionJobStatus, KBRole, KBStatus, MembershipStatus
 from tkp_api.models.knowledge import Document, DocumentChunk, IngestionJob, KBMembership, KnowledgeBase
+from tkp_api.models.tenant import User
 from tkp_api.models.workspace import WorkspaceMembership
 from tkp_api.schemas.common import ErrorResponse, SuccessResponse
 from tkp_api.schemas.knowledge import KBMembershipUpsertRequest, KnowledgeBaseCreateRequest, KnowledgeBaseUpdateRequest
@@ -100,7 +101,7 @@ def create_knowledge_base(
     db.add(
         KBMembership(
             tenant_id=ctx.tenant_id,
-            kb_id=UUID(str(kb.id)),
+            kb_id=kb.id,
             user_id=ctx.user_id,
             role=KBRole.OWNER,
             status=MembershipStatus.ACTIVE,
@@ -132,6 +133,7 @@ def create_knowledge_base(
             "name": kb.name,
             "description": kb.description,
             "embedding_model": kb.embedding_model,
+            "retrieval_strategy": kb.retrieval_strategy,
             "status": kb.status,
             "role": KBRole.OWNER,
         },
@@ -190,16 +192,17 @@ def list_knowledge_bases(
     if not kb_role_map:
         return success(request, [])
 
-    kbs = (
-        db.execute(
+    kbs_stmt = (
             select(KnowledgeBase)
             .where(KnowledgeBase.tenant_id == ctx.tenant_id)
             .where(KnowledgeBase.workspace_id.in_(allowed_workspace_ids))
             .where(KnowledgeBase.id.in_(list(kb_role_map.keys())))
             .where(KnowledgeBase.status != KBStatus.ARCHIVED)
-            .limit(limit)
-            .offset(offset)
-        )
+    )
+    total = db.execute(select(func.count()).select_from(kbs_stmt.subquery())).scalar() or 0
+
+    kbs = (
+        db.execute(kbs_stmt.limit(limit).offset(offset))
         .scalars()
         .all()
     )
@@ -211,12 +214,13 @@ def list_knowledge_bases(
             "name": kb.name,
             "description": kb.description,
             "embedding_model": kb.embedding_model,
+            "retrieval_strategy": kb.retrieval_strategy,
             "status": kb.status,
             "role": kb_role_map.get(kb.id),
         }
         for kb in kbs
     ]
-    return success(request, data)
+    return success(request, data, meta={"total": total, "limit": limit, "offset": offset})
 
 
 @router.get(
@@ -371,6 +375,7 @@ def get_knowledge_base(
             "name": kb.name,
             "description": kb.description,
             "embedding_model": kb.embedding_model,
+            "retrieval_strategy": kb.retrieval_strategy,
             "status": kb.status,
             "role": role,
         },
@@ -452,6 +457,7 @@ def update_knowledge_base(
             "name": kb.name,
             "description": kb.description,
             "embedding_model": kb.embedding_model,
+            "retrieval_strategy": kb.retrieval_strategy,
             "status": kb.status,
             "role": role,
         },
@@ -503,12 +509,12 @@ def delete_knowledge_base(
 
     kb.status = KBStatus.ARCHIVED
     memberships = db.execute(
-        select(KBMembership).where(KBMembership.kb_id == kb_id)
+        select(KBMembership).where(KBMembership.kb_id == kb_id, KBMembership.tenant_id == ctx.tenant_id)
     ).scalars().all()
     for membership in memberships:
         membership.status = MembershipStatus.DISABLED
 
-    documents = db.execute(select(Document).where(Document.kb_id == kb_id)).scalars().all()
+    documents = db.execute(select(Document).where(Document.kb_id == kb_id, Document.tenant_id == ctx.tenant_id)).scalars().all()
     for document in documents:
         document.status = DocumentStatus.DELETED
 
@@ -533,6 +539,7 @@ def delete_knowledge_base(
             "name": kb.name,
             "description": kb.description,
             "embedding_model": kb.embedding_model,
+            "retrieval_strategy": kb.retrieval_strategy,
             "status": kb.status,
             "role": kb_role,
         },
@@ -589,10 +596,16 @@ def list_kb_members(
         .where(KBMembership.tenant_id == ctx.tenant_id)
         .where(KBMembership.kb_id == kb_id)
     ).scalars().all()
+    user_ids = [m.user_id for m in memberships]
+    users_by_id = {}
+    if user_ids:
+        users = db.execute(select(User).where(User.id.in_(user_ids))).scalars().all()
+        users_by_id = {u.id: u for u in users}
     data = [
         {
             "kb_id": kb.id,
             "user_id": membership.user_id,
+            "email": users_by_id[membership.user_id].email if membership.user_id in users_by_id else "",
             "role": membership.role,
             "status": membership.status,
         }

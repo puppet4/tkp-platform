@@ -2,13 +2,15 @@
 
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from pydantic import BaseModel, Field
+from sqlalchemy import func as sa_func, select
 from sqlalchemy.orm import Session
 
 from tkp_api.db.session import get_db
 from tkp_api.dependencies import require_tenant_roles
 from tkp_api.models.enums import TenantRole
+from tkp_api.models.feedback import FeedbackReplay, UserFeedback
 from tkp_api.schemas.common import SuccessResponse
 from tkp_api.services.feedback_replay import FeedbackReplayService
 from tkp_api.utils.response import success
@@ -128,9 +130,6 @@ def get_replay_result(
     ctx=Depends(require_tenant_roles(TenantRole.OWNER, TenantRole.ADMIN)),
 ):
     """获取回放结果。"""
-    from sqlalchemy import select
-    from tkp_api.models.feedback import FeedbackReplay
-
     stmt = select(FeedbackReplay).where(
         FeedbackReplay.id == replay_id,
         FeedbackReplay.tenant_id == ctx.tenant_id,
@@ -170,15 +169,12 @@ def list_feedbacks(
     request: Request,
     processed: bool | None = None,
     feedback_type: str | None = None,
-    limit: int = 50,
-    offset: int = 0,
+    limit: int = Query(default=50, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
     db: Session = Depends(get_db),
     ctx=Depends(require_tenant_roles(TenantRole.OWNER, TenantRole.ADMIN)),
 ):
     """获取反馈列表。"""
-    from sqlalchemy import select, func as sa_func
-    from tkp_api.models.feedback import UserFeedback
-
     base = select(UserFeedback).where(UserFeedback.tenant_id == ctx.tenant_id)
 
     if processed is not None:
@@ -206,6 +202,9 @@ def list_feedbacks(
                     "comment": f.comment,
                     "tags": f.tags,
                     "processed": f.processed,
+                    "conversation_id": str(f.conversation_id) if f.conversation_id else None,
+                    "message_id": str(f.message_id) if f.message_id else None,
+                    "retrieval_log_id": str(f.retrieval_log_id) if f.retrieval_log_id else None,
                     "created_at": f.created_at.isoformat(),
                 }
                 for f in feedbacks

@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request, status
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from tkp_api.core.config import get_settings
@@ -51,14 +51,15 @@ def list_agent_runs(
         select(AgentRun)
         .where(AgentRun.tenant_id == ctx.tenant_id, AgentRun.user_id == ctx.user_id)
         .order_by(AgentRun.created_at.desc())
-        .limit(limit)
-        .offset(offset)
     )
     if status_filter:
         stmt = stmt.where(AgentRun.status == status_filter)
+    count_stmt = select(func.count()).select_from(stmt.subquery())
+    total = db.execute(count_stmt).scalar() or 0
+    stmt = stmt.limit(limit).offset(offset)
     runs = db.execute(stmt).scalars().all()
     data = [{"run_id": run.id, "status": run.status} for run in runs]
-    return success(request, data)
+    return success(request, data, meta={"total": total, "limit": limit, "offset": offset})
 
 
 @router.post(

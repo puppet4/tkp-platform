@@ -480,7 +480,7 @@ def chat_completions(
     db.add(
         Message(
             tenant_id=ctx.tenant_id,
-            conversation_id=UUID(str(conversation.id)),
+            conversation_id=conversation.id,
             role=MessageRole.USER,
             content=question,
             citations=[],
@@ -493,14 +493,12 @@ def chat_completions(
     conversation_id = conversation.id
     tenant_id = ctx.tenant_id
 
-    # 流式生成
-    import json
-    from tkp_api.services.pipeline.pipeline import PipelineSingleton
-    from tkp_api.services.pipeline.types import GenerationConfig, RetrievalRequest
-
     async def generate_stream():
-        # 创建新的数据库会话用于异步操作
+        import json
         from tkp_api.db.session import SessionLocal
+        from tkp_api.services.pipeline.pipeline import PipelineSingleton
+        from tkp_api.services.pipeline.types import GenerationConfig, RetrievalRequest
+
         stream_db = SessionLocal()
 
         try:
@@ -547,7 +545,7 @@ def chat_completions(
             # 保存助手消息
             assistant_message = Message(
                 tenant_id=tenant_id,
-                conversation_id=UUID(str(conversation_id)),
+                conversation_id=conversation_id,
                 role=MessageRole.ASSISTANT,
                 content=full_answer,
                 citations=citations,

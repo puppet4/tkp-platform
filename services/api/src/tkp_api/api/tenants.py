@@ -121,7 +121,7 @@ def create_tenant(
 
     tenant, default_workspace = create_tenant_with_owner(
         db,
-        owner_user_id=UUID(str(user.id)),
+        owner_user_id=user.id,
         tenant_name=payload.name,
         tenant_slug=payload.slug,
         default_workspace_name="默认工作空间",
@@ -132,8 +132,8 @@ def create_tenant(
     audit_log(
         db=db,
         request=request,
-        tenant_id=UUID(str(tenant.id)),
-        actor_user_id=UUID(str(user.id)),
+        tenant_id=tenant.id,
+        actor_user_id=user.id,
         action="tenant.create",
         resource_type="tenant",
         resource_id=str(tenant.id),
@@ -258,21 +258,21 @@ def update_tenant(
 
     before = {"name": tenant.name, "slug": tenant.slug, "status": tenant.status}
 
-    if payload.slug and payload.slug != tenant.slug:
+    if payload.slug is not None and payload.slug != tenant.slug:
         exists = db.execute(select(Tenant).where(Tenant.slug == payload.slug)).scalar_one_or_none()
         if exists and exists.id != tenant.id:
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="tenant slug exists")
         tenant.slug = payload.slug
 
-    if payload.name:
+    if payload.name is not None:
         tenant.name = payload.name
-    if payload.status:
+    if payload.status is not None:
         tenant.status = payload.status
 
     audit_log(
         db=db,
         request=request,
-        tenant_id=UUID(str(tenant.id)),
+        tenant_id=tenant.id,
         actor_user_id=ctx.user_id,
         action="tenant.update",
         resource_type="tenant",
@@ -482,7 +482,7 @@ def invite_tenant_member(
     else:
         membership = TenantMembership(
             tenant_id=tenant_id,
-            user_id=UUID(str(user.id)),
+            user_id=user.id,
             role=payload.role,
             status=MembershipStatus.INVITED,
         )
@@ -575,7 +575,7 @@ def upsert_tenant_member(
     else:
         membership = TenantMembership(
             tenant_id=tenant_id,
-            user_id=UUID(str(user.id)),
+            user_id=user.id,
             role=payload.role,
             status=MembershipStatus.ACTIVE,
         )
@@ -585,7 +585,7 @@ def upsert_tenant_member(
     sync_workspace_memberships_for_tenant_member(
         db,
         tenant_id=tenant_id,
-        user_id=UUID(str(user.id)),
+        user_id=user.id,
         tenant_role=membership.role,
     )
 
@@ -646,7 +646,7 @@ def join_tenant(
         sync_workspace_memberships_for_tenant_member(
             db,
             tenant_id=tenant_id,
-            user_id=UUID(str(user.id)),
+            user_id=user.id,
             tenant_role=membership.role,
         )
         db.commit()
@@ -670,7 +670,7 @@ def join_tenant(
     sync_workspace_memberships_for_tenant_member(
         db,
         tenant_id=tenant_id,
-        user_id=UUID(str(user.id)),
+        user_id=user.id,
         tenant_role=membership.role,
     )
 
@@ -678,7 +678,7 @@ def join_tenant(
         db=db,
         request=request,
         tenant_id=tenant_id,
-        actor_user_id=UUID(str(user.id)),
+        actor_user_id=user.id,
         action="tenant.member.join",
         resource_type="tenant_membership",
         resource_id=str(membership.id),
