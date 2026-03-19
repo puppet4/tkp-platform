@@ -389,46 +389,6 @@ def put_quota_policy(
     return success(request, data)
 
 
-@router.post(
-    "/quotas",
-    summary="创建配额策略",
-    description="为租户创建新的配额策略。",
-    status_code=status.HTTP_200_OK,
-    response_model=SuccessResponse[QuotaPolicyData],
-    responses={401: {"model": ErrorResponse}, 403: {"model": ErrorResponse}, 422: {"model": ErrorResponse}},
-)
-def create_quota_policy(
-    payload: QuotaPolicyUpsertRequest,
-    request: Request,
-    ctx=Depends(require_tenant_roles(TenantRole.OWNER, TenantRole.ADMIN)),
-    db: Session = Depends(get_db),
-):
-    """创建配额策略。"""
-    data = upsert_quota_policy(
-        db,
-        tenant_id=ctx.tenant_id,
-        user_id=ctx.user_id,
-        metric_code=payload.metric_code,
-        scope_type=payload.scope_type,
-        scope_id=payload.scope_id,
-        limit_value=payload.limit_value,
-        window_minutes=payload.window_minutes,
-        enabled=payload.enabled,
-    )
-    audit_log(
-        db,
-        request=request,
-        tenant_id=ctx.tenant_id,
-        actor_user_id=ctx.user_id,
-        action="ops.quota.create",
-        resource_type="quota_policy",
-        resource_id=str(data["id"]),
-        after_json=_json_safe(data),
-    )
-    db.commit()
-    return success(request, data)
-
-
 @router.get(
     "/quotas",
     summary="查询配额策略列表",

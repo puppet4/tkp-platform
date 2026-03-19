@@ -360,6 +360,7 @@ def delete_workspace(
         select(KBMembership)
         .where(KBMembership.tenant_id == ctx.tenant_id)
         .where(KBMembership.kb_id.in_(select(KnowledgeBase.id).where(KnowledgeBase.workspace_id == workspace_id)))
+        .where(KBMembership.status != MembershipStatus.DISABLED)
     ).scalars().all()
     for kb_membership in kb_memberships:
         kb_membership.status = MembershipStatus.DISABLED
